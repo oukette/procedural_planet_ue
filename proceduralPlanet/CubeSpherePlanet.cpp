@@ -32,21 +32,46 @@ void ACubeSpherePlanet::OnConstruction(const FTransform &Transform)
     GenerateVoxelChunks();
 }
 
+void ACubeSpherePlanet::Destroyed()
+{
+    Super::Destroyed();
+
+    // Clean up chunks when the planet itself is destroyed (e.g. deleting from scene or preview actor cleanup)
+    for (AVoxelChunk* Chunk : VoxelChunks)
+    {
+        if (Chunk && IsValid(Chunk))
+        {
+            Chunk->Destroy();
+        }
+    }
+    
+    // Fallback cleanup for any attached actors not in the array (handles edge cases during editor interaction)
+    TArray<AActor*> AttachedActors;
+    GetAttachedActors(AttachedActors);
+    for (AActor* Child : AttachedActors)
+    {
+        if (Child && Child->IsA(AVoxelChunk::StaticClass()))
+        {
+            Child->Destroy();
+        }
+    }
+}
 
 void ACubeSpherePlanet::GenerateVoxelChunks()
 {
-    // Clear existing chunks
-    if (VoxelChunks.Num() > 0)
+    // Fix: Robustly destroy all attached chunks to prevent duplication
+    TArray<AActor *> AttachedActors;
+    GetAttachedActors(AttachedActors);
+
+    for (AActor *Child : AttachedActors)
     {
-        for (AVoxelChunk *Chunk : VoxelChunks)
+        // Only destroy VoxelChunks, in case you have other things attached
+        if (Child && Child->IsA(AVoxelChunk::StaticClass()))
         {
-            if (Chunk && IsValid(Chunk))
-            {
-                Chunk->Destroy();
-            }
+            Child->Destroy();
         }
-        VoxelChunks.Empty();
     }
+    VoxelChunks.Empty();
 
     if (!GetWorld())
     {
@@ -131,6 +156,7 @@ void ACubeSpherePlanet::GenerateVoxelChunks()
 
                     // Attach with SNAP to target - this converts world pos to relative
                     Chunk->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
+                    Chunk->SetOwner(this); // Ensure ownership for lifecycle management
 
                     VoxelChunks.Add(Chunk);
                 }

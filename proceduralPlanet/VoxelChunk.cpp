@@ -91,7 +91,14 @@ void AVoxelChunk::GenerateMesh()
 
     auto VertexInterp = [&](const FVector &P1, const FVector &P2, float D1, float D2)
     {
+        // Fix: Use a very small epsilon instead of IsNearlyEqual (which uses 1e-4)
+        // to avoid snapping small details which causes "fish scales" and missing triangles.
+        if (FMath::IsNearlyZero(D1 - D2, 1e-8f))
+            return P1;
+
         float T = D1 / (D1 - D2);
+        // Fix: Clamp T to [0,1] to prevent vertices shooting to infinity due to noise artifacts
+        T = FMath::Clamp(T, 0.0f, 1.0f);
         return P1 + T * (P2 - P1);
     };
 
@@ -128,7 +135,8 @@ void AVoxelChunk::GenerateMesh()
                     continue;
 
                 int edges = EdgeTable[CubeIndex];
-                FVector EdgeVertex[12];
+                // Fix: Initialize array to zero to prevent garbage data causing stretched triangles
+                FVector EdgeVertex[12] = {FVector::ZeroVector};
 
                 for (int e = 0; e < 12; e++)
                 {

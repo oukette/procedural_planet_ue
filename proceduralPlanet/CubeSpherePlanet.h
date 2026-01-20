@@ -13,6 +13,7 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
 
     public:
         ACubeSpherePlanet();
+        virtual void Destroyed() override;
 
     protected:
         virtual void OnConstruction(const FTransform &Transform) override;
