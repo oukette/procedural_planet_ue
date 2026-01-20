@@ -48,18 +48,23 @@ class PROCEDURALPLANET_API AVoxelChunk : public AActor
         UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Voxel")
         UProceduralMeshComponent *ProceduralMesh;
 
-        UPROPERTY(EditAnywhere, Category = "Debug")
-        bool bGenerateMesh;
+        UPROPERTY(VisibleAnywhere, Category = "Optimization")
+        bool bEnableCollision;
 
-        void GenerateDensity();  // Create voxel density array
-        void GenerateMesh();     // Apply Marching Cubes and build mesh
+        // New Async function
+        void GenerateChunkAsync();
+
+        // Called by Planet to apply mesh to GPU
+        void UploadMesh();
+
+        struct FChunkMeshData
+        {
+                TArray<FVector> Vertices;
+                TArray<int32> Triangles;
+                TArray<FVector> Normals;
+        };
+        FChunkMeshData GeneratedMeshData;
 
     protected:
         virtual void OnConstruction(const FTransform &Transform) override;
-
-        void Initialize(int32 InVoxelResolution, float InVoxelSize, float InPlanetRadius, FVector InPlanetCenter, float InNoiseAmplitude,
-                        float InNoiseFrequency, int32 InSeed);
-
-        // 3D array for voxel density
-        TArray<float> VoxelDensity;
 };

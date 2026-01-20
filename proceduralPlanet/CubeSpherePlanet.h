@@ -14,12 +14,14 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
     public:
         ACubeSpherePlanet();
         virtual void Destroyed() override;
+        virtual void Tick(float DeltaTime) override;
+        virtual bool ShouldTickIfViewportsOnly() const override;
 
     protected:
         virtual void OnConstruction(const FTransform &Transform) override;
 
         void GenerateCubeSphere();
-        void GenerateVoxelChunks();  // New function for volumetric planet
+        void GenerateVoxelChunks();
 
     public:
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
@@ -42,6 +44,20 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         float VoxelSize;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization")
+        bool bEnableCollision;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization")
+        bool bCastShadows;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization")
+        int32 ChunksToProcessPerFrame;
+
+        // Queue for chunks waiting to upload mesh to GPU
+        TArray<class AVoxelChunk *> MeshUpdateQueue;
+
+        void EnqueueChunkForMeshUpdate(class AVoxelChunk *Chunk);
 
         UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Planet")
         USceneComponent *Root;

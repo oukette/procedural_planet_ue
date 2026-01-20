@@ -9,7 +9,7 @@
 ACubeSpherePlanet::ACubeSpherePlanet()
 {
     // Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-    PrimaryActorTick.bCanEverTick = false;
+    PrimaryActorTick.bCanEverTick = true;
 
     Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
     RootComponent = Root;
@@ -22,6 +22,9 @@ ACubeSpherePlanet::ACubeSpherePlanet()
     NoiseFrequency = 0.0003f;
     VoxelResolution = 32;
     VoxelSize = 100.f;
+    bEnableCollision = false;  // Default to false for performance
+    bCastShadows = false;      // Default to false for performance
+    ChunksToProcessPerFrame = 2;
 }
 
 
@@ -32,23 +35,47 @@ void ACubeSpherePlanet::OnConstruction(const FTransform &Transform)
     GenerateVoxelChunks();
 }
 
+void ACubeSpherePlanet::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+
+    // Process a limited number of chunks per frame to prevent lag spikes
+    int32 ProcessedCount = 0;
+    while (MeshUpdateQueue.Num() > 0 && ProcessedCount < ChunksToProcessPerFrame)
+    {
+        AVoxelChunk *Chunk = MeshUpdateQueue.Pop();  // LIFO is fine, or use RemoveAt(0) for FIFO
+        if (Chunk && IsValid(Chunk))
+        {
+            Chunk->UploadMesh();
+        }
+        ProcessedCount++;
+    }
+}
+
+bool ACubeSpherePlanet::ShouldTickIfViewportsOnly() const
+{
+    return true;
+}
+
+void ACubeSpherePlanet::EnqueueChunkForMeshUpdate(AVoxelChunk *Chunk) { MeshUpdateQueue.Add(Chunk); }
+
 void ACubeSpherePlanet::Destroyed()
 {
     Super::Destroyed();
 
     // Clean up chunks when the planet itself is destroyed (e.g. deleting from scene or preview actor cleanup)
-    for (AVoxelChunk* Chunk : VoxelChunks)
+    for (AVoxelChunk *Chunk : VoxelChunks)
     {
         if (Chunk && IsValid(Chunk))
         {
             Chunk->Destroy();
         }
     }
-    
+
     // Fallback cleanup for any attached actors not in the array (handles edge cases during editor interaction)
-    TArray<AActor*> AttachedActors;
+    TArray<AActor *> AttachedActors;
     GetAttachedActors(AttachedActors);
-    for (AActor* Child : AttachedActors)
+    for (AActor *Child : AttachedActors)
     {
         if (Child && Child->IsA(AVoxelChunk::StaticClass()))
         {
@@ -59,6 +86,9 @@ void ACubeSpherePlanet::Destroyed()
 
 void ACubeSpherePlanet::GenerateVoxelChunks()
 {
+    // Clear pending updates from previous generation
+    MeshUpdateQueue.Empty();
+
     // Fix: Robustly destroy all attached chunks to prevent duplication
     TArray<AActor *> AttachedActors;
     GetAttachedActors(AttachedActors);
@@ -149,14 +179,18 @@ void ACubeSpherePlanet::GenerateVoxelChunks()
                     Chunk->NoiseAmplitude = NoiseAmplitude;
                     Chunk->NoiseFrequency = NoiseFrequency;
                     Chunk->Seed = Seed;
-                    Chunk->bGenerateMesh = true;  // Tell chunk to generate mesh in its OnConstruction.
+                    Chunk->bEnableCollision = bEnableCollision;
+                    Chunk->ProceduralMesh->SetCastShadow(bCastShadows);
 
                     // Finish spawning. This will call OnConstruction on the chunk with the correct parameters.
                     Chunk->FinishSpawning(ChunkTransform);
 
                     // Attach with SNAP to target - this converts world pos to relative
                     Chunk->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
-                    Chunk->SetOwner(this); // Ensure ownership for lifecycle management
+                    Chunk->SetOwner(this);  // Ensure ownership for lifecycle management
+
+                    // Trigger the async generation now that parameters are set
+                    Chunk->GenerateChunkAsync();
 
                     VoxelChunks.Add(Chunk);
                 }
