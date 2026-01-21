@@ -1,6 +1,5 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "VoxelChunk.h"
 #include "MarchingCubesTables.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -93,6 +92,7 @@ void AVoxelChunk::UploadMesh()
     GeneratedMeshData.Normals.Empty();
 }
 
+
 void AVoxelChunk::SetCollisionEnabled(bool bEnabled)
 {
     if (ProceduralMesh->bUseComplexAsSimpleCollision != bEnabled)
@@ -104,6 +104,7 @@ void AVoxelChunk::SetCollisionEnabled(bool bEnabled)
         // but SetCollisionEnabled is usually sufficient for runtime toggles.
     }
 }
+
 
 TArray<float> AVoxelChunk::GenerateDensityField(int32 Resolution, float VoxelSize, float PlanetRadius, const FVector &LocalPlanetCenter)
 {
@@ -137,6 +138,7 @@ TArray<float> AVoxelChunk::GenerateDensityField(int32 Resolution, float VoxelSiz
     return LocalDensity;
 }
 
+
 FVector AVoxelChunk::VertexInterp(const FVector &P1, const FVector &P2, float D1, float D2)
 {
     const float Epsilon = 1e-6f;
@@ -148,6 +150,7 @@ FVector AVoxelChunk::VertexInterp(const FVector &P1, const FVector &P2, float D1
     float T = D1 / Denom;
     return P1 + T * (P2 - P1);
 }
+
 
 AVoxelChunk::FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density, int32 Resolution, float VoxelSize,
                                                                  const FVector &LocalPlanetCenter)

@@ -1,6 +1,5 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "CubeSpherePlanet.h"
 #include "VoxelChunk.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -45,6 +44,7 @@ void ACubeSpherePlanet::OnConstruction(const FTransform &Transform)
     // bGenerateOnBeginPlay for runtime generation.
 }
 
+
 void ACubeSpherePlanet::BeginPlay()
 {
     Super::BeginPlay();
@@ -54,24 +54,30 @@ void ACubeSpherePlanet::BeginPlay()
     }
 }
 
+
 void ACubeSpherePlanet::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
+    UpdateLODAndStreaming();
+    ProcessSpawnQueue();
+    ProcessMeshUpdateQueue();
+}
 
-    // --- Staggered Generation Pipeline ---
 
-    // --- 0. LOD & Streaming Logic ---
+void ACubeSpherePlanet::UpdateLODAndStreaming()
+{
+    // --- LOD & Streaming Logic ---
     // We check distances to manage spawning and collision.
-    // Optimization: In a full production game, you might time-slice this loop 
+    // Optimization: In a full production game, you might time-slice this loop
     // (check 100 chunks per frame) instead of checking all every frame.
-    
+
     FVector ObserverPos = GetObserverPosition();
     float RenderDistSq = RenderDistance * RenderDistance;
     float CollisionDistSq = CollisionDistance * CollisionDistance;
 
     for (int32 i = 0; i < ChunkInfos.Num(); i++)
     {
-        FChunkInfo& Info = ChunkInfos[i];
+        FChunkInfo &Info = ChunkInfos[i];
         float DistSq = FVector::DistSquared(Info.WorldLocation, ObserverPos);
 
         // 1. Spawning / Despawning
@@ -93,7 +99,7 @@ void ACubeSpherePlanet::Tick(float DeltaTime)
                 Info.ActiveChunk = nullptr;
             }
             // If it was waiting to spawn, cancel it (simplistic handling)
-            // Note: Removing from array is slow, so we just let it spawn and die next frame, 
+            // Note: Removing from array is slow, so we just let it spawn and die next frame,
             // or handle it in the spawn loop below.
         }
 
@@ -104,10 +110,12 @@ void ACubeSpherePlanet::Tick(float DeltaTime)
             Info.ActiveChunk->SetCollisionEnabled(bShouldCollide);
         }
     }
+}
 
-    // --- Staggered Generation Pipeline ---
 
-    // 1. Spawn new chunk actors if we have capacity in the async pipeline
+void ACubeSpherePlanet::ProcessSpawnQueue()
+{
+    // Spawn new chunk actors if we have capacity in the async pipeline
     int32 SpawnedThisFrame = 0;
     const FVector PlanetCenterWorld = GetActorLocation();
 
@@ -115,18 +123,25 @@ void ACubeSpherePlanet::Tick(float DeltaTime)
     {
         // Get index of the chunk to spawn
         int32 ChunkIndex = ChunkSpawnQueue.Pop(false);
-        
+
+        // Calculate RenderDistSq locally since we are in a new method
+        float RenderDistSq = RenderDistance * RenderDistance;
+        FVector ObserverPos = GetObserverPosition();
+
         // Safety check
-        if (!ChunkInfos.IsValidIndex(ChunkIndex)) continue;
-        
-        FChunkInfo& Info = ChunkInfos[ChunkIndex];
-        Info.bPendingSpawn = false; // No longer pending
+        if (!ChunkInfos.IsValidIndex(ChunkIndex))
+            continue;
+
+        FChunkInfo &Info = ChunkInfos[ChunkIndex];
+        Info.bPendingSpawn = false;  // No longer pending
 
         // Double check distance before spawning (in case player moved fast)
-        if (FVector::DistSquared(Info.WorldLocation, ObserverPos) > RenderDistSq) continue;
-        
+        if (FVector::DistSquared(Info.WorldLocation, ObserverPos) > RenderDistSq)
+            continue;
+
         // If already exists (rare edge case), skip
-        if (Info.ActiveChunk != nullptr) continue;
+        if (Info.ActiveChunk != nullptr)
+            continue;
 
         AVoxelChunk *Chunk = GetWorld()->SpawnActorDeferred<AVoxelChunk>(AVoxelChunk::StaticClass(), Info.Transform, this);
         if (Chunk)
@@ -157,8 +172,11 @@ void ACubeSpherePlanet::Tick(float DeltaTime)
         }
         SpawnedThisFrame++;
     }
+}
 
-    // 2. Process a limited number of finished chunks per frame to upload their mesh to the GPU
+void ACubeSpherePlanet::ProcessMeshUpdateQueue()
+{
+    // Process a limited number of finished chunks per frame to upload their mesh to the GPU
     int32 ProcessedCount = 0;
     while (MeshUpdateQueue.Num() > 0 && ProcessedCount < ChunksToProcessPerFrame)
     {
@@ -198,7 +216,6 @@ int32 ACubeSpherePlanet::CalculateAutoChunksPerFace() const
 
     // 1. Face Width (Arc Length)
     // The arc length of a cube face projected on a sphere is exactly PI/2 * Radius.
-    // This replaces the "EquatorToFaceRatio = 4.0" logic (Circumference / 4).
     // float FaceArcLength = PlanetRadius * HALF_PI;
     float FaceArcLength = PlanetRadius * 2.0f;
 
@@ -208,7 +225,6 @@ int32 ACubeSpherePlanet::CalculateAutoChunksPerFace() const
 
     // 3. Curvature Overlap (Adaptive)
     // We need more overlap when the chunk size is large relative to the planet radius.
-    // Instead of a fixed scale (2000.0f), we derive it from ChunkPhysicalSize.
     // If chunks are physically larger, they diverge more, requiring a higher factor.
     const float BaseOverlapFactor = 1.1f;      // 10% base overlap for precision
     const float CurvatureSensitivity = 0.75f;  // Controls how much overlap is added per unit of relative curvature
@@ -235,6 +251,7 @@ void ACubeSpherePlanet::Destroyed()
     // Ensure all generated chunks are destroyed with the planet
     ClearAllChunks();
 }
+
 
 void ACubeSpherePlanet::ClearAllChunks()
 {
@@ -268,11 +285,13 @@ void ACubeSpherePlanet::ClearAllChunks()
     }
 }
 
+
 void ACubeSpherePlanet::GeneratePlanet()
 {
     // This is the new public-facing function to start generation.
     PrepareGeneration();
 }
+
 
 void ACubeSpherePlanet::PrepareGeneration()
 {
@@ -321,9 +340,27 @@ void ACubeSpherePlanet::PrepareGeneration()
         VoxelResolution = (PlanetRadius < 3000.0f) ? 16 : 32;
     }
 
-    // Calculate chunks per face (auto or manual)
-    int32 ActualChunksPerFace = bAutoChunkSizing ? CalculateAutoChunksPerFace() : ChunksPerFace;
-    ChunksPerFace = ActualChunksPerFace;
+    if (bAutoChunkSizing)
+    {
+        // Calculate required chunks to cover the face center (worst case spacing)
+        // ArcLength at center approx 2.0 * Radius.
+        // We add a safety buffer (Overlap) to ensuring no gaps.
+        float SafetyMultiplier = 1.05f;
+        float RequiredCoverage = PlanetRadius * 2.0f * SafetyMultiplier;
+        float ChunkPhysicalWidth = VoxelResolution * VoxelSize;
+
+        int32 NeededChunks = FMath::CeilToInt(RequiredCoverage / ChunkPhysicalWidth);
+
+        ChunksPerFace = FMath::Clamp(NeededChunks, MinChunksPerFace, MaxChunksPerFace);
+
+        // If we are capped by MaxChunksPerFace, we MUST increase VoxelSize to bridge the gap
+        if (NeededChunks > MaxChunksPerFace)
+        {
+            // Back-calculate VoxelSize: ChunksPerFace * Res * NewVoxelSize = RequiredCoverage
+            VoxelSize = RequiredCoverage / (ChunksPerFace * VoxelResolution);
+            UE_LOG(LogTemp, Warning, TEXT("Planet too large for MaxChunksPerFace! Increased VoxelSize to %.2f to ensure coverage."), VoxelSize);
+        }
+    }
 
     // Grid spans the face - normalized from -1 to +1
     float GridStep = 2.0f / ChunksPerFace;
@@ -374,6 +411,7 @@ void ACubeSpherePlanet::PrepareGeneration()
 
     UE_LOG(LogTemp, Warning, TEXT("Initialized %d potential chunks for planet radius %.1f"), ChunkInfos.Num(), PlanetRadius);
 }
+
 
 FVector ACubeSpherePlanet::GetObserverPosition() const
 {

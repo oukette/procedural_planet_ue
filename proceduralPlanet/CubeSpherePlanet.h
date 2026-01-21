@@ -41,6 +41,11 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
         // Initializes the generation process by populating the spawn queue.
         void PrepareGeneration();
 
+        // Tick sub-functions
+        void UpdateLODAndStreaming();
+        void ProcessSpawnQueue();
+        void ProcessMeshUpdateQueue();
+
         // Destroys all existing chunks.
         UFUNCTION(CallInEditor, Category = "Planet|Actions", meta = (DisplayName = "Clear All Chunks"))
         void ClearAllChunks();
@@ -80,8 +85,8 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
 
         // Maximum chunks per face (when auto-sizing)
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Chunking",
-                  meta = (EditCondition = "bAutoChunkSizing", ClampMin = "1", ClampMax = "128", DisplayName = "Max Chunks Per Face"))
-        int32 MaxChunksPerFace = 32;
+                  meta = (EditCondition = "bAutoChunkSizing", ClampMin = "1", ClampMax = "256", DisplayName = "Max Chunks Per Face"))
+        int32 MaxChunksPerFace = 64;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         float PlanetRadius;
