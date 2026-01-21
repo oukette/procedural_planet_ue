@@ -2,6 +2,7 @@
 
 #include "CubeSpherePlanet.h"
 #include "VoxelChunk.h"
+#include "Math/RandomStream.h"
 #include "Kismet/KismetMathLibrary.h"
 
 
@@ -24,14 +25,14 @@ ACubeSpherePlanet::ACubeSpherePlanet()
     VoxelSize = 100.f;
     bEnableCollision = false;  // Default to false for performance
     bCastShadows = false;      // Default to false for performance
-    ChunksToProcessPerFrame = 2;
+    ChunksMeshUpdatesPerFrame = 2;
 
     // Staggered generation defaults
     bGenerateOnBeginPlay = true;
     ChunksToSpawnPerFrame = 8;
     MaxConcurrentChunkGenerations = 32;
     ActiveGenerationTasks = 0;
-    RenderDistance = 25000.0f;
+    RenderDistance = 150000.0f;
     CollisionDistance = 8000.0f;
 }
 
@@ -178,7 +179,7 @@ void ACubeSpherePlanet::ProcessMeshUpdateQueue()
 {
     // Process a limited number of finished chunks per frame to upload their mesh to the GPU
     int32 ProcessedCount = 0;
-    while (MeshUpdateQueue.Num() > 0 && ProcessedCount < ChunksToProcessPerFrame)
+    while (MeshUpdateQueue.Num() > 0 && ProcessedCount < ChunksMeshUpdatesPerFrame)
     {
         AVoxelChunk *Chunk = MeshUpdateQueue.Pop(false);  // Use FIFO for better visual progression
         if (Chunk && IsValid(Chunk))
@@ -293,6 +294,22 @@ void ACubeSpherePlanet::GeneratePlanet()
 }
 
 
+void ACubeSpherePlanet::GenerateSeedBasedPlanet()
+{
+    // Use the seed to generate a random radius
+    FRandomStream randStream(Seed);
+
+    // Set radius based on seed, with a max of 250,000 as requested.
+    // Using a reasonable minimum to avoid tiny planets.
+    PlanetRadius = randStream.RandRange(2000, 250000);
+
+    UE_LOG(LogTemp, Log, TEXT("Seed %d: Generated new PlanetRadius: %.2f"), Seed, PlanetRadius);
+
+    // The rest of the generation logic will adapt to the new radius.
+    PrepareGeneration();
+}
+
+
 void ACubeSpherePlanet::PrepareGeneration()
 {
     // 1. Clean up any previous state and stop ongoing generation.
@@ -302,7 +319,7 @@ void ACubeSpherePlanet::PrepareGeneration()
         return;
     }
 
-    // Define 6 cube faces - CORRECTED orientations
+    // Define 6 cube faces
     struct FaceInfo
     {
             FVector Normal;  // Points outward from cube center
@@ -326,7 +343,7 @@ void ACubeSpherePlanet::PrepareGeneration()
 
     const FVector PlanetCenterWorld = GetActorLocation();
 
-    // --- ADAPTIVE LOGIC ---
+    // Adaptive voxel logic
     if (bAutoChunkSizing)
     {
         // 1. Adapt Voxel Size: Maintain relative smoothness (Radius ~ 150x VoxelSize)
@@ -340,11 +357,11 @@ void ACubeSpherePlanet::PrepareGeneration()
         VoxelResolution = (PlanetRadius < 3000.0f) ? 16 : 32;
     }
 
+    // Adaptive chunks per face logic
     if (bAutoChunkSizing)
     {
         // Calculate required chunks to cover the face center (worst case spacing)
-        // ArcLength at center approx 2.0 * Radius.
-        // We add a safety buffer (Overlap) to ensuring no gaps.
+        // ArcLength at center approx 2.0 * Radius. We add a safety buffer (Overlap) to ensuring no gaps.
         float SafetyMultiplier = 1.05f;
         float RequiredCoverage = PlanetRadius * 2.0f * SafetyMultiplier;
         float ChunkPhysicalWidth = VoxelResolution * VoxelSize;

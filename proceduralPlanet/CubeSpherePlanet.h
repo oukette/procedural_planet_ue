@@ -54,6 +54,10 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
         UFUNCTION(CallInEditor, Category = "Planet|Actions", meta = (DisplayName = "Generate Planet"))
         void GeneratePlanet();
 
+        // Starts the staggered generation process with a seed-based radius.
+        UFUNCTION(CallInEditor, Category = "Planet|Actions", meta = (DisplayName = "Generate Seed-Based Planet"))
+        void GenerateSeedBasedPlanet();
+
         // Helper to get the camera position in both Editor and Runtime
         FVector GetObserverPosition() const;
 
@@ -118,8 +122,8 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
 
         // --- Staggered Generation ---
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization",
-                  meta = (DisplayName = "Mesh Updates Per Frame", ClampMin = "1", ClampMax = "100"))
-        int32 ChunksToProcessPerFrame;
+                  meta = (DisplayName = "Chunk Mesh Updates Per Frame", ClampMin = "1", ClampMax = "100"))
+        int32 ChunksMeshUpdatesPerFrame;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization",
                   meta = (DisplayName = "Chunks To Spawn Per Frame", ClampMin = "1", ClampMax = "100"))
