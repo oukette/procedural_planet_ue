@@ -67,4 +67,10 @@ class PROCEDURALPLANET_API AVoxelChunk : public AActor
 
     protected:
         virtual void OnConstruction(const FTransform &Transform) override;
+
+    private:
+        // Static helpers for async generation
+        static TArray<float> GenerateDensityField(int32 Resolution, float VoxelSize, float PlanetRadius, const FVector& LocalPlanetCenter);
+        static FChunkMeshData GenerateMeshFromDensity(const TArray<float>& Density, int32 Resolution, float VoxelSize, const FVector& LocalPlanetCenter);
+        static FVector VertexInterp(const FVector& P1, const FVector& P2, float D1, float D2);
 };
