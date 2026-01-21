@@ -52,80 +52,116 @@ void AVoxelChunk::GenerateChunkAsync()
         [WeakThis, Resolution, Size, Radius, Center, Amp, Freq, S, Transform]()
         {
             // 1. Generate Density (Local Buffer)
-            const int OverlapRes = Resolution + 1;
-            const int NumVoxels = (OverlapRes + 1) * (OverlapRes + 1) * (OverlapRes + 1);
+            const int SampleCount = Resolution + 1;
+            const int TotalVoxels = SampleCount * SampleCount * SampleCount;
 
             TArray<float> LocalDensity;
-            LocalDensity.SetNumUninitialized(NumVoxels);
+            LocalDensity.SetNumUninitialized(TotalVoxels);
 
             const FVector CenterOffset = FVector(Resolution / 2.0f);
 
-            for (int z = 0; z <= OverlapRes; z++)
-                for (int y = 0; y <= OverlapRes; y++)
-                    for (int x = 0; x <= OverlapRes; x++)
+            // Optimization: Transform PlanetCenter to local space
+            FVector LocalPlanetCenter = Transform.InverseTransformPosition(Center);
+
+            // Generate density values - fill the entire array
+            int32 Index = 0;
+            for (int32 z = 0; z < SampleCount; z++)
+            {
+                for (int32 y = 0; y < SampleCount; y++)
+                {
+                    for (int32 x = 0; x < SampleCount; x++)
                     {
-                        const int Index = x + y * (OverlapRes + 1) + z * (OverlapRes + 1) * (OverlapRes + 1);
-
                         FVector LocalPos = (FVector(x, y, z) - CenterOffset) * Size;
-                        FVector WorldPos = Transform.TransformPosition(LocalPos);
 
-                        float DistanceToCenter = FVector::Distance(WorldPos, Center);
-                        float BaseDensity = Radius - DistanceToCenter;
-                        float Noise = FMath::PerlinNoise3D(WorldPos * Freq + FVector(S));
+                        // Optimization: Calculate distance in local space
+                        float DistanceToCenter = FVector::Distance(LocalPos, LocalPlanetCenter);
 
-                        LocalDensity[Index] = BaseDensity + Noise * Amp;
+                        // Shift surface slightly off-center (0.52f) to avoid integer harmonics with grid nodes.
+                        // This prevents "circle of holes" artifacts where the sphere surface aligns perfectly with voxel layers.
+                        float BaseDensity = (Radius - DistanceToCenter) / Size;
+
+                        // LocalDensity[Index] = BaseDensity + Noise * Amp;
+                        LocalDensity[Index] = BaseDensity;
+                        Index++;
                     }
+                }
+            }
 
             // 2. Generate Mesh (Marching Cubes)
             TArray<FVector> Vertices;
             TArray<int32> Triangles;
             TArray<FVector> Normals;
 
-            auto DensityAt = [&](int x, int y, int z)
+            auto DensityAt = [&LocalDensity, SampleCount](int32 x, int32 y, int32 z) -> float
             {
-                x = FMath::Clamp(x, 0, OverlapRes);
-                y = FMath::Clamp(y, 0, OverlapRes);
-                z = FMath::Clamp(z, 0, OverlapRes);
-                return LocalDensity[x + y * (OverlapRes + 1) + z * (OverlapRes + 1) * (OverlapRes + 1)];
+                // Bounds check
+                if (x < 0 || x >= SampleCount || y < 0 || y >= SampleCount || z < 0 || z >= SampleCount)
+                {
+                    return -1.0f;  // Return "outside" value for out of bounds
+                }
+                const int32 Idx = x + y * SampleCount + z * SampleCount * SampleCount;
+                return LocalDensity[Idx];
             };
 
             auto VertexInterp = [&](const FVector &P1, const FVector &P2, float D1, float D2)
             {
-                if (FMath::IsNearlyZero(D1 - D2, 1e-8f))
-                    return P1;
-                float T = FMath::Clamp(D1 / (D1 - D2), 0.0f, 1.0f);
+                const float Epsilon = 1e-6f;
+                float Denom = D1 - D2;
+
+                if (FMath::Abs(Denom) < Epsilon)
+                    return (P1 + P2) * 0.5f;
+
+                float T = D1 / Denom;
                 return P1 + T * (P2 - P1);
             };
 
             const FVector CornerOffsets[8] = {
                 FVector(0, 0, 0), FVector(1, 0, 0), FVector(1, 1, 0), FVector(0, 1, 0), FVector(0, 0, 1), FVector(1, 0, 1), FVector(1, 1, 1), FVector(0, 1, 1)};
+
             const int EdgeIndex[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
 
-            for (int z = 0; z < Resolution; z++)
-                for (int y = 0; y < Resolution; y++)
-                    for (int x = 0; x < Resolution; x++)
+            // Process each cube in the grid
+            for (int32 z = 0; z < Resolution; z++)
+            {
+                for (int32 y = 0; y < Resolution; y++)
+                {
+                    for (int32 x = 0; x < Resolution; x++)
                     {
+                        // Get density and position for all 8 corners of this cube
                         float D[8];
                         FVector P[8];
-                        for (int i = 0; i < 8; i++)
+
+                        for (int32 i = 0; i < 8; i++)
                         {
-                            int ix = x + CornerOffsets[i].X;
-                            int iy = y + CornerOffsets[i].Y;
-                            int iz = z + CornerOffsets[i].Z;
+                            int32 ix = x + static_cast<int32>(CornerOffsets[i].X);
+                            int32 iy = y + static_cast<int32>(CornerOffsets[i].Y);
+                            int32 iz = z + static_cast<int32>(CornerOffsets[i].Z);
+
                             D[i] = DensityAt(ix, iy, iz);
                             P[i] = (FVector(ix, iy, iz) - CenterOffset) * Size;
                         }
 
-                        int CubeIndex = 0;
-                        for (int i = 0; i < 8; i++)
-                            if (D[i] > 0.f)
+                        // Determine cube configuration (which corners are inside/outside)
+                        constexpr float DensityEpsilon = 1e-4f;
+
+                        auto IsInside = [DensityEpsilon](float D) { return D < -DensityEpsilon; };
+
+                        int32 CubeIndex = 0;
+                        for (int32 i = 0; i < 8; i++)
+                        {
+                            if (IsInside(D[i]))
                                 CubeIndex |= (1 << i);
+                        }
+
+                        // Skip if cube is entirely inside or outside
                         if (CubeIndex == 0 || CubeIndex == 255)
                             continue;
 
-                        int edges = EdgeTable[CubeIndex];
+                        // Get edges that are intersected by the surface
+                        int32 edges = EdgeTable[CubeIndex];
                         FVector EdgeVertex[12] = {FVector::ZeroVector};
-                        for (int e = 0; e < 12; e++)
+
+                        for (int32 e = 0; e < 12; e++)
                         {
                             if (edges & (1 << e))
                             {
@@ -133,26 +169,48 @@ void AVoxelChunk::GenerateChunkAsync()
                             }
                         }
 
-                        for (int i = 0; TriTable[CubeIndex][i] != -1; i += 3)
+                        // Generate triangles for this cube
+                        for (int32 i = 0; TriTable[CubeIndex][i] != -1; i += 3)
                         {
-                            int v0 = Vertices.Add(EdgeVertex[TriTable[CubeIndex][i + 0]]);
-                            int v1 = Vertices.Add(EdgeVertex[TriTable[CubeIndex][i + 1]]);
-                            int v2 = Vertices.Add(EdgeVertex[TriTable[CubeIndex][i + 2]]);
-                            Triangles.Add(v0);
-                            Triangles.Add(v2);
-                            Triangles.Add(v1);
+                            // Get vertices in LOCAL space
+                            FVector V0_Local = EdgeVertex[TriTable[CubeIndex][i + 0]];
+                            FVector V1_Local = EdgeVertex[TriTable[CubeIndex][i + 1]];
+                            FVector V2_Local = EdgeVertex[TriTable[CubeIndex][i + 2]];
 
-                            // Calculate Normal
-                            FVector Grad;
-                            Grad.X = DensityAt(x + 1, y, z) - DensityAt(x - 1, y, z);
-                            Grad.Y = DensityAt(x, y + 1, z) - DensityAt(x, y - 1, z);
-                            Grad.Z = DensityAt(x, y, z + 1) - DensityAt(x, y, z - 1);
-                            FVector N = (-Grad).GetSafeNormal();
-                            Normals.Add(N);
-                            Normals.Add(N);
-                            Normals.Add(N);
+                            // Add vertices to array (in local space)
+                            int32 Idx0 = Vertices.Add(V0_Local);
+                            int32 Idx1 = Vertices.Add(V1_Local);
+                            int32 Idx2 = Vertices.Add(V2_Local);
+
+                            // Add triangles with correct winding
+                            Triangles.Add(Idx0);
+                            Triangles.Add(Idx1);
+                            Triangles.Add(Idx2);
+
+                            // Compute normals in WORLD space, then transform to local
+                            // Transform each vertex to world space
+                            FVector V0_World = Transform.TransformPosition(V0_Local);
+                            FVector V1_World = Transform.TransformPosition(V1_Local);
+                            FVector V2_World = Transform.TransformPosition(V2_Local);
+
+                            // Compute outward normals in world space
+                            FVector N0_World = (V0_World - Center).GetSafeNormal();
+                            FVector N1_World = (V1_World - Center).GetSafeNormal();
+                            FVector N2_World = (V2_World - Center).GetSafeNormal();
+
+                            // Transform normals to local space (direction only, no scale)
+                            FVector N0_Local = Transform.InverseTransformVectorNoScale(N0_World);
+                            FVector N1_Local = Transform.InverseTransformVectorNoScale(N1_World);
+                            FVector N2_Local = Transform.InverseTransformVectorNoScale(N2_World);
+
+                            // Add normals
+                            Normals.Add(N0_Local);
+                            Normals.Add(N1_Local);
+                            Normals.Add(N2_Local);
                         }
                     }
+                }
+            }
 
             // 3. Apply to Main Thread
             AsyncTask(ENamedThreads::GameThread,

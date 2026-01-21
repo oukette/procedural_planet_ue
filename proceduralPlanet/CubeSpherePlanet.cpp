@@ -35,6 +35,7 @@ void ACubeSpherePlanet::OnConstruction(const FTransform &Transform)
     GenerateVoxelChunks();
 }
 
+
 void ACubeSpherePlanet::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
@@ -52,12 +53,51 @@ void ACubeSpherePlanet::Tick(float DeltaTime)
     }
 }
 
-bool ACubeSpherePlanet::ShouldTickIfViewportsOnly() const
-{
-    return true;
-}
+
+bool ACubeSpherePlanet::ShouldTickIfViewportsOnly() const { return true; }
+
 
 void ACubeSpherePlanet::EnqueueChunkForMeshUpdate(AVoxelChunk *Chunk) { MeshUpdateQueue.Add(Chunk); }
+
+
+int32 ACubeSpherePlanet::CalculateAutoChunksPerFace() const
+{
+    // If auto-sizing is disabled, return the manual setting
+    if (!bAutoChunkSizing)
+    {
+        return ChunksPerFace;
+    }
+
+    // 1. Face Width (Arc Length)
+    // The arc length of a cube face projected on a sphere is exactly PI/2 * Radius.
+    // This replaces the "EquatorToFaceRatio = 4.0" logic (Circumference / 4).
+    float FaceArcLength = PlanetRadius * HALF_PI;
+
+    // 2. Chunk Size
+    // Calculate chunk physical size based on voxel settings
+    float ChunkPhysicalSize = VoxelResolution * VoxelSize;
+
+    // 3. Curvature Overlap (Adaptive)
+    // We need more overlap when the chunk size is large relative to the planet radius.
+    // Instead of a fixed scale (2000.0f), we derive it from ChunkPhysicalSize.
+    // If chunks are physically larger, they diverge more, requiring a higher factor.
+    const float BaseOverlapFactor = 1.1f;      // 10% base overlap for precision
+    const float CurvatureSensitivity = 0.75f;  // Controls how much overlap is added per unit of relative curvature
+    const float MinRadiusForCurvature = 100.0f;
+
+    float CurvatureFactor = BaseOverlapFactor + ((ChunkPhysicalSize * CurvatureSensitivity) / FMath::Max(MinRadiusForCurvature, PlanetRadius));
+
+    // 4. Final Calculation
+    float NeededChunks = (FaceArcLength / ChunkPhysicalSize) * ChunkDensityFactor * CurvatureFactor;
+
+    // Round up to ensure coverage, then clamp
+    int32 CalculatedChunks = FMath::CeilToInt(NeededChunks);
+    CalculatedChunks = FMath::Clamp(CalculatedChunks, MinChunksPerFace, MaxChunksPerFace);
+
+    // Ensure it's at least 1 and a reasonable value
+    return FMath::Max(1, CalculatedChunks);
+}
+
 
 void ACubeSpherePlanet::Destroyed()
 {
@@ -83,6 +123,7 @@ void ACubeSpherePlanet::Destroyed()
         }
     }
 }
+
 
 void ACubeSpherePlanet::GenerateVoxelChunks()
 {
@@ -131,6 +172,24 @@ void ACubeSpherePlanet::GenerateVoxelChunks()
                          {FVector(0, 0, -1), FVector(1, 0, 0), FVector(0, -1, 0)}};
 
     const FVector PlanetCenterWorld = GetActorLocation();
+
+    // --- ADAPTIVE LOGIC ---
+    if (bAutoChunkSizing)
+    {
+        // 1. Adapt Voxel Size: Maintain relative smoothness (Radius ~ 150x VoxelSize)
+        // This prevents "blocky" small planets and "noisy" large planets.
+        float TargetVoxelSize = PlanetRadius / 150.0f;
+        VoxelSize = FMath::Clamp(TargetVoxelSize, 25.0f, 400.0f);
+
+        // 2. Adapt Resolution:
+        // 32 is the sweet spot for Marching Cubes.
+        // We drop to 16 only for very small planets to save performance.
+        VoxelResolution = (PlanetRadius < 3000.0f) ? 16 : 32;
+    }
+
+    // Calculate chunks per face (auto or manual)
+    int32 ActualChunksPerFace = bAutoChunkSizing ? CalculateAutoChunksPerFace() : ChunksPerFace;
+    ChunksPerFace = ActualChunksPerFace;
 
     // Grid spans the face - normalized from -1 to +1
     float GridStep = 2.0f / ChunksPerFace;
