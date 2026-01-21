@@ -2,6 +2,7 @@
 
 
 #include "CubeSpherePlanet.h"
+#include "VoxelChunk.h"
 #include "Kismet/KismetMathLibrary.h"
 
 
@@ -25,26 +26,143 @@ ACubeSpherePlanet::ACubeSpherePlanet()
     bEnableCollision = false;  // Default to false for performance
     bCastShadows = false;      // Default to false for performance
     ChunksToProcessPerFrame = 2;
+
+    // Staggered generation defaults
+    bGenerateOnBeginPlay = true;
+    ChunksToSpawnPerFrame = 8;
+    MaxConcurrentChunkGenerations = 32;
+    ActiveGenerationTasks = 0;
+    RenderDistance = 25000.0f;
+    CollisionDistance = 8000.0f;
 }
 
 
 void ACubeSpherePlanet::OnConstruction(const FTransform &Transform)
 {
     Super::OnConstruction(Transform);
-
-    GenerateVoxelChunks();
+    // IMPORTANT: We no longer generate here by default as it causes severe editor freezes
+    // on large planets. Use the "Generate Planet" button in the details panel or enable
+    // bGenerateOnBeginPlay for runtime generation.
 }
 
+void ACubeSpherePlanet::BeginPlay()
+{
+    Super::BeginPlay();
+    if (bGenerateOnBeginPlay)
+    {
+        GeneratePlanet();
+    }
+}
 
 void ACubeSpherePlanet::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
-    // Process a limited number of chunks per frame to prevent lag spikes
+    // --- Staggered Generation Pipeline ---
+
+    // --- 0. LOD & Streaming Logic ---
+    // We check distances to manage spawning and collision.
+    // Optimization: In a full production game, you might time-slice this loop 
+    // (check 100 chunks per frame) instead of checking all every frame.
+    
+    FVector ObserverPos = GetObserverPosition();
+    float RenderDistSq = RenderDistance * RenderDistance;
+    float CollisionDistSq = CollisionDistance * CollisionDistance;
+
+    for (int32 i = 0; i < ChunkInfos.Num(); i++)
+    {
+        FChunkInfo& Info = ChunkInfos[i];
+        float DistSq = FVector::DistSquared(Info.WorldLocation, ObserverPos);
+
+        // 1. Spawning / Despawning
+        if (DistSq < RenderDistSq)
+        {
+            // Should be visible
+            if (Info.ActiveChunk == nullptr && !Info.bPendingSpawn)
+            {
+                ChunkSpawnQueue.Add(i);
+                Info.bPendingSpawn = true;
+            }
+        }
+        else
+        {
+            // Should be hidden (save RAM)
+            if (Info.ActiveChunk)
+            {
+                Info.ActiveChunk->Destroy();
+                Info.ActiveChunk = nullptr;
+            }
+            // If it was waiting to spawn, cancel it (simplistic handling)
+            // Note: Removing from array is slow, so we just let it spawn and die next frame, 
+            // or handle it in the spawn loop below.
+        }
+
+        // 2. Collision LOD
+        if (Info.ActiveChunk)
+        {
+            bool bShouldCollide = (DistSq < CollisionDistSq) && bEnableCollision;
+            Info.ActiveChunk->SetCollisionEnabled(bShouldCollide);
+        }
+    }
+
+    // --- Staggered Generation Pipeline ---
+
+    // 1. Spawn new chunk actors if we have capacity in the async pipeline
+    int32 SpawnedThisFrame = 0;
+    const FVector PlanetCenterWorld = GetActorLocation();
+
+    while (ChunkSpawnQueue.Num() > 0 && ActiveGenerationTasks < MaxConcurrentChunkGenerations && SpawnedThisFrame < ChunksToSpawnPerFrame)
+    {
+        // Get index of the chunk to spawn
+        int32 ChunkIndex = ChunkSpawnQueue.Pop(false);
+        
+        // Safety check
+        if (!ChunkInfos.IsValidIndex(ChunkIndex)) continue;
+        
+        FChunkInfo& Info = ChunkInfos[ChunkIndex];
+        Info.bPendingSpawn = false; // No longer pending
+
+        // Double check distance before spawning (in case player moved fast)
+        if (FVector::DistSquared(Info.WorldLocation, ObserverPos) > RenderDistSq) continue;
+        
+        // If already exists (rare edge case), skip
+        if (Info.ActiveChunk != nullptr) continue;
+
+        AVoxelChunk *Chunk = GetWorld()->SpawnActorDeferred<AVoxelChunk>(AVoxelChunk::StaticClass(), Info.Transform, this);
+        if (Chunk)
+        {
+            // Set chunk parameters BEFORE finishing spawn.
+            Chunk->VoxelResolution = VoxelResolution;
+            Chunk->VoxelSize = VoxelSize;
+            Chunk->PlanetRadius = PlanetRadius;
+            Chunk->PlanetCenter = PlanetCenterWorld;
+            Chunk->NoiseAmplitude = NoiseAmplitude;
+            Chunk->NoiseFrequency = NoiseFrequency;
+            Chunk->Seed = Seed;
+            Chunk->bEnableCollision = bEnableCollision;
+            Chunk->ProceduralMesh->SetCastShadow(bCastShadows);
+
+            // Finish spawning. This will call OnConstruction on the chunk.
+            Chunk->FinishSpawning(Info.Transform);
+
+            Chunk->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
+            Chunk->SetOwner(this);
+
+            // Trigger the async generation and track it.
+            Chunk->GenerateChunkAsync();
+            ActiveGenerationTasks++;
+
+            // Link back to our info struct
+            Info.ActiveChunk = Chunk;
+        }
+        SpawnedThisFrame++;
+    }
+
+    // 2. Process a limited number of finished chunks per frame to upload their mesh to the GPU
     int32 ProcessedCount = 0;
     while (MeshUpdateQueue.Num() > 0 && ProcessedCount < ChunksToProcessPerFrame)
     {
-        AVoxelChunk *Chunk = MeshUpdateQueue.Pop();  // LIFO is fine, or use RemoveAt(0) for FIFO
+        AVoxelChunk *Chunk = MeshUpdateQueue.Pop(false);  // Use FIFO for better visual progression
         if (Chunk && IsValid(Chunk))
         {
             Chunk->UploadMesh();
@@ -57,7 +175,17 @@ void ACubeSpherePlanet::Tick(float DeltaTime)
 bool ACubeSpherePlanet::ShouldTickIfViewportsOnly() const { return true; }
 
 
-void ACubeSpherePlanet::EnqueueChunkForMeshUpdate(AVoxelChunk *Chunk) { MeshUpdateQueue.Add(Chunk); }
+void ACubeSpherePlanet::OnChunkGenerationFinished(AVoxelChunk *Chunk)
+{
+    if (Chunk)
+    {
+        if (ActiveGenerationTasks > 0)
+        {
+            ActiveGenerationTasks--;
+        }
+        MeshUpdateQueue.Add(Chunk);
+    }
+}
 
 
 int32 ACubeSpherePlanet::CalculateAutoChunksPerFace() const
@@ -71,7 +199,8 @@ int32 ACubeSpherePlanet::CalculateAutoChunksPerFace() const
     // 1. Face Width (Arc Length)
     // The arc length of a cube face projected on a sphere is exactly PI/2 * Radius.
     // This replaces the "EquatorToFaceRatio = 4.0" logic (Circumference / 4).
-    float FaceArcLength = PlanetRadius * HALF_PI;
+    // float FaceArcLength = PlanetRadius * HALF_PI;
+    float FaceArcLength = PlanetRadius * 2.0f;
 
     // 2. Chunk Size
     // Calculate chunk physical size based on voxel settings
@@ -103,16 +232,31 @@ void ACubeSpherePlanet::Destroyed()
 {
     Super::Destroyed();
 
-    // Clean up chunks when the planet itself is destroyed (e.g. deleting from scene or preview actor cleanup)
-    for (AVoxelChunk *Chunk : VoxelChunks)
-    {
-        if (Chunk && IsValid(Chunk))
-        {
-            Chunk->Destroy();
-        }
-    }
+    // Ensure all generated chunks are destroyed with the planet
+    ClearAllChunks();
+}
 
-    // Fallback cleanup for any attached actors not in the array (handles edge cases during editor interaction)
+void ACubeSpherePlanet::ClearAllChunks()
+{
+    // Stop any generation in progress
+    ChunkSpawnQueue.Empty();
+    MeshUpdateQueue.Empty();
+    ActiveGenerationTasks = 0;
+
+    // Destroy all tracked chunks
+    for (FChunkInfo &Info : ChunkInfos)
+    {
+        if (Info.ActiveChunk && IsValid(Info.ActiveChunk))
+        {
+            Info.ActiveChunk->Destroy();
+        }
+        Info.ActiveChunk = nullptr;
+        Info.bPendingSpawn = false;
+    }
+    ChunkInfos.Empty();
+
+    // Fallback for any other attached chunks that might not have been in the VoxelChunks array
+    // (e.g., during a partial generation).
     TArray<AActor *> AttachedActors;
     GetAttachedActors(AttachedActors);
     for (AActor *Child : AttachedActors)
@@ -124,26 +268,16 @@ void ACubeSpherePlanet::Destroyed()
     }
 }
 
-
-void ACubeSpherePlanet::GenerateVoxelChunks()
+void ACubeSpherePlanet::GeneratePlanet()
 {
-    // Clear pending updates from previous generation
-    MeshUpdateQueue.Empty();
+    // This is the new public-facing function to start generation.
+    PrepareGeneration();
+}
 
-    // Fix: Robustly destroy all attached chunks to prevent duplication
-    TArray<AActor *> AttachedActors;
-    GetAttachedActors(AttachedActors);
-
-    for (AActor *Child : AttachedActors)
-    {
-        // Only destroy VoxelChunks, in case you have other things attached
-        if (Child && Child->IsA(AVoxelChunk::StaticClass()))
-        {
-            Child->Destroy();
-        }
-    }
-    VoxelChunks.Empty();
-
+void ACubeSpherePlanet::PrepareGeneration()
+{
+    // 1. Clean up any previous state and stop ongoing generation.
+    ClearAllChunks();
     if (!GetWorld())
     {
         return;
@@ -224,38 +358,33 @@ void ACubeSpherePlanet::GenerateVoxelChunks()
                 FVector chunkForwardDirection = FVector::CrossProduct(chunkUpDirection, chunkRightDirection);
                 FRotator chunkWorldRot = UKismetMathLibrary::MakeRotationFromAxes(chunkForwardDirection, chunkRightDirection, chunkUpDirection);
 
-                // Use deferred spawning to set parameters before its construction script runs.
+                // Create the lightweight chunk info
                 FTransform ChunkTransform(chunkWorldRot, chunkWorldPos);
-                AVoxelChunk *Chunk = GetWorld()->SpawnActorDeferred<AVoxelChunk>(AVoxelChunk::StaticClass(), ChunkTransform, this);
 
-                if (Chunk)
-                {
-                    // Set chunk parameters BEFORE finishing spawn.
-                    Chunk->VoxelResolution = VoxelResolution;
-                    Chunk->VoxelSize = VoxelSize;
-                    Chunk->PlanetRadius = PlanetRadius;
-                    Chunk->PlanetCenter = PlanetCenterWorld;
-                    Chunk->NoiseAmplitude = NoiseAmplitude;
-                    Chunk->NoiseFrequency = NoiseFrequency;
-                    Chunk->Seed = Seed;
-                    Chunk->bEnableCollision = bEnableCollision;
-                    Chunk->ProceduralMesh->SetCastShadow(bCastShadows);
+                FChunkInfo NewChunk;
+                NewChunk.Transform = ChunkTransform;
+                NewChunk.WorldLocation = chunkWorldPos;
+                NewChunk.ActiveChunk = nullptr;
+                NewChunk.bPendingSpawn = false;
 
-                    // Finish spawning. This will call OnConstruction on the chunk with the correct parameters.
-                    Chunk->FinishSpawning(ChunkTransform);
-
-                    // Attach with SNAP to target - this converts world pos to relative
-                    Chunk->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
-                    Chunk->SetOwner(this);  // Ensure ownership for lifecycle management
-
-                    // Trigger the async generation now that parameters are set
-                    Chunk->GenerateChunkAsync();
-
-                    VoxelChunks.Add(Chunk);
-                }
+                ChunkInfos.Add(NewChunk);
             }
         }
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("Generated %d chunks for planet radius %.1f"), VoxelChunks.Num(), PlanetRadius);
+    UE_LOG(LogTemp, Warning, TEXT("Initialized %d potential chunks for planet radius %.1f"), ChunkInfos.Num(), PlanetRadius);
+}
+
+FVector ACubeSpherePlanet::GetObserverPosition() const
+{
+    FVector Pos = FVector::ZeroVector;
+    if (GetWorld())
+    {
+        // This works for both Editor Viewports and Runtime Cameras!
+        if (GetWorld()->ViewLocationsRenderedLastFrame.Num() > 0)
+        {
+            Pos = GetWorld()->ViewLocationsRenderedLastFrame[0];
+        }
+    }
+    return Pos;
 }
