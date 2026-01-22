@@ -179,12 +179,25 @@ FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density
     const int SampleCount = Resolution + 1;
     const FVector CenterOffset = FVector(Resolution / 2.0f);
 
-    // Debug Colors: Green for High Res (0), Red for Low Res (1)
-    FColor DebugColor = (LODLevel == 0) ? FColor::Green : FColor::Red;
+    // Automatic Debug Colors for multiple LODs. Green (LOD0) -> Yellow -> Orange -> Red...
+    const static TArray<FColor> LODColors = {FColor::Green,
+                                             FColor::Yellow,
+                                             FColor(255, 165, 0),  // Orange
+                                             FColor::Red,
+                                             FColor::Magenta,
+                                             FColor::Cyan};
+
+    // Use the LOD level as an index, with a fallback to white if out of bounds.
+    FColor DebugColor = (LODLevel >= 0 && LODLevel < LODColors.Num()) ? LODColors[LODLevel] : FColor::White;
 
     const FVector CornerOffsets[8] = {
-        FVector(0, 0, 0), FVector(1, 0, 0), FVector(1, 1, 0), FVector(0, 1, 0), FVector(0, 0, 1), FVector(1, 0, 1), FVector(1, 1, 1), FVector(0, 1, 1)};
-    const int EdgeIndex[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+        FVector(0, 0, 0), FVector(1, 0, 0), FVector(1, 1, 0), FVector(0, 1, 0), 
+        FVector(0, 0, 1), FVector(1, 0, 1), FVector(1, 1, 1), FVector(0, 1, 1)};
+        
+    const int EdgeIndex[12][2] = {
+        {0, 1}, {1, 2}, {2, 3}, {3, 0}, 
+        {4, 5}, {5, 6}, {6, 7}, {7, 4}, 
+        {0, 4}, {1, 5}, {2, 6}, {3, 7}};
 
     for (int32 z = 0; z < Resolution; z++)
     {

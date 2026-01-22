@@ -7,6 +7,20 @@
 
 class AVoxelChunk;  // Forward declaration to avoid circular includes
 
+// A struct to define settings for a single Level of Detail.
+USTRUCT(BlueprintType)
+struct FLODInfo
+{
+	GENERATED_BODY()
+
+	// Distance at which this LOD (and higher detail ones) becomes active.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LOD")
+	float Distance = 10000.f;
+
+	// Voxel resolution for chunks at this LOD.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LOD")
+	int32 VoxelResolution = 32;
+};
 
 // Lightweight struct to manage chunk state without spawning an actor
 struct FChunkInfo
@@ -15,7 +29,7 @@ struct FChunkInfo
         FVector WorldLocation;  // Cached for fast distance checks
         AVoxelChunk *ActiveChunk = nullptr;
         bool bPendingSpawn = false;
-        int32 LODLevel = 0;  // Reserved for future resolution scaling
+        int32 LODLevel = -1;  // Current LOD level, -1 if inactive
 };
 
 
@@ -45,6 +59,9 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
 
         // Initializes the generation process by populating the spawn queue.
         void PrepareGeneration();
+
+        // Creates the planet far model for optimized rendering in far distance.
+        void CreateFarModel();
 
         // Tick sub-functions
         void UpdateLODAndStreaming();
@@ -110,6 +127,10 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
                   meta = (EditCondition = "bAutoChunkSizing", ClampMin = "1", ClampMax = "256", DisplayName = "Max Chunks Per Face"))
         int32 MaxChunksPerFace = 64;
 
+        // Automatically scales RenderDistance and LOD distances based on PlanetRadius.
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization|LOD", meta = (DisplayName = "Auto-Scale LODs"))
+        bool bAutoLOD = true;
+
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         float PlanetRadius;
 
@@ -123,9 +144,6 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
         int32 VoxelResolution;  // Per-chunk voxel count (Resolution for LOD 0)
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-        int32 LowResVoxelResolution;  // Resolution for LOD 1 (Far chunks, lower res)
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         float VoxelSize;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization")
@@ -137,13 +155,21 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
         // --- Rendering ---
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rendering")
         UMaterialInterface *DebugMaterial;
+        
+        // Flag to track if the FarPlanetModel was created by code.
+        bool bIsFarModelAutoCreated = false;
+
+        // Actor representing the planet when viewed from a great distance (e.g., a sphere with a procedural material).
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rendering")
+        AActor* FarPlanetModel;
 
         // --- LOD & Streaming ---
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization|LOD", meta = (ClampMin = "1000.0"))
-        float RenderDistance = 20000.0f;  // Distance for LOD 1 at which chunks are spawned (Low res chunks)
+        float RenderDistance = 150000.0f;  // Distance at which we switch from chunks to the FarPlanetModel.
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization|LOD", meta = (ClampMin = "500.0"))
-        float HighResDistance = 10000.0f;  // Distance for LOD 0 (High res chunks)
+        // Defines the distance and resolution for each level of detail. Must be sorted by distance, ascending.
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization|LOD", meta = (DisplayName = "LOD Settings"))
+        TArray<FLODInfo> LODSettings;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization|LOD", meta = (ClampMin = "100.0"))
         float CollisionDistance = 6000.0f;  // Distance at which collision is enabled
