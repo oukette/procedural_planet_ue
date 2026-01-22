@@ -20,6 +20,7 @@ AVoxelChunk::AVoxelChunk()
     // Sensible defaults
     VoxelResolution = 32;
     VoxelSize = 100.f;
+    CurrentLOD = 0;
     PlanetRadius = 10000.f;
     PlanetCenter = FVector(0, 0, 0);
     NoiseAmplitude = 350.f;
@@ -37,6 +38,7 @@ void AVoxelChunk::GenerateChunkAsync()
     // Capture parameters by value for thread safety
     int32 resolution = VoxelResolution;
     float voxelSize = VoxelSize;
+    int32 lodLevel = CurrentLOD;
     float planetRadius = PlanetRadius;
     FVector planetCenter = PlanetCenter;
     FTransform transform = GetActorTransform();  // Capture transform on main thread
@@ -44,7 +46,7 @@ void AVoxelChunk::GenerateChunkAsync()
 
     // Run on background thread
     Async(EAsyncExecution::ThreadPool,
-          [weakThis, resolution, voxelSize, planetRadius, planetCenter, transform]()
+          [weakThis, resolution, voxelSize, planetRadius, planetCenter, transform, lodLevel]()
           {
               // Optimization: Transform PlanetCenter to local space
               FVector LocalPlanetCenter = transform.InverseTransformPosition(planetCenter);
@@ -53,7 +55,7 @@ void AVoxelChunk::GenerateChunkAsync()
               TArray<float> LocalDensity = GenerateDensityField(resolution, voxelSize, planetRadius, LocalPlanetCenter);
 
               // 2. Generate Mesh
-              FChunkMeshData MeshData = GenerateMeshFromDensity(LocalDensity, resolution, voxelSize, LocalPlanetCenter);
+              FChunkMeshData MeshData = GenerateMeshFromDensity(LocalDensity, resolution, voxelSize, LocalPlanetCenter, lodLevel);
 
               // 3. Apply to Main Thread
               AsyncTask(ENamedThreads::GameThread,
@@ -74,7 +76,7 @@ void AVoxelChunk::GenerateChunkAsync()
 }
 
 
-void AVoxelChunk::UploadMesh()
+void AVoxelChunk::UploadMesh(UMaterialInterface *MaterialToApply)
 {
     ProceduralMesh->ClearAllMeshSections();
     ProceduralMesh->CreateMeshSection(0,
@@ -82,14 +84,20 @@ void AVoxelChunk::UploadMesh()
                                       GeneratedMeshData.Triangles,
                                       GeneratedMeshData.Normals,
                                       TArray<FVector2D>(),
-                                      TArray<FColor>(),
+                                      GeneratedMeshData.Colors,
                                       TArray<FProcMeshTangent>(),
                                       bEnableCollision);
+
+    if (MaterialToApply)
+    {
+        ProceduralMesh->SetMaterial(0, MaterialToApply);
+    }
 
     // Clear data to free memory
     GeneratedMeshData.Vertices.Empty();
     GeneratedMeshData.Triangles.Empty();
     GeneratedMeshData.Normals.Empty();
+    GeneratedMeshData.Colors.Empty();
 }
 
 
@@ -102,6 +110,18 @@ void AVoxelChunk::SetCollisionEnabled(bool bEnabled)
         // Note: Changing collision settings on ProcMesh might require a mesh update or
         // might not take effect immediately depending on engine version,
         // but SetCollisionEnabled is usually sufficient for runtime toggles.
+    }
+}
+
+
+void AVoxelChunk::UpdateChunkLOD(int32 NewLOD, int32 NewResolution, float NewVoxelSize)
+{
+    if (CurrentLOD != NewLOD || VoxelResolution != NewResolution || !FMath::IsNearlyEqual(VoxelSize, NewVoxelSize))
+    {
+        CurrentLOD = NewLOD;
+        VoxelResolution = NewResolution;
+        VoxelSize = NewVoxelSize;
+        GenerateChunkAsync();
     }
 }
 
@@ -152,12 +172,15 @@ FVector AVoxelChunk::VertexInterp(const FVector &P1, const FVector &P2, float D1
 }
 
 
-AVoxelChunk::FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density, int32 Resolution, float VoxelSize,
-                                                                 const FVector &LocalPlanetCenter)
+FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density, int32 Resolution, float VoxelSize, const FVector &LocalPlanetCenter,
+                                                    int32 LODLevel)
 {
     FChunkMeshData MeshData;
     const int SampleCount = Resolution + 1;
     const FVector CenterOffset = FVector(Resolution / 2.0f);
+
+    // Debug Colors: Green for High Res (0), Red for Low Res (1)
+    FColor DebugColor = (LODLevel == 0) ? FColor::Green : FColor::Red;
 
     const FVector CornerOffsets[8] = {
         FVector(0, 0, 0), FVector(1, 0, 0), FVector(1, 1, 0), FVector(0, 1, 0), FVector(0, 0, 1), FVector(1, 0, 1), FVector(1, 1, 1), FVector(0, 1, 1)};
@@ -215,6 +238,10 @@ AVoxelChunk::FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<fl
                     MeshData.Normals.Add((V0 - LocalPlanetCenter).GetSafeNormal());
                     MeshData.Normals.Add((V1 - LocalPlanetCenter).GetSafeNormal());
                     MeshData.Normals.Add((V2 - LocalPlanetCenter).GetSafeNormal());
+
+                    MeshData.Colors.Add(DebugColor);
+                    MeshData.Colors.Add(DebugColor);
+                    MeshData.Colors.Add(DebugColor);
                 }
             }
         }

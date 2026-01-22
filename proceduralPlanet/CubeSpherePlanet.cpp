@@ -23,7 +23,10 @@ ACubeSpherePlanet::ACubeSpherePlanet()
     NoiseFrequency = 0.0003f;
     VoxelResolution = 32;
     VoxelSize = 100.f;
+    LowResVoxelResolution = 16;
+    HighResDistance = 20000.f;
     bEnableCollision = false;  // Default to false for performance
+    DebugMaterial = nullptr;
     bCastShadows = false;      // Default to false for performance
     ChunksMeshUpdatesPerFrame = 2;
 
@@ -73,38 +76,85 @@ void ACubeSpherePlanet::UpdateLODAndStreaming()
     // (check 100 chunks per frame) instead of checking all every frame.
 
     FVector ObserverPos = GetObserverPosition();
+
+    // Squared distances for performance
     float RenderDistSq = RenderDistance * RenderDistance;
+    float HighResDistSq = HighResDistance * HighResDistance;
     float CollisionDistSq = CollisionDistance * CollisionDistance;
+
+    // Hysteresis factors (10% buffer) to prevent flickering at boundaries
+    float DowngradeDistSq = HighResDistSq * 1.21f;  // 1.1^2
+    float DespawnDistSq = RenderDistSq * 1.21f;
 
     for (int32 i = 0; i < ChunkInfos.Num(); i++)
     {
         FChunkInfo &Info = ChunkInfos[i];
         float DistSq = FVector::DistSquared(Info.WorldLocation, ObserverPos);
 
-        // 1. Spawning / Despawning
-        if (DistSq < RenderDistSq)
+        // Determine Target LOD: -1 (Hidden), 0 (High), 1 (Low)
+        int32 TargetLOD = -1;
+
+        if (Info.ActiveChunk)
         {
-            // Should be visible
-            if (Info.ActiveChunk == nullptr && !Info.bPendingSpawn)
+            // Hysteresis logic for existing chunks
+            if (Info.LODLevel == 0)  // Currently High
             {
-                ChunkSpawnQueue.Add(i);
-                Info.bPendingSpawn = true;
+                if (DistSq > DowngradeDistSq)
+                    TargetLOD = 1;
+                else
+                    TargetLOD = 0;
+            }
+            else  // Currently Low (1)
+            {
+                if (DistSq < HighResDistSq)
+                    TargetLOD = 0;
+                else if (DistSq > DespawnDistSq)
+                    TargetLOD = -1;
+                else
+                    TargetLOD = 1;
             }
         }
         else
         {
-            // Should be hidden (save RAM)
-            if (Info.ActiveChunk)
+            // Strict logic for new spawns
+            if (DistSq < HighResDistSq)
+                TargetLOD = 0;
+            else if (DistSq < RenderDistSq)
+                TargetLOD = 1;
+            else
+                TargetLOD = -1;
+        }
+
+        // Apply State Changes
+        if (Info.ActiveChunk)
+        {
+            if (TargetLOD == -1)
             {
                 Info.ActiveChunk->Destroy();
                 Info.ActiveChunk = nullptr;
             }
-            // If it was waiting to spawn, cancel it (simplistic handling)
-            // Note: Removing from array is slow, so we just let it spawn and die next frame,
-            // or handle it in the spawn loop below.
+            else if (TargetLOD != Info.LODLevel)
+            {
+                // Switch Resolution (LOD 0 <-> LOD 1)
+                int32 NewRes = (TargetLOD == 0) ? VoxelResolution : LowResVoxelResolution;
+
+                // Compensate VoxelSize to keep physical chunk size constant
+                // Formula: NewSize = (OriginalRes * OriginalSize) / NewRes
+                float NewVoxelSize = (TargetLOD == 0) ? VoxelSize : (VoxelResolution * VoxelSize) / (float)FMath::Max(1, NewRes);
+
+                Info.ActiveChunk->UpdateChunkLOD(TargetLOD, NewRes, NewVoxelSize);
+                Info.LODLevel = TargetLOD;
+            }
+        }
+        else if (TargetLOD != -1 && !Info.bPendingSpawn)
+        {
+            // Queue for spawn
+            Info.LODLevel = TargetLOD;
+            ChunkSpawnQueue.Add(i);
+            Info.bPendingSpawn = true;
         }
 
-        // 2. Collision LOD
+        // Collision LOD (Independent of visual LOD, usually matches High Res)
         if (Info.ActiveChunk)
         {
             bool bShouldCollide = (DistSq < CollisionDistSq) && bEnableCollision;
@@ -125,7 +175,7 @@ void ACubeSpherePlanet::ProcessSpawnQueue()
         // Get index of the chunk to spawn
         int32 ChunkIndex = ChunkSpawnQueue.Pop(false);
 
-        // Calculate RenderDistSq locally since we are in a new method
+        // Calculate RenderDistSq locally
         float RenderDistSq = RenderDistance * RenderDistance;
         FVector ObserverPos = GetObserverPosition();
 
@@ -148,8 +198,14 @@ void ACubeSpherePlanet::ProcessSpawnQueue()
         if (Chunk)
         {
             // Set chunk parameters BEFORE finishing spawn.
-            Chunk->VoxelResolution = VoxelResolution;
-            Chunk->VoxelSize = VoxelSize;
+            int32 TargetRes = (Info.LODLevel == 0) ? VoxelResolution : LowResVoxelResolution;
+            
+            // Calculate compensated size so the chunk fills the same physical volume
+            float TargetSize = (Info.LODLevel == 0) ? VoxelSize : (VoxelResolution * VoxelSize) / (float)FMath::Max(1, TargetRes);
+
+            Chunk->CurrentLOD = Info.LODLevel;
+            Chunk->VoxelResolution = TargetRes;
+            Chunk->VoxelSize = TargetSize;
             Chunk->PlanetRadius = PlanetRadius;
             Chunk->PlanetCenter = PlanetCenterWorld;
             Chunk->NoiseAmplitude = NoiseAmplitude;
@@ -184,7 +240,7 @@ void ACubeSpherePlanet::ProcessMeshUpdateQueue()
         AVoxelChunk *Chunk = MeshUpdateQueue.Pop(false);  // Use FIFO for better visual progression
         if (Chunk && IsValid(Chunk))
         {
-            Chunk->UploadMesh();
+            Chunk->UploadMesh(DebugMaterial);
         }
         ProcessedCount++;
     }
@@ -355,6 +411,7 @@ void ACubeSpherePlanet::PrepareGeneration()
         // 32 is the sweet spot for Marching Cubes.
         // We drop to 16 only for very small planets to save performance.
         VoxelResolution = (PlanetRadius < 3000.0f) ? 16 : 32;
+        LowResVoxelResolution = FMath::Max(8, VoxelResolution / 2);
     }
 
     // Adaptive chunks per face logic
