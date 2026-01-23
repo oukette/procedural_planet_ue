@@ -41,21 +41,31 @@ void AVoxelChunk::GenerateChunkAsync()
     int32 lodLevel = CurrentLOD;
     float planetRadius = PlanetRadius;
     FVector planetCenter = PlanetCenter;
+
+    // Capture projection params
+    FVector fNormal = FaceNormal;
+    FVector fRight = FaceRight;
+    FVector fUp = FaceUp;
+    FVector2D uvMin = ChunkUVMin;
+    FVector2D uvMax = ChunkUVMax;
+
     FTransform transform = GetActorTransform();  // Capture transform on main thread
     TWeakObjectPtr<AVoxelChunk> weakThis(this);  // Weak pointer for safety
 
     // Run on background thread
     Async(EAsyncExecution::ThreadPool,
-          [weakThis, resolution, voxelSize, planetRadius, planetCenter, transform, lodLevel]()
+          [weakThis, resolution, voxelSize, planetRadius, planetCenter, transform, lodLevel, fNormal, fRight, fUp, uvMin, uvMax]()
           {
               // Optimization: Transform PlanetCenter to local space
               FVector LocalPlanetCenter = transform.InverseTransformPosition(planetCenter);
 
               // 1. Generate Density
-              TArray<float> LocalDensity = GenerateDensityField(resolution, voxelSize, planetRadius, LocalPlanetCenter);
+              TArray<float> LocalDensity =
+                  GenerateDensityField(resolution, voxelSize, planetRadius, LocalPlanetCenter, transform, fNormal, fRight, fUp, uvMin, uvMax);
 
               // 2. Generate Mesh
-              FChunkMeshData MeshData = GenerateMeshFromDensity(LocalDensity, resolution, voxelSize, LocalPlanetCenter, lodLevel);
+              FChunkMeshData MeshData = GenerateMeshFromDensity(
+                  LocalDensity, resolution, voxelSize, planetRadius, LocalPlanetCenter, transform, fNormal, fRight, fUp, uvMin, uvMax, lodLevel);
 
               // 3. Apply to Main Thread
               AsyncTask(ENamedThreads::GameThread,
@@ -126,14 +136,40 @@ void AVoxelChunk::UpdateChunkLOD(int32 NewLOD, int32 NewResolution, float NewVox
 }
 
 
-TArray<float> AVoxelChunk::GenerateDensityField(int32 Resolution, float VoxelSize, float PlanetRadius, const FVector &LocalPlanetCenter)
+// Helper to calculate the exact world position of a voxel grid point using Spherified Cube mapping
+static FVector GetProjectedPosition(int32 x, int32 y, int32 z, int32 Resolution, float VoxelSize, float PlanetRadius, 
+                                    const FVector& FaceNormal, const FVector& FaceRight, const FVector& FaceUp, 
+                                    const FVector2D& UVMin, const FVector2D& UVMax)
+{
+    // 1. Calculate normalized U, V for this specific voxel (0.0 to 1.0 within the chunk)
+    float uPct = x / (float)Resolution;
+    float vPct = y / (float)Resolution;
+
+    // 2. Map to the Face U, V (-1.0 to 1.0 space of the whole cube face)
+    float u = FMath::Lerp(UVMin.X, UVMax.X, uPct);
+    float v = FMath::Lerp(UVMin.Y, UVMax.Y, vPct);
+
+    // 3. Point on Cube
+    FVector PointOnCube = FaceNormal + FaceRight * u + FaceUp * v;
+
+    // 4. Spherify (using the same logic as Planet)
+    FVector SphereDir = ACubeSpherePlanet::GetSpherifiedCubePoint(PointOnCube);
+
+    // 5. Altitude (Z is radial height). Center Z around 0 (surface) or offset as needed.
+    // Here we assume Z=Resolution/2 is the "surface" level to allow digging/building up.
+    float Altitude = (z - Resolution / 2.0f) * VoxelSize;
+
+    return SphereDir * (PlanetRadius + Altitude);
+}
+
+
+TArray<float> AVoxelChunk::GenerateDensityField(int32 Resolution, float VoxelSize, float PlanetRadius, const FVector &LocalPlanetCenter, const FTransform& Transform, const FVector& FaceNormal, const FVector& FaceRight, const FVector& FaceUp, const FVector2D& UVMin, const FVector2D& UVMax)
 {
     const int SampleCount = Resolution + 1;
     const int TotalVoxels = SampleCount * SampleCount * SampleCount;
     TArray<float> LocalDensity;
     LocalDensity.SetNumUninitialized(TotalVoxels);
 
-    const FVector CenterOffset = FVector(Resolution / 2.0f);
     int32 Index = 0;
 
     for (int32 z = 0; z < SampleCount; z++)
@@ -142,16 +178,16 @@ TArray<float> AVoxelChunk::GenerateDensityField(int32 Resolution, float VoxelSiz
         {
             for (int32 x = 0; x < SampleCount; x++)
             {
-                FVector LocalPos = (FVector(x, y, z) - CenterOffset) * VoxelSize;
+                // Calculate the warped position in World Space
+                FVector WorldPos = GetProjectedPosition(x, y, z, Resolution, VoxelSize, PlanetRadius, FaceNormal, FaceRight, FaceUp, UVMin, UVMax);
+                
+                // Transform to Local Space for density calculation relative to center (if needed)
+                // But density is usually based on WorldPos (for noise) or Distance to Center.
+                // Distance to Planet Center is simple:
+                float DistToPlanetCenter = WorldPos.Size();
 
-                // Use double precision for distance calculation to prevent faceting/gaps on large planets
-                double DX = (double)LocalPos.X - (double)LocalPlanetCenter.X;
-                double DY = (double)LocalPos.Y - (double)LocalPlanetCenter.Y;
-                double DZ = (double)LocalPos.Z - (double)LocalPlanetCenter.Z;
-                float DistanceToCenter = (float)FMath::Sqrt(DX * DX + DY * DY + DZ * DZ);
-
-                // Shift surface slightly off-center logic preserved from original
-                LocalDensity[Index++] = (PlanetRadius - DistanceToCenter) / VoxelSize;
+                // Simple sphere density
+                LocalDensity[Index++] = (PlanetRadius - DistToPlanetCenter) / VoxelSize;
             }
         }
     }
@@ -172,12 +208,12 @@ FVector AVoxelChunk::VertexInterp(const FVector &P1, const FVector &P2, float D1
 }
 
 
-FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density, int32 Resolution, float VoxelSize, const FVector &LocalPlanetCenter,
-                                                    int32 LODLevel)
+FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density, int32 Resolution, float VoxelSize, float PlanetRadius, const FVector &LocalPlanetCenter,
+                                                    const FTransform &Transform, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp,
+                                                    const FVector2D &UVMin, const FVector2D &UVMax, int32 LODLevel)
 {
     FChunkMeshData MeshData;
     const int SampleCount = Resolution + 1;
-    const FVector CenterOffset = FVector(Resolution / 2.0f);
 
     // Automatic Debug Colors for multiple LODs. Green (LOD0) -> Yellow -> Orange -> Red...
     const static TArray<FColor> LODColors = {FColor::Green,
@@ -191,13 +227,9 @@ FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density
     FColor DebugColor = (LODLevel >= 0 && LODLevel < LODColors.Num()) ? LODColors[LODLevel] : FColor::White;
 
     const FVector CornerOffsets[8] = {
-        FVector(0, 0, 0), FVector(1, 0, 0), FVector(1, 1, 0), FVector(0, 1, 0), 
-        FVector(0, 0, 1), FVector(1, 0, 1), FVector(1, 1, 1), FVector(0, 1, 1)};
-        
-    const int EdgeIndex[12][2] = {
-        {0, 1}, {1, 2}, {2, 3}, {3, 0}, 
-        {4, 5}, {5, 6}, {6, 7}, {7, 4}, 
-        {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+        FVector(0, 0, 0), FVector(1, 0, 0), FVector(1, 1, 0), FVector(0, 1, 0), FVector(0, 0, 1), FVector(1, 0, 1), FVector(1, 1, 1), FVector(0, 1, 1)};
+
+    const int EdgeIndex[12][2] = {{0, 1}, {1, 2}, {2, 3}, {3, 0}, {4, 5}, {5, 6}, {6, 7}, {7, 4}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
 
     for (int32 z = 0; z < Resolution; z++)
     {
@@ -217,7 +249,12 @@ FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density
 
                     // Inline density access
                     D[i] = Density[ix + iy * SampleCount + iz * SampleCount * SampleCount];
-                    P[i] = (FVector(ix, iy, iz) - CenterOffset) * VoxelSize;
+                    
+                    // Calculate Warped Position
+                    FVector WorldPos = GetProjectedPosition(ix, iy, iz, Resolution, VoxelSize, PlanetRadius, FaceNormal, FaceRight, FaceUp, UVMin, UVMax);
+                    
+                    // Convert to Actor Local Space for the mesh
+                    P[i] = Transform.InverseTransformPosition(WorldPos);
 
                     if (D[i] < -1e-4f)
                         CubeIndex |= (1 << i);
@@ -247,10 +284,20 @@ FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density
                     MeshData.Triangles.Add(MeshData.Vertices.Add(V1));
                     MeshData.Triangles.Add(MeshData.Vertices.Add(V2));
 
-                    // Optimized Normal Calculation: (Vertex - LocalCenter) is the radial vector in local space
-                    MeshData.Normals.Add((V0 - LocalPlanetCenter).GetSafeNormal());
-                    MeshData.Normals.Add((V1 - LocalPlanetCenter).GetSafeNormal());
-                    MeshData.Normals.Add((V2 - LocalPlanetCenter).GetSafeNormal());
+                    // Improved Normal Calculation: Face Normals
+                    // Using the sphere normal ((V - Center)) ignores terrain noise/features.
+                    // We calculate the cross product of the triangle edges for correct flat shading.
+                    FVector TriNormal = FVector::CrossProduct(V1 - V0, V2 - V0).GetSafeNormal();
+
+                    // Ensure normal points outwards from planet center
+                    if ((TriNormal | (V0 - LocalPlanetCenter)) < 0.0f)
+                    {
+                        TriNormal *= -1.0f;
+                    }
+
+                    MeshData.Normals.Add(TriNormal);
+                    MeshData.Normals.Add(TriNormal);
+                    MeshData.Normals.Add(TriNormal);
 
                     MeshData.Colors.Add(DebugColor);
                     MeshData.Colors.Add(DebugColor);

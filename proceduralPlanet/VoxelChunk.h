@@ -21,12 +21,18 @@ UCLASS()
 class PROCEDURALPLANET_API AVoxelChunk : public AActor
 {
         GENERATED_BODY()
-        
+
     private:
         // Static helpers for async generation
-        static TArray<float> GenerateDensityField(int32 Resolution, float VoxelSize, float PlanetRadius, const FVector &LocalPlanetCenter);
-        static FChunkMeshData GenerateMeshFromDensity(const TArray<float> &Density, int32 Resolution, float VoxelSize, const FVector &LocalPlanetCenter,
+        static TArray<float> GenerateDensityField(int32 Resolution, float VoxelSize, float PlanetRadius, const FVector &LocalPlanetCenter,
+                                                  const FTransform &Transform, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp,
+                                                  const FVector2D &UVMin, const FVector2D &UVMax);
+
+        static FChunkMeshData GenerateMeshFromDensity(const TArray<float> &Density, int32 Resolution, float VoxelSize, float PlanetRadius,
+                                                      const FVector &LocalPlanetCenter, const FTransform &Transform, const FVector &FaceNormal,
+                                                      const FVector &FaceRight, const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax,
                                                       int32 LODLevel);
+
         static FVector VertexInterp(const FVector &P1, const FVector &P2, float D1, float D2);
 
     protected:
@@ -74,6 +80,13 @@ class PROCEDURALPLANET_API AVoxelChunk : public AActor
 
         UPROPERTY(VisibleAnywhere, Category = "Optimization")
         bool bEnableCollision;
+
+        // Projection Params
+        FVector FaceNormal;
+        FVector FaceRight;
+        FVector FaceUp;
+        FVector2D ChunkUVMin;
+        FVector2D ChunkUVMax;
 
         // New Async function
         void GenerateChunkAsync();

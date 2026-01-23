@@ -278,6 +278,11 @@ void ACubeSpherePlanet::ProcessSpawnQueue()
             Chunk->NoiseFrequency = NoiseFrequency;
             Chunk->Seed = Seed;
             Chunk->bEnableCollision = bEnableCollision;
+            Chunk->FaceNormal = Info.FaceNormal;
+            Chunk->FaceRight = Info.FaceRight;
+            Chunk->FaceUp = Info.FaceUp;
+            Chunk->ChunkUVMin = Info.UVMin;
+            Chunk->ChunkUVMax = Info.UVMax;
             Chunk->ProceduralMesh->SetCastShadow(bCastShadows);
 
             // Finish spawning. This will call OnConstruction on the chunk.
@@ -329,6 +334,20 @@ void ACubeSpherePlanet::OnChunkGenerationFinished(AVoxelChunk *Chunk)
 }
 
 
+// Helper function to map a point on a unit cube to a unit sphere with equal area distribution.
+// (Spherified Cube mapping)
+FVector ACubeSpherePlanet::GetSpherifiedCubePoint(const FVector& p)
+{
+    float x2 = p.X * p.X;
+    float y2 = p.Y * p.Y;
+    float z2 = p.Z * p.Z;
+    float x = p.X * FMath::Sqrt(1.0f - y2 / 2.0f - z2 / 2.0f + y2 * z2 / 3.0f);
+    float y = p.Y * FMath::Sqrt(1.0f - z2 / 2.0f - x2 / 2.0f + z2 * x2 / 3.0f);
+    float z = p.Z * FMath::Sqrt(1.0f - x2 / 2.0f - y2 / 2.0f + x2 * y2 / 3.0f);
+    return FVector(x, y, z);
+}
+
+
 int32 ACubeSpherePlanet::CalculateAutoChunksPerFace() const
 {
     // If auto-sizing is disabled, return the manual setting
@@ -338,25 +357,17 @@ int32 ACubeSpherePlanet::CalculateAutoChunksPerFace() const
     }
 
     // 1. Face Width (Arc Length)
-    // The arc length of a cube face projected on a sphere is exactly PI/2 * Radius.
-    // float FaceArcLength = PlanetRadius * HALF_PI;
-    float FaceArcLength = PlanetRadius * 2.0f;
+    // With Projected Grid Mapping, we can use the average arc length (HALF_PI)
+    // because the chunks warp to fill the gaps.
+    float FaceArcLength = PlanetRadius * HALF_PI;
 
     // 2. Chunk Size
     // Calculate chunk physical size based on voxel settings
     float ChunkPhysicalSize = VoxelResolution * VoxelSize;
 
-    // 3. Curvature Overlap (Adaptive)
-    // We need more overlap when the chunk size is large relative to the planet radius.
-    // If chunks are physically larger, they diverge more, requiring a higher factor.
-    const float BaseOverlapFactor = 1.1f;      // 10% base overlap for precision
-    const float CurvatureSensitivity = 0.75f;  // Controls how much overlap is added per unit of relative curvature
-    const float MinRadiusForCurvature = 100.0f;
-
-    float CurvatureFactor = BaseOverlapFactor + ((ChunkPhysicalSize * CurvatureSensitivity) / FMath::Max(MinRadiusForCurvature, PlanetRadius));
-
-    // 4. Final Calculation
-    float NeededChunks = (FaceArcLength / ChunkPhysicalSize) * ChunkDensityFactor * CurvatureFactor;
+    // 3. Final Calculation
+    // We no longer need massive overlap factors.
+    float NeededChunks = (FaceArcLength / ChunkPhysicalSize) * ChunkDensityFactor;
 
     // Round up to ensure coverage, then clamp
     int32 CalculatedChunks = FMath::CeilToInt(NeededChunks);
@@ -510,9 +521,8 @@ void ACubeSpherePlanet::PrepareGeneration()
     if (bAutoChunkSizing)
     {
         // Calculate required chunks to cover the face center (worst case spacing)
-        // ArcLength at center approx 2.0 * Radius. We add a safety buffer (Overlap) to ensuring no gaps.
-        float SafetyMultiplier = 1.05f;
-        float RequiredCoverage = PlanetRadius * 2.0f * SafetyMultiplier;
+        // With projection, we fit to the arc length.
+        float RequiredCoverage = PlanetRadius * HALF_PI;
         float ChunkPhysicalWidth = VoxelResolution * VoxelSize;
 
         int32 NeededChunks = FMath::CeilToInt(RequiredCoverage / ChunkPhysicalWidth);
@@ -562,14 +572,20 @@ void ACubeSpherePlanet::PrepareGeneration()
             for (int gridX = 0; gridX < ChunksPerFace; gridX++)
             {
                 // Normalized position on face: -1 to +1, centered in each grid cell
-                float u = -1.0f + (gridX + 0.5f) * GridStep;
-                float v = -1.0f + (gridY + 0.5f) * GridStep;
+                float uCenter = -1.0f + (gridX + 0.5f) * GridStep;
+                float vCenter = -1.0f + (gridY + 0.5f) * GridStep;
+
+                // Calculate Bounds for Projection
+                float uMin = -1.0f + gridX * GridStep;
+                float uMax = uMin + GridStep;
+                float vMin = -1.0f + gridY * GridStep;
+                float vMax = vMin + GridStep;
 
                 // 1. Calculate point on a unit cube face. This point represents the center of the chunk on the cube face.
-                FVector pointOnUnitCube = face.Normal + face.Right * u + face.Up * v;
+                FVector pointOnUnitCube = face.Normal + face.Right * uCenter + face.Up * vCenter;
 
-                // 2. Normalize to project onto a unit sphere. This gives the "up" direction for the chunk.
-                FVector chunkUpDirection = pointOnUnitCube.GetSafeNormal();
+                // 2. Apply Spherified Cube mapping to distribute chunks evenly on the sphere
+                FVector chunkUpDirection = GetSpherifiedCubePoint(pointOnUnitCube);
 
                 // 3. Scale by radius and offset by planet center to get the chunk's world position.
                 // This places the center of the chunk volume on the sphere's surface.
@@ -589,6 +605,11 @@ void ACubeSpherePlanet::PrepareGeneration()
                 NewChunk.WorldLocation = chunkWorldPos;
                 NewChunk.ActiveChunk = nullptr;
                 NewChunk.bPendingSpawn = false;
+                NewChunk.FaceNormal = face.Normal;
+                NewChunk.FaceRight = face.Right;
+                NewChunk.FaceUp = face.Up;
+                NewChunk.UVMin = FVector2D(uMin, vMin);
+                NewChunk.UVMax = FVector2D(uMax, vMax);
 
                 ChunkInfos.Add(NewChunk);
             }

@@ -30,6 +30,13 @@ struct FChunkInfo
         AVoxelChunk *ActiveChunk = nullptr;
         bool bPendingSpawn = false;
         int32 LODLevel = -1;  // Current LOD level, -1 if inactive
+
+        // Projection Parameters for Warped Chunks
+        FVector FaceNormal;
+        FVector FaceRight;
+        FVector FaceUp;
+        FVector2D UVMin;
+        FVector2D UVMax;
 };
 
 
@@ -96,6 +103,10 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
         // Calculate automatic chunks per face based on planet parameters
         UFUNCTION(BlueprintCallable, Category = "Planet|Chunking")
         int32 CalculateAutoChunksPerFace() const;
+
+        // Helper to map a point on a unit cube to a unit sphere
+        static FVector GetSpherifiedCubePoint(const FVector& p);
+
 
         // --- Generation Control ---
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Generation")
