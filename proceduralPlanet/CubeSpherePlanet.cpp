@@ -143,7 +143,8 @@ void ACubeSpherePlanet::UpdateLODAndStreaming()
     for (int32 i = 0; i < ChunkInfos.Num(); i++)
     {
         FChunkInfo &Info = ChunkInfos[i];
-        float DistSq = FVector::DistSquared(Info.WorldLocation, ObserverPos);
+        FVector ChunkWorldLocation = GetActorTransform().TransformPosition(Info.LocalLocation);
+        float DistSq = FVector::DistSquared(ChunkWorldLocation, ObserverPos);
 
         // Determine Target LOD: -1 (Hidden), 0 (Highest), 1, 2, ...
         int32 TargetLOD = -1;
@@ -252,15 +253,20 @@ void ACubeSpherePlanet::ProcessSpawnQueue()
         FChunkInfo &Info = ChunkInfos[ChunkIndex];
         Info.bPendingSpawn = false;  // No longer pending
 
+        FVector ChunkWorldLocation = GetActorTransform().TransformPosition(Info.LocalLocation);
+
         // Double check distance before spawning (in case player moved fast)
-        if (FVector::DistSquared(Info.WorldLocation, ObserverPos) > CurrentRenderDistSq)
+        if (FVector::DistSquared(ChunkWorldLocation, ObserverPos) > CurrentRenderDistSq)
             continue;
 
         // If already exists (rare edge case), skip
         if (Info.ActiveChunk != nullptr)
             continue;
 
-        AVoxelChunk *Chunk = GetWorld()->SpawnActorDeferred<AVoxelChunk>(AVoxelChunk::StaticClass(), Info.Transform, this);
+        // Calculate correct World Transform for spawning
+        FTransform SpawnTransform = Info.Transform * GetActorTransform();
+
+        AVoxelChunk *Chunk = GetWorld()->SpawnActorDeferred<AVoxelChunk>(AVoxelChunk::StaticClass(), SpawnTransform, this);
         if (Chunk)
         {
             // Set chunk parameters BEFORE finishing spawn.
@@ -286,7 +292,7 @@ void ACubeSpherePlanet::ProcessSpawnQueue()
             Chunk->ProceduralMesh->SetCastShadow(bCastShadows);
 
             // Finish spawning. This will call OnConstruction on the chunk.
-            Chunk->FinishSpawning(Info.Transform);
+            Chunk->FinishSpawning(SpawnTransform);
 
             Chunk->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
             Chunk->SetOwner(this);
@@ -500,8 +506,6 @@ void ACubeSpherePlanet::PrepareGeneration()
                          // -Z face (Bottom) - looking at -Z (up), X goes right, Y goes back
                          {FVector(0, 0, -1), FVector(1, 0, 0), FVector(0, -1, 0)}};
 
-    const FVector PlanetCenterWorld = GetActorLocation();
-
     // Adaptive voxel logic
     if (bAutoChunkSizing)
     {
@@ -587,9 +591,9 @@ void ACubeSpherePlanet::PrepareGeneration()
                 // 2. Apply Spherified Cube mapping to distribute chunks evenly on the sphere
                 FVector chunkUpDirection = GetSpherifiedCubePoint(pointOnUnitCube);
 
-                // 3. Scale by radius and offset by planet center to get the chunk's world position.
-                // This places the center of the chunk volume on the sphere's surface.
-                FVector chunkWorldPos = PlanetCenterWorld + chunkUpDirection * PlanetRadius;
+                // 3. Scale by radius to get the chunk's LOCAL position relative to planet center.
+                // We do NOT add PlanetCenterWorld here, keeping it local.
+                FVector chunkLocalPos = chunkUpDirection * PlanetRadius;
 
                 // 4. Determine chunk rotation to align it with the planet's curvature.
                 // We use the face's original orientation vectors to create a stable orientation.
@@ -598,11 +602,11 @@ void ACubeSpherePlanet::PrepareGeneration()
                 FRotator chunkWorldRot = UKismetMathLibrary::MakeRotationFromAxes(chunkForwardDirection, chunkRightDirection, chunkUpDirection);
 
                 // Create the lightweight chunk info
-                FTransform ChunkTransform(chunkWorldRot, chunkWorldPos);
+                FTransform ChunkTransform(chunkWorldRot, chunkLocalPos);
 
                 FChunkInfo NewChunk;
                 NewChunk.Transform = ChunkTransform;
-                NewChunk.WorldLocation = chunkWorldPos;
+                NewChunk.LocalLocation = chunkLocalPos;
                 NewChunk.ActiveChunk = nullptr;
                 NewChunk.bPendingSpawn = false;
                 NewChunk.FaceNormal = face.Normal;

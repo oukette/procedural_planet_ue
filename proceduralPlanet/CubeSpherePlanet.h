@@ -25,8 +25,8 @@ struct FLODInfo
 // Lightweight struct to manage chunk state without spawning an actor
 struct FChunkInfo
 {
-        FTransform Transform;
-        FVector WorldLocation;  // Cached for fast distance checks
+        FTransform Transform;   // Local Transform relative to Planet
+        FVector LocalLocation;  // Cached Local Location for fast distance checks
         AVoxelChunk *ActiveChunk = nullptr;
         bool bPendingSpawn = false;
         int32 LODLevel = -1;  // Current LOD level, -1 if inactive

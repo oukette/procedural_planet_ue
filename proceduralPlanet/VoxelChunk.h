@@ -24,12 +24,12 @@ class PROCEDURALPLANET_API AVoxelChunk : public AActor
 
     private:
         // Static helpers for async generation
-        static TArray<float> GenerateDensityField(int32 Resolution, float VoxelSize, float PlanetRadius, const FVector &LocalPlanetCenter,
-                                                  const FTransform &Transform, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp,
+        static TArray<float> GenerateDensityField(int32 Resolution, float VoxelSize, float PlanetRadius,
+                                                  const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp,
                                                   const FVector2D &UVMin, const FVector2D &UVMax);
 
         static FChunkMeshData GenerateMeshFromDensity(const TArray<float> &Density, int32 Resolution, float VoxelSize, float PlanetRadius,
-                                                      const FVector &LocalPlanetCenter, const FTransform &Transform, const FVector &FaceNormal,
+                                                      const FTransform &PlanetTransform, const FTransform &ChunkTransform, const FVector &FaceNormal,
                                                       const FVector &FaceRight, const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax,
                                                       int32 LODLevel);
 
