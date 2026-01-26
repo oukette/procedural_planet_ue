@@ -186,12 +186,16 @@ FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const PlanetDensityGenerator
     const int SampleCount = Resolution + 1;
 
     // Automatic Debug Colors for multiple LODs. Green (LOD0) -> Yellow -> Orange -> Red...
-    const static TArray<FColor> LODColors = {FColor::Green,
-                                             FColor::Yellow,
-                                             FColor(255, 165, 0),  // Orange
-                                             FColor::Red,
-                                             FColor::Magenta,
-                                             FColor::Cyan};
+    const static TArray<FColor> LODColors = {
+        FColor::Green,        // LOD 0
+        FColor::Yellow,       // LOD 1
+        FColor(255, 165, 0),  // LOD 2 (Orange)
+        FColor::Red,          // LOD 3
+        FColor::Magenta,      // LOD 4
+        FColor::Cyan,         // LOD 5
+        FColor(0, 255, 128),  // LOD 6 (Spring Green)
+        FColor(128, 0, 255)   // LOD 7 (Purple)
+    };
 
     // Use the LOD level as an index, with a fallback to white if out of bounds.
     FColor DebugColor = (LODLevel >= 0 && LODLevel < LODColors.Num()) ? LODColors[LODLevel] : FColor::White;

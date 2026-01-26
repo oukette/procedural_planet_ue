@@ -67,13 +67,18 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
         // Initializes the generation process by populating the spawn queue.
         void PrepareGeneration();
 
-        // Creates the planet far model for optimized rendering in far distance.
-        void CreateFarModel();
-
         // Tick sub-functions
         void UpdateLODAndStreaming();
         void ProcessSpawnQueue();
         void ProcessMeshUpdateQueue();
+
+        // LOD update sub-functions, refactored from UpdateLODAndStreaming
+        bool UpdateFarModelAndChunkVisibility(const FVector& ObserverPosition);
+        void CullAllVisibleChunks();
+        void UpdateAllChunksLOD(const FVector& ObserverPosition);
+        int32 DetermineTargetLOD(const FChunkInfo& ChunkInfo, float DistanceSq) const;
+        void ApplyChunkStateChange(int32 ChunkIndex, int32 TargetLOD);
+        void UpdateChunkCollision(FChunkInfo& ChunkInfo, float DistanceSq) const;
 
         // Destroys all existing chunks.
         UFUNCTION(CallInEditor, Category = "Planet|Actions", meta = (DisplayName = "Clear All Chunks"))
@@ -89,6 +94,9 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
 
         // Helper to get the camera position in both Editor and Runtime
         FVector GetObserverPosition() const;
+
+        // Creates the planet far model for optimized rendering in far distance.
+        void CreateFarModel();
 
     public:
         ACubeSpherePlanet();

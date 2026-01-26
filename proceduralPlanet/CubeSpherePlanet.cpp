@@ -32,9 +32,10 @@ ACubeSpherePlanet::ACubeSpherePlanet()
     ChunksMeshUpdatesPerFrame = 2;
 
     // Default LOD settings. LOD 0 is highest detail, closest.
-    LODSettings.Add({15000.f, 32});  // LOD 0
-    LODSettings.Add({30000.f, 16});  // LOD 1
-    LODSettings.Add({60000.f, 8});   // LOD 2
+    LODSettings.Add({5000.f, 64});   // LOD 0 (New, high detail for close-ups)
+    LODSettings.Add({15000.f, 32});  // LOD 1
+    LODSettings.Add({30000.f, 16});  // LOD 2
+    LODSettings.Add({60000.f, 8});   // LOD 3
 
     // Far model (impostor) reference
     FarPlanetModel = nullptr;
@@ -95,139 +96,171 @@ void ACubeSpherePlanet::Tick(float DeltaTime)
 
 void ACubeSpherePlanet::UpdateLODAndStreaming()
 {
-    FVector ObserverPos = GetObserverPosition();
+    const FVector ObserverPosition = GetObserverPosition();
 
-    // --- Far Model & Visibility Transition ---
-    float DistToSurface = FMath::Max(0.0f, FVector::Dist(GetActorLocation(), ObserverPos) - PlanetRadius);
+    const bool bAreChunksVisible = UpdateFarModelAndChunkVisibility(ObserverPosition);
+
+    if (bAreChunksVisible)
+    {
+        UpdateAllChunksLOD(ObserverPosition);
+    }
+    else
+    {
+        CullAllVisibleChunks();
+    }
+}
+
+
+bool ACubeSpherePlanet::UpdateFarModelAndChunkVisibility(const FVector &ObserverPosition)
+{
+    const float DistToSurface = FMath::Max(0.0f, FVector::Dist(GetActorLocation(), ObserverPosition) - PlanetRadius);
 
     // Transition Logic:
     // 1. Far Model starts appearing at 75% of RenderDistance (Overlap start)
     // 2. Chunks disappear at 100% of RenderDistance (Overlap end)
-    float FarModelActivateDist = RenderDistance * 0.75f;
-    float ChunkCullDist = RenderDistance;
+    const float FarModelActivateDist = RenderDistance * 0.75f;
+    const float ChunkCullDist = RenderDistance;
 
-    bool bShowFarModel = DistToSurface > FarModelActivateDist;
-    bool bShowChunks = DistToSurface < ChunkCullDist;
+    const bool bShowFarModel = DistToSurface > FarModelActivateDist;
+    const bool bShowChunks = DistToSurface < ChunkCullDist;
 
     if (FarPlanetModel)
     {
         FarPlanetModel->SetActorHiddenInGame(!bShowFarModel);
     }
 
-    // If we are completely outside chunk range, destroy them.
+    return bShowChunks;
+}
+
+
+void ACubeSpherePlanet::CullAllVisibleChunks()
+{
+    // To prevent generating chunks that will just be hidden, we can clear the queues.
+    ChunkSpawnQueue.Empty();
+
     // Destroying is better than hiding for the Editor, as it clears them from the World Outliner
     // and ensures "despawn" behavior is visually confirmed.
-    if (!bShowChunks)
+    for (FChunkInfo &Info : ChunkInfos)
     {
-        // To prevent generating chunks that will just be hidden, we can clear the queues.
-        ChunkSpawnQueue.Empty();
-        for (FChunkInfo &Info : ChunkInfos)
+        if (Info.ActiveChunk)
         {
-            if (Info.ActiveChunk)
-            {
-                Info.ActiveChunk->Destroy();
-                Info.ActiveChunk = nullptr;
-            }
-            Info.bPendingSpawn = false;
-            // Reset LOD level so they respawn correctly when re-entering
-            Info.LODLevel = -1;
+            Info.ActiveChunk->Destroy();
+            Info.ActiveChunk = nullptr;
         }
-        return;  // Stop here
+        Info.bPendingSpawn = false;
+        // Reset LOD level so they respawn correctly when re-entering
+        Info.LODLevel = -1;
     }
+}
 
-    // --- Per-Chunk LOD & Streaming Logic ---
-    float CollisionDistSq = CollisionDistance * CollisionDistance;
 
-    for (int32 i = 0; i < ChunkInfos.Num(); i++)
+void ACubeSpherePlanet::UpdateAllChunksLOD(const FVector &ObserverPosition)
+{
+    for (int32 i = 0; i < ChunkInfos.Num(); ++i)
     {
         FChunkInfo &Info = ChunkInfos[i];
-        FVector ChunkWorldLocation = GetActorTransform().TransformPosition(Info.LocalLocation);
-        float DistSq = FVector::DistSquared(ChunkWorldLocation, ObserverPos);
+        const FVector ChunkWorldLocation = GetActorTransform().TransformPosition(Info.LocalLocation);
+        const float DistSq = FVector::DistSquared(ChunkWorldLocation, ObserverPosition);
 
-        // Determine Target LOD: -1 (Hidden), 0 (Highest), 1, 2, ...
-        int32 TargetLOD = -1;
+        const int32 TargetLOD = DetermineTargetLOD(Info, DistSq);
+        ApplyChunkStateChange(i, TargetLOD);
+        UpdateChunkCollision(Info, DistSq);
+    }
+}
 
-        if (Info.ActiveChunk)
+
+int32 ACubeSpherePlanet::DetermineTargetLOD(const FChunkInfo &ChunkInfo, float DistanceSq) const
+{
+    if (ChunkInfo.ActiveChunk)
+    {
+        // Ensure chunk is visible if we are in chunk-mode
+        ChunkInfo.ActiveChunk->SetActorHiddenInGame(false);
+
+        // Hysteresis logic for existing chunks
+        const int32 CurrentLOD = ChunkInfo.LODLevel;
+
+        // Check for UPGRADE to a higher-detail LOD (smaller index)
+        if (CurrentLOD > 0)
         {
-            Info.ActiveChunk->SetActorHiddenInGame(false);  // Ensure chunk is visible if we are in chunk-mode
-
-            // Hysteresis logic for existing chunks
-            const int32 CurrentLOD = Info.LODLevel;
-
-            // Check for UPGRADE to a higher-detail LOD (smaller index)
-            if (CurrentLOD > 0)
+            const float UpgradeDistSq = FMath::Square(LODSettings[CurrentLOD - 1].Distance);
+            if (DistanceSq < UpgradeDistSq)
             {
-                const float UpgradeDistSq = FMath::Square(LODSettings[CurrentLOD - 1].Distance);
-                if (DistSq < UpgradeDistSq)
-                {
-                    TargetLOD = CurrentLOD - 1;
-                }
-            }
-
-            // If no upgrade, check for DOWNGRADE to a lower-detail LOD (larger index)
-            if (TargetLOD == -1 && CurrentLOD < LODSettings.Num() - 1)
-            {
-                const float DowngradeDistSq = FMath::Square(LODSettings[CurrentLOD].Distance * LODHysteresisFactor);  // Hysteresis
-                if (DistSq > DowngradeDistSq)
-                {
-                    TargetLOD = CurrentLOD + 1;
-                }
-            }
-
-            // If still no change, it stays at its current LOD unless it needs to be despawned
-            if (TargetLOD == -1)
-            {
-                const float DespawnDistSq = FMath::Square(ChunkCullDist * LODDespawnHysteresisFactor);  // Hysteresis
-                TargetLOD = (DistSq > DespawnDistSq) ? -1 : CurrentLOD;
-            }
-        }
-        else  // No active chunk, determine if we need to spawn one
-        {
-            for (int32 LodIndex = 0; LodIndex < LODSettings.Num(); ++LodIndex)
-            {
-                if (DistSq < FMath::Square(LODSettings[LodIndex].Distance))
-                {
-                    TargetLOD = LodIndex;
-                    break;
-                }
+                return CurrentLOD - 1;
             }
         }
 
-        // Apply State Changes
-        if (Info.ActiveChunk)
+        // Check for DOWNGRADE to a lower-detail LOD (larger index)
+        if (CurrentLOD < LODSettings.Num() - 1)
         {
-            if (TargetLOD == -1)
+            const float DowngradeDistSq = FMath::Square(LODSettings[CurrentLOD].Distance * LODHysteresisFactor);  // Hysteresis
+            if (DistanceSq > DowngradeDistSq)
             {
-                Info.ActiveChunk->Destroy();
-                Info.ActiveChunk = nullptr;
-            }
-            else if (TargetLOD != Info.LODLevel)
-            {
-                // Switch Resolution
-                int32 NewRes = LODSettings[TargetLOD].VoxelResolution;
-
-                // Compensate VoxelSize to keep physical chunk size constant
-                // Assumes VoxelResolution and VoxelSize on the planet are for the highest LOD (LOD 0)
-                float NewVoxelSize = (VoxelResolution * VoxelSize) / (float)FMath::Max(1, NewRes);
-
-                Info.ActiveChunk->UpdateChunkLOD(TargetLOD, NewRes, NewVoxelSize);
-                Info.LODLevel = TargetLOD;
+                return CurrentLOD + 1;
             }
         }
-        else if (TargetLOD != -1 && !Info.bPendingSpawn)
+
+        // Check for DESPAWN
+        const float DespawnDistSq = FMath::Square(RenderDistance * LODDespawnHysteresisFactor);  // Hysteresis
+        if (DistanceSq > DespawnDistSq)
         {
-            // Queue for spawn
+            return -1;  // Despawn
+        }
+
+        return CurrentLOD;  // No change
+    }
+
+    // No active chunk, determine if we need to spawn one
+    for (int32 LodIndex = 0; LodIndex < LODSettings.Num(); ++LodIndex)
+    {
+        if (DistanceSq < FMath::Square(LODSettings[LodIndex].Distance))
+        {
+            return LodIndex;  // Spawn at this LOD
+        }
+    }
+
+    return -1;  // Do not spawn, out of range
+}
+
+
+void ACubeSpherePlanet::ApplyChunkStateChange(int32 ChunkIndex, int32 TargetLOD)
+{
+    FChunkInfo &Info = ChunkInfos[ChunkIndex];
+
+    if (Info.ActiveChunk)
+    {
+        if (TargetLOD == -1)  // Despawn
+        {
+            Info.ActiveChunk->Destroy();
+            Info.ActiveChunk = nullptr;
+            Info.LODLevel = -1;
+        }
+        else if (TargetLOD != Info.LODLevel)  // Change LOD
+        {
+            const int32 NewRes = LODSettings[TargetLOD].VoxelResolution;
+            // Compensate VoxelSize to keep physical chunk size constant
+            // Assumes VoxelResolution and VoxelSize on the planet are for the base LOD.
+            const float NewVoxelSize = (VoxelResolution * VoxelSize) / (float)FMath::Max(1, NewRes);
+
+            Info.ActiveChunk->UpdateChunkLOD(TargetLOD, NewRes, NewVoxelSize);
             Info.LODLevel = TargetLOD;
-            ChunkSpawnQueue.Add(i);
-            Info.bPendingSpawn = true;
         }
+    }
+    else if (TargetLOD != -1 && !Info.bPendingSpawn)  // Spawn
+    {
+        Info.LODLevel = TargetLOD;
+        ChunkSpawnQueue.Add(ChunkIndex);
+        Info.bPendingSpawn = true;
+    }
+}
 
-        // Collision LOD (Independent of visual LOD, usually matches High Res)
-        if (Info.ActiveChunk)
-        {
-            bool bShouldCollide = (DistSq < CollisionDistSq) && bEnableCollision;
-            Info.ActiveChunk->SetCollisionEnabled(bShouldCollide);
-        }
+
+void ACubeSpherePlanet::UpdateChunkCollision(FChunkInfo &ChunkInfo, float DistanceSq) const
+{
+    if (ChunkInfo.ActiveChunk)
+    {
+        const float CollisionDistSq = CollisionDistance * CollisionDistance;
+        const bool bShouldCollide = (DistanceSq < CollisionDistSq) && bEnableCollision;
+        ChunkInfo.ActiveChunk->SetCollisionEnabled(bShouldCollide);
     }
 }
 
@@ -557,15 +590,20 @@ void ACubeSpherePlanet::PrepareGeneration()
         RenderDistance = FMath::Clamp(PlanetRadius * 3.0f, 30000.0f, 250000.0f);
 
         LODSettings.Empty();
-        // LOD 0: Close range (15% of view) - Uses full VoxelResolution
+
+        // LOD 0: Ultra-high detail for on-foot gameplay. Fixed short distance, double the base resolution.
+        // This resolution is high (e.g., 64^3), so keep the distance small to manage performance.
+        LODSettings.Add({5000.0f, VoxelResolution * 2});
+
+        // LOD 1 - Close range (15% of view) - Uses base VoxelResolution
         LODSettings.Add({RenderDistance * 0.15f, VoxelResolution});
 
-        // LOD 1: Mid range (40% of view) - Half resolution
-        LODSettings.Add({RenderDistance * 0.40f, FMath::Max(4, VoxelResolution / 2)});
+        // LOD 2 - Mid range (40% of view) - Half resolution
+        LODSettings.Add({RenderDistance * 0.40f, FMath::Max(8, VoxelResolution / 2)});
 
-        // LOD 2: Far range (100% of view) - Quarter resolution
+        // LOD 3 - Far range (100% of view) - Quarter resolution
         // We extend slightly beyond 1.0 to ensure chunks don't flicker at the boundary
-        LODSettings.Add({RenderDistance * 1.05f, FMath::Max(2, VoxelResolution / 4)});
+        LODSettings.Add({RenderDistance * 1.05f, FMath::Max(4, VoxelResolution / 4)});
     }
 
     // Grid spans the face - normalized from -1 to +1
