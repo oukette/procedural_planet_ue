@@ -35,6 +35,10 @@ void AVoxelChunk::OnConstruction(const FTransform &Transform) { Super::OnConstru
 
 void AVoxelChunk::GenerateChunkAsync()
 {
+    // Capture these by VALUE for the lambda
+    FTransform CapturedChunkTransform = GetActorTransform();
+    FTransform CapturedPlanetTransform = ParentPlanet ? ParentPlanet->GetActorTransform() : FTransform::Identity;
+
     // Capture parameters by value for thread safety
     int32 resolution = VoxelResolution;
     float voxelSize = VoxelSize;
@@ -54,15 +58,6 @@ void AVoxelChunk::GenerateChunkAsync()
     FVector2D uvMin = ChunkUVMin;
     FVector2D uvMax = ChunkUVMax;
 
-    FTransform chunkTransform = GetActorTransform();  // Capture transform on main thread
-    
-    // Capture Planet Transform to correctly calculate world positions relative to the planet
-    FTransform planetTransform = FTransform::Identity;
-    if (AActor* Owner = GetOwner())
-    {
-        planetTransform = Owner->GetActorTransform();
-    }
-
     TWeakObjectPtr<AVoxelChunk> weakThis(this);  // Weak pointer for safety
 
     // Run on background thread
@@ -74,8 +69,8 @@ void AVoxelChunk::GenerateChunkAsync()
            noiseAmp,
            noiseFreq,
            seed,
-           planetTransform,
-           chunkTransform,
+           CapturedChunkTransform,
+           CapturedPlanetTransform,
            lodLevel,
            fNormal,
            fRight,
@@ -94,11 +89,11 @@ void AVoxelChunk::GenerateChunkAsync()
               PlanetDensityGenerator DensityGen(DensityConfig);
 
               // 1. Generate Density
-              TArray<float> LocalDensity = DensityGen.GenerateDensityField(resolution, fNormal, fRight, fUp, uvMin, uvMax);
+              PlanetDensityGenerator::FGenData GenData = DensityGen.GenerateDensityField(resolution, fNormal, fRight, fUp, uvMin, uvMax);
 
               // 2. Generate Mesh
-              FChunkMeshData MeshData = GenerateMeshFromDensity(LocalDensity, resolution, voxelSize, planetRadius, planetTransform, chunkTransform, 
-                                                                fNormal, fRight, fUp, uvMin, uvMax, lodLevel, DensityGen);
+              FChunkMeshData MeshData = GenerateMeshFromDensity(
+                  GenData, resolution, CapturedChunkTransform, CapturedPlanetTransform, fNormal, fRight, fUp, uvMin, uvMax, lodLevel, DensityGen);
 
               // 3. Apply to Main Thread
               AsyncTask(ENamedThreads::GameThread,
@@ -182,10 +177,10 @@ FVector AVoxelChunk::VertexInterp(const FVector &P1, const FVector &P2, float D1
 }
 
 
-FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density, int32 Resolution, float VoxelSize, float PlanetRadius,
-                                                    const FTransform &PlanetTransform, const FTransform &ChunkTransform, const FVector &FaceNormal,
-                                                    const FVector &FaceRight, const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax,
-                                                    int32 LODLevel, const PlanetDensityGenerator &DensityGenerator)
+FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const PlanetDensityGenerator::FGenData &GenData, int32 Resolution, FTransform CapturedChunkTransform,
+                                                    FTransform CapturedPlanetTransform, const FVector &FaceNormal, const FVector &FaceRight,
+                                                    const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax, int32 LODLevel,
+                                                    const PlanetDensityGenerator &DensityGenerator)
 {
     FChunkMeshData MeshData;
     const int SampleCount = Resolution + 1;
@@ -202,7 +197,7 @@ FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density
     FColor DebugColor = (LODLevel >= 0 && LODLevel < LODColors.Num()) ? LODColors[LODLevel] : FColor::White;
 
     // Pre-calculate Local Planet Center for normal direction check
-    FVector LocalPlanetCenter = ChunkTransform.InverseTransformPosition(PlanetTransform.GetLocation());
+    FVector LocalPlanetCenter = CapturedChunkTransform.InverseTransformPosition(CapturedPlanetTransform.GetLocation());
 
     const FVector CornerOffsets[8] = {
         FVector(0, 0, 0), FVector(1, 0, 0), FVector(1, 1, 0), FVector(0, 1, 0), FVector(0, 0, 1), FVector(1, 0, 1), FVector(1, 1, 1), FVector(0, 1, 1)};
@@ -226,16 +221,16 @@ FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density
                     int32 iz = z + (int32)CornerOffsets[i].Z;
 
                     // Inline density access
-                    D[i] = Density[ix + iy * SampleCount + iz * SampleCount * SampleCount];
+                    D[i] = GenData.Densities[ix + iy * SampleCount + iz * SampleCount * SampleCount];
 
                     // Calculate Warped Position in Planet Local Space (Vector from Planet Center)
-                    FVector PlanetRelPos = DensityGenerator.GetProjectedPosition(ix, iy, iz, Resolution, FaceNormal, FaceRight, FaceUp, UVMin, UVMax);
+                    FVector PlanetRelPos = GenData.Positions[ix + iy * SampleCount + iz * SampleCount * SampleCount];
 
                     // 1. Transform to World Space (Apply Planet Rotation/Location)
-                    FVector WorldPos = PlanetTransform.TransformPosition(PlanetRelPos);
+                    FVector WorldPos = CapturedPlanetTransform.TransformPosition(PlanetRelPos);
 
                     // 2. Convert to Chunk Actor Local Space for the mesh
-                    P[i] = ChunkTransform.InverseTransformPosition(WorldPos);
+                    P[i] = CapturedChunkTransform.InverseTransformPosition(WorldPos);
 
                     if (D[i] < -1e-4f)
                         CubeIndex |= (1 << i);
@@ -257,32 +252,36 @@ FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density
 
                 for (int32 i = 0; TriTable[CubeIndex][i] != -1; i += 3)
                 {
-                    FVector V0 = EdgeVertex[TriTable[CubeIndex][i]];
-                    FVector V1 = EdgeVertex[TriTable[CubeIndex][i + 1]];
-                    FVector V2 = EdgeVertex[TriTable[CubeIndex][i + 2]];
+                    // 1. Get Chunk-Local Vertices (your existing code)
+                    FVector V[3];
+                    V[0] = EdgeVertex[TriTable[CubeIndex][i]];
+                    V[1] = EdgeVertex[TriTable[CubeIndex][i + 1]];
+                    V[2] = EdgeVertex[TriTable[CubeIndex][i + 2]];
 
-                    MeshData.Triangles.Add(MeshData.Vertices.Add(V0));
-                    MeshData.Triangles.Add(MeshData.Vertices.Add(V1));
-                    MeshData.Triangles.Add(MeshData.Vertices.Add(V2));
-
-                    // Improved Normal Calculation: Face Normals
-                    // Using the sphere normal ((V - Center)) ignores terrain noise/features.
-                    // We calculate the cross product of the triangle edges for correct flat shading.
-                    FVector TriNormal = FVector::CrossProduct(V1 - V0, V2 - V0).GetSafeNormal();
-
-                    // Ensure normal points outwards from planet center
-                    if ((TriNormal | (V0 - LocalPlanetCenter)) < 0.0f)
+                    for (int j = 0; j < 3; j++)
                     {
-                        TriNormal *= -1.0f;
+                        // 2. Add vertex and index
+                        int32 Index = MeshData.Vertices.Add(V[j]);
+                        MeshData.Triangles.Add(Index);
+
+                        // 3. TRANSFORM MATH: Get the normal correctly
+                        // 3A. Convert Chunk-Local vertex to World Space
+                        FVector WorldPos = CapturedChunkTransform.TransformPosition(V[j]);
+
+                        // 3B. Convert World Space to Planet-Local Space (where the generator lives)
+                        FVector PlanetLocalPos = CapturedPlanetTransform.InverseTransformPosition(WorldPos);
+
+                        // 3C. Get the normal from the gradient in Planet Space
+                        FVector PlanetNormal = DensityGenerator.GetNormalAtPos(PlanetLocalPos);
+
+                        // 3D. Convert the Normal vector back to Chunk-Local Space
+                        // We use TransformVector/InverseTransformVector for directions (ignoring scale/translation)
+                        FVector WorldNormal = CapturedPlanetTransform.TransformVector(PlanetNormal);
+                        FVector ChunkLocalNormal = CapturedChunkTransform.InverseTransformVector(WorldNormal);
+
+                        MeshData.Normals.Add(ChunkLocalNormal.GetSafeNormal());
+                        MeshData.Colors.Add(DebugColor);  // Ensure mesh is colored
                     }
-
-                    MeshData.Normals.Add(TriNormal);
-                    MeshData.Normals.Add(TriNormal);
-                    MeshData.Normals.Add(TriNormal);
-
-                    MeshData.Colors.Add(DebugColor);
-                    MeshData.Colors.Add(DebugColor);
-                    MeshData.Colors.Add(DebugColor);
                 }
             }
         }

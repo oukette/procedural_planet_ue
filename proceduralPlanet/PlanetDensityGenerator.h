@@ -39,6 +39,13 @@ class PROCEDURALPLANET_API PlanetDensityGenerator
                 }
         };
 
+        // Container for generated field data to avoid re-calculating positions
+        struct FGenData
+        {
+                TArray<float> Densities;
+                TArray<FVector> Positions;
+        };
+
         // Constructor
         explicit PlanetDensityGenerator(const DensityConfig &InConfig);
 
@@ -46,8 +53,8 @@ class PROCEDURALPLANET_API PlanetDensityGenerator
         float SampleDensity(const FVector &PlanetRelativePosition) const;
 
         // Generate entire density field for a chunk (optimized batch operation)
-        TArray<float> GenerateDensityField(int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp, const FVector2D &UVMin,
-                                           const FVector2D &UVMax) const;
+        FGenData GenerateDensityField(int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp, const FVector2D &UVMin,
+                                      const FVector2D &UVMax) const;
 
         // Accessors for validation/debugging
         const DensityConfig &GetConfig() const { return Config; }
@@ -55,6 +62,10 @@ class PROCEDURALPLANET_API PlanetDensityGenerator
         // Calculate warped position on sphere surface (cube-to-sphere projection)
         FVector GetProjectedPosition(int32 x, int32 y, int32 z, int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp,
                                      const FVector2D &UVMin, const FVector2D &UVMax) const;
+
+        float GetDensityAtPos(const FVector &LocalPos) const;
+
+        FVector GetNormalAtPos(const FVector &LocalPos) const;
 
     private:
         DensityConfig Config;

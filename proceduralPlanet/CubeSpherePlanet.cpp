@@ -28,13 +28,13 @@ ACubeSpherePlanet::ACubeSpherePlanet()
     VoxelSize = 100.f;
     bEnableCollision = false;  // Default to false for performance
     DebugMaterial = nullptr;
-    bCastShadows = false;      // Default to false for performance
+    bCastShadows = false;  // Default to false for performance
     ChunksMeshUpdatesPerFrame = 2;
 
     // Default LOD settings. LOD 0 is highest detail, closest.
-    LODSettings.Add({15000.f, 32}); // LOD 0
-    LODSettings.Add({30000.f, 16}); // LOD 1
-    LODSettings.Add({60000.f, 8});  // LOD 2
+    LODSettings.Add({15000.f, 32});  // LOD 0
+    LODSettings.Add({30000.f, 16});  // LOD 1
+    LODSettings.Add({60000.f, 8});   // LOD 2
 
     // Far model (impostor) reference
     FarPlanetModel = nullptr;
@@ -66,10 +66,7 @@ void ACubeSpherePlanet::BeginPlay()
     {
         // Ensure LOD settings are sorted by distance for the update logic to work correctly.
         // Sort from closest distance (LOD 0) to furthest.
-        LODSettings.Sort([](const FLODInfo& A, const FLODInfo& B)
-        {
-            return A.Distance < B.Distance;
-        });
+        LODSettings.Sort([](const FLODInfo &A, const FLODInfo &B) { return A.Distance < B.Distance; });
 
         GeneratePlanet();
     }
@@ -86,7 +83,8 @@ void ACubeSpherePlanet::Tick(float DeltaTime)
         FVector ObserverPos = GetObserverPosition();
         float DistToCenter = FVector::Dist(GetActorLocation(), ObserverPos);
         float DistToSurface = FMath::Max(0.0f, DistToCenter - PlanetRadius);
-        GEngine->AddOnScreenDebugMessage(101, 0.0f, FColor::Cyan, FString::Printf(TEXT("Dist to Center: %.0f | Dist to Surface: %.0f"), DistToCenter, DistToSurface));
+        GEngine->AddOnScreenDebugMessage(
+            101, 0.0f, FColor::Cyan, FString::Printf(TEXT("Dist to Center: %.0f | Dist to Surface: %.0f"), DistToCenter, DistToSurface));
     }
 
     UpdateLODAndStreaming();
@@ -101,7 +99,7 @@ void ACubeSpherePlanet::UpdateLODAndStreaming()
 
     // --- Far Model & Visibility Transition ---
     float DistToSurface = FMath::Max(0.0f, FVector::Dist(GetActorLocation(), ObserverPos) - PlanetRadius);
-    
+
     // Transition Logic:
     // 1. Far Model starts appearing at 75% of RenderDistance (Overlap start)
     // 2. Chunks disappear at 100% of RenderDistance (Overlap end)
@@ -123,7 +121,7 @@ void ACubeSpherePlanet::UpdateLODAndStreaming()
     {
         // To prevent generating chunks that will just be hidden, we can clear the queues.
         ChunkSpawnQueue.Empty();
-        for (FChunkInfo& Info : ChunkInfos)
+        for (FChunkInfo &Info : ChunkInfos)
         {
             if (Info.ActiveChunk)
             {
@@ -132,9 +130,9 @@ void ACubeSpherePlanet::UpdateLODAndStreaming()
             }
             Info.bPendingSpawn = false;
             // Reset LOD level so they respawn correctly when re-entering
-            Info.LODLevel = -1; 
+            Info.LODLevel = -1;
         }
-        return; // Stop here
+        return;  // Stop here
     }
 
     // --- Per-Chunk LOD & Streaming Logic ---
@@ -151,7 +149,7 @@ void ACubeSpherePlanet::UpdateLODAndStreaming()
 
         if (Info.ActiveChunk)
         {
-            Info.ActiveChunk->SetActorHiddenInGame(false); // Ensure chunk is visible if we are in chunk-mode
+            Info.ActiveChunk->SetActorHiddenInGame(false);  // Ensure chunk is visible if we are in chunk-mode
 
             // Hysteresis logic for existing chunks
             const int32 CurrentLOD = Info.LODLevel;
@@ -169,7 +167,7 @@ void ACubeSpherePlanet::UpdateLODAndStreaming()
             // If no upgrade, check for DOWNGRADE to a lower-detail LOD (larger index)
             if (TargetLOD == -1 && CurrentLOD < LODSettings.Num() - 1)
             {
-                const float DowngradeDistSq = FMath::Square(LODSettings[CurrentLOD].Distance * LODHysteresisFactor); // Hysteresis
+                const float DowngradeDistSq = FMath::Square(LODSettings[CurrentLOD].Distance * LODHysteresisFactor);  // Hysteresis
                 if (DistSq > DowngradeDistSq)
                 {
                     TargetLOD = CurrentLOD + 1;
@@ -179,11 +177,11 @@ void ACubeSpherePlanet::UpdateLODAndStreaming()
             // If still no change, it stays at its current LOD unless it needs to be despawned
             if (TargetLOD == -1)
             {
-                const float DespawnDistSq = FMath::Square(ChunkCullDist * LODDespawnHysteresisFactor); // Hysteresis
+                const float DespawnDistSq = FMath::Square(ChunkCullDist * LODDespawnHysteresisFactor);  // Hysteresis
                 TargetLOD = (DistSq > DespawnDistSq) ? -1 : CurrentLOD;
             }
         }
-        else // No active chunk, determine if we need to spawn one
+        else  // No active chunk, determine if we need to spawn one
         {
             for (int32 LodIndex = 0; LodIndex < LODSettings.Num(); ++LodIndex)
             {
@@ -198,10 +196,13 @@ void ACubeSpherePlanet::UpdateLODAndStreaming()
         // Apply State Changes
         if (Info.ActiveChunk)
         {
-            if (TargetLOD == -1) {
+            if (TargetLOD == -1)
+            {
                 Info.ActiveChunk->Destroy();
                 Info.ActiveChunk = nullptr;
-            } else if (TargetLOD != Info.LODLevel) {
+            }
+            else if (TargetLOD != Info.LODLevel)
+            {
                 // Switch Resolution
                 int32 NewRes = LODSettings[TargetLOD].VoxelResolution;
 
@@ -269,6 +270,8 @@ void ACubeSpherePlanet::ProcessSpawnQueue()
         AVoxelChunk *Chunk = GetWorld()->SpawnActorDeferred<AVoxelChunk>(AVoxelChunk::StaticClass(), SpawnTransform, this);
         if (Chunk)
         {
+            Chunk->SetParentPlanet(this);
+
             // Set chunk parameters BEFORE finishing spawn.
             int32 TargetRes = LODSettings[Info.LODLevel].VoxelResolution;
 
@@ -334,7 +337,7 @@ void ACubeSpherePlanet::OnChunkGenerationFinished(AVoxelChunk *Chunk)
     {
         ActiveGenerationTasks--;
     }
-    
+
     // Only queue valid chunks
     if (Chunk && IsValid(Chunk) && !Chunk->IsPendingKill())
     {
@@ -345,7 +348,7 @@ void ACubeSpherePlanet::OnChunkGenerationFinished(AVoxelChunk *Chunk)
 
 // Helper function to map a point on a unit cube to a unit sphere with equal area distribution.
 // (Spherified Cube mapping)
-FVector ACubeSpherePlanet::GetSpherifiedCubePoint(const FVector& p)
+FVector ACubeSpherePlanet::GetSpherifiedCubePoint(const FVector &p)
 {
     float x2 = p.X * p.X;
     float y2 = p.Y * p.Y;
@@ -481,7 +484,7 @@ void ACubeSpherePlanet::PrepareGeneration()
         float SphereScale = PlanetRadius / 50.0f;
         FarPlanetModel->SetActorScale3D(FVector(SphereScale));
         // Also update material in case it changed
-        if (AStaticMeshActor* SMA = Cast<AStaticMeshActor>(FarPlanetModel))
+        if (AStaticMeshActor *SMA = Cast<AStaticMeshActor>(FarPlanetModel))
         {
             SMA->GetStaticMeshComponent()->SetMaterial(0, DebugMaterial);
         }
@@ -555,11 +558,11 @@ void ACubeSpherePlanet::PrepareGeneration()
 
         LODSettings.Empty();
         // LOD 0: Close range (15% of view) - Uses full VoxelResolution
-        LODSettings.Add({RenderDistance * 0.15f, VoxelResolution}); 
-        
+        LODSettings.Add({RenderDistance * 0.15f, VoxelResolution});
+
         // LOD 1: Mid range (40% of view) - Half resolution
         LODSettings.Add({RenderDistance * 0.40f, FMath::Max(4, VoxelResolution / 2)});
-        
+
         // LOD 2: Far range (100% of view) - Quarter resolution
         // We extend slightly beyond 1.0 to ensure chunks don't flicker at the boundary
         LODSettings.Add({RenderDistance * 1.05f, FMath::Max(2, VoxelResolution / 4)});
@@ -629,10 +632,11 @@ void ACubeSpherePlanet::PrepareGeneration()
 
 void ACubeSpherePlanet::CreateFarModel()
 {
-    if (!GetWorld()) return;
+    if (!GetWorld())
+        return;
 
     // 1. Find the engine's default sphere mesh
-    UStaticMesh* SphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+    UStaticMesh *SphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
     if (!SphereMesh)
     {
         UE_LOG(LogTemp, Warning, TEXT("Could not load default sphere mesh for FarPlanetModel."));
@@ -640,16 +644,16 @@ void ACubeSpherePlanet::CreateFarModel()
     }
 
     // 2. Spawn a StaticMeshActor
-    AStaticMeshActor* SphereActor = GetWorld()->SpawnActor<AStaticMeshActor>(GetActorLocation(), GetActorRotation());
+    AStaticMeshActor *SphereActor = GetWorld()->SpawnActor<AStaticMeshActor>(GetActorLocation(), GetActorRotation());
     if (SphereActor)
     {
-        UStaticMeshComponent* MeshComponent = SphereActor->GetStaticMeshComponent();
-        
+        UStaticMeshComponent *MeshComponent = SphereActor->GetStaticMeshComponent();
+
         // 3. Configure the actor
         MeshComponent->SetMobility(EComponentMobility::Movable);
         MeshComponent->SetStaticMesh(SphereMesh);
         MeshComponent->SetMaterial(0, DebugMaterial);
-        
+
         // The default sphere has a diameter of 100 units (radius 50).
         // We need to scale it to match our PlanetRadius.
         float SphereScale = PlanetRadius / 50.0f;

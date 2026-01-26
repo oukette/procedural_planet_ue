@@ -24,19 +24,37 @@ class PROCEDURALPLANET_API AVoxelChunk : public AActor
         GENERATED_BODY()
 
     private:
-        static FChunkMeshData GenerateMeshFromDensity(const TArray<float> &Density, int32 Resolution, float VoxelSize, float PlanetRadius,
-                                                      const FTransform &PlanetTransform, const FTransform &ChunkTransform, const FVector &FaceNormal,
-                                                      const FVector &FaceRight, const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax,
-                                                      int32 LODLevel, const PlanetDensityGenerator &DensityGenerator);
+        static FChunkMeshData GenerateMeshFromDensity(const PlanetDensityGenerator::FGenData &GenData, int32 Resolution, FTransform CapturedChunkTransform,
+                                                      FTransform CapturedPlanetTransform, const FVector &FaceNormal, const FVector &FaceRight,
+                                                      const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax, int32 LODLevel,
+                                                      const PlanetDensityGenerator &DensityGenerator);
 
         static FVector VertexInterp(const FVector &P1, const FVector &P2, float D1, float D2);
 
     protected:
         virtual void OnConstruction(const FTransform &Transform) override;
 
+        UPROPERTY()
+        class ACubeSpherePlanet *ParentPlanet;
+
     public:
         // Sets default values for this actor's properties
         AVoxelChunk();
+
+        // A simple setter to call when spawning
+        void SetParentPlanet(ACubeSpherePlanet *Planet) { ParentPlanet = Planet; }
+
+        // New Async function
+        void GenerateChunkAsync();
+
+        // Called by Planet to apply mesh to GPU, with a specified material
+        void UploadMesh(UMaterialInterface *MaterialToApply);
+
+        // Efficiently toggle collision
+        void SetCollisionEnabled(bool bEnabled);
+
+        // Update resolution/size and regenerate mesh (LOD switching)
+        void UpdateChunkLOD(int32 NewLOD, int32 NewResolution, float NewVoxelSize);
 
         // Voxel resolution per chunk (32x32x32 for prototype)
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel")
@@ -83,18 +101,6 @@ class PROCEDURALPLANET_API AVoxelChunk : public AActor
         FVector FaceUp;
         FVector2D ChunkUVMin;
         FVector2D ChunkUVMax;
-
-        // New Async function
-        void GenerateChunkAsync();
-
-        // Called by Planet to apply mesh to GPU, with a specified material
-        void UploadMesh(UMaterialInterface *MaterialToApply);
-
-        // Efficiently toggle collision
-        void SetCollisionEnabled(bool bEnabled);
-
-        // Update resolution/size and regenerate mesh (LOD switching)
-        void UpdateChunkLOD(int32 NewLOD, int32 NewResolution, float NewVoxelSize);
 
         FChunkMeshData GeneratedMeshData;
 };

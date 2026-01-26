@@ -27,14 +27,15 @@ float PlanetDensityGenerator::SampleDensity(const FVector &PlanetRelativePositio
 }
 
 
-TArray<float> PlanetDensityGenerator::GenerateDensityField(int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp,
-                                                           const FVector2D &UVMin, const FVector2D &UVMax) const
+PlanetDensityGenerator::FGenData PlanetDensityGenerator::GenerateDensityField(int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight,
+                                                                              const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax) const
 {
     const int32 SampleCount = Resolution + 1;
     const int32 TotalVoxels = SampleCount * SampleCount * SampleCount;
 
-    TArray<float> DensityField;
-    DensityField.Reserve(TotalVoxels);
+    FGenData Result;
+    Result.Densities.Reserve(TotalVoxels);
+    Result.Positions.Reserve(TotalVoxels);
 
     // Iterate through all voxel grid points
     for (int32 z = 0; z < SampleCount; z++)
@@ -49,12 +50,13 @@ TArray<float> PlanetDensityGenerator::GenerateDensityField(int32 Resolution, con
                 // Sample density at this position
                 float Density = SampleDensity(PlanetRelPos);
 
-                DensityField.Add(Density);
+                Result.Densities.Add(Density);
+                Result.Positions.Add(PlanetRelPos);
             }
         }
     }
 
-    return DensityField;
+    return Result;
 }
 
 
@@ -75,13 +77,49 @@ FVector PlanetDensityGenerator::GetProjectedPosition(int32 x, int32 y, int32 z, 
     // 4. Spherify using equal-area distribution
     FVector SphereDir = GetSpherifiedCubePoint(PointOnCube);
 
-    // 5. Calculate altitude (Z is radial height from surface)
-    // Z = Resolution/2 represents the planet surface
+    // 5. Calculate altitude (Z is radial height from surface). Z = Resolution/2 represents the planet surface
     float SurfaceLevel = Resolution / 2.0f;
     float Altitude = (z - SurfaceLevel) * Config.VoxelSize;
 
     // 6. Final position: sphere direction * (radius + altitude)
     return SphereDir * (Config.PlanetRadius + Altitude);
+}
+
+
+float PlanetDensityGenerator::GetDensityAtPos(const FVector &PlanetLocalPos) const
+{
+    // This is the core logic previously in SampleSphereDensity
+    float DistanceToCenter = PlanetLocalPos.Size();
+    float SphereDensity = (Config.PlanetRadius - DistanceToCenter) / Config.VoxelSize;
+
+    // Once we add noise, it will be added here:
+    // float Noise = SampleNoise(LocalPos);
+    // return SphereDensity + Noise;
+
+    return SphereDensity;
+}
+
+
+FVector PlanetDensityGenerator::GetNormalAtPos(const FVector &PlanetLocalPos) const
+{
+    // Use a small offset to find the slope
+    const float eps = 1.0f;
+
+    // Gradient is the change in density in each axis
+    float nx = GetDensityAtPos(PlanetLocalPos + FVector(eps, 0, 0)) - GetDensityAtPos(PlanetLocalPos - FVector(eps, 0, 0));
+    float ny = GetDensityAtPos(PlanetLocalPos + FVector(0, eps, 0)) - GetDensityAtPos(PlanetLocalPos - FVector(0, eps, 0));
+    float nz = GetDensityAtPos(PlanetLocalPos + FVector(0, 0, eps)) - GetDensityAtPos(PlanetLocalPos - FVector(0, 0, eps));
+
+    FVector Gradient = FVector(nx, ny, nz);
+
+    // Safety check: if the gradient is zero (dead center), fall back to the radial vector.
+    if (Gradient.SizeSquared() < KINDA_SMALL_NUMBER)
+    {
+        return PlanetLocalPos.GetSafeNormal();
+    }
+
+    // Negate because we want the normal to point TOWARDS decreasing density (out of the ground)
+    return -Gradient.GetSafeNormal();
 }
 
 
