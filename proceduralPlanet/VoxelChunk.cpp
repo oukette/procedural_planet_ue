@@ -42,6 +42,11 @@ void AVoxelChunk::GenerateChunkAsync()
     float planetRadius = PlanetRadius;
     FVector planetCenter = PlanetCenter;
 
+    // Capture noise parameters
+    float noiseAmp = NoiseAmplitude;
+    float noiseFreq = NoiseFrequency;
+    int32 seed = Seed;
+
     // Capture projection params
     FVector fNormal = FaceNormal;
     FVector fRight = FaceRight;
@@ -62,15 +67,38 @@ void AVoxelChunk::GenerateChunkAsync()
 
     // Run on background thread
     Async(EAsyncExecution::ThreadPool,
-          [weakThis, resolution, voxelSize, planetRadius, planetTransform, chunkTransform, lodLevel, fNormal, fRight, fUp, uvMin, uvMax]()
+          [weakThis,
+           resolution,
+           voxelSize,
+           planetRadius,
+           noiseAmp,
+           noiseFreq,
+           seed,
+           planetTransform,
+           chunkTransform,
+           lodLevel,
+           fNormal,
+           fRight,
+           fUp,
+           uvMin,
+           uvMax]()
           {
+              // Create density generator with captured parameters
+              PlanetDensityGenerator::DensityConfig DensityConfig;
+              DensityConfig.PlanetRadius = planetRadius;
+              DensityConfig.NoiseAmplitude = noiseAmp;
+              DensityConfig.NoiseFrequency = noiseFreq;
+              DensityConfig.Seed = seed;
+              DensityConfig.VoxelSize = voxelSize;
+
+              PlanetDensityGenerator DensityGen(DensityConfig);
+
               // 1. Generate Density
-              TArray<float> LocalDensity =
-                  GenerateDensityField(resolution, voxelSize, planetRadius, fNormal, fRight, fUp, uvMin, uvMax);
+              TArray<float> LocalDensity = DensityGen.GenerateDensityField(resolution, fNormal, fRight, fUp, uvMin, uvMax);
 
               // 2. Generate Mesh
-              FChunkMeshData MeshData = GenerateMeshFromDensity(
-                  LocalDensity, resolution, voxelSize, planetRadius, planetTransform, chunkTransform, fNormal, fRight, fUp, uvMin, uvMax, lodLevel);
+              FChunkMeshData MeshData = GenerateMeshFromDensity(LocalDensity, resolution, voxelSize, planetRadius, planetTransform, chunkTransform, 
+                                                                fNormal, fRight, fUp, uvMin, uvMax, lodLevel, DensityGen);
 
               // 3. Apply to Main Thread
               AsyncTask(ENamedThreads::GameThread,
@@ -141,65 +169,6 @@ void AVoxelChunk::UpdateChunkLOD(int32 NewLOD, int32 NewResolution, float NewVox
 }
 
 
-// Helper to calculate the exact world position of a voxel grid point using Spherified Cube mapping
-static FVector GetProjectedPosition(int32 x, int32 y, int32 z, int32 Resolution, float VoxelSize, float PlanetRadius, 
-                                    const FVector& FaceNormal, const FVector& FaceRight, const FVector& FaceUp, 
-                                    const FVector2D& UVMin, const FVector2D& UVMax)
-{
-    // 1. Calculate normalized U, V for this specific voxel (0.0 to 1.0 within the chunk)
-    float uPct = x / (float)Resolution;
-    float vPct = y / (float)Resolution;
-
-    // 2. Map to the Face U, V (-1.0 to 1.0 space of the whole cube face)
-    float u = FMath::Lerp(UVMin.X, UVMax.X, uPct);
-    float v = FMath::Lerp(UVMin.Y, UVMax.Y, vPct);
-
-    // 3. Point on Cube
-    FVector PointOnCube = FaceNormal + FaceRight * u + FaceUp * v;
-
-    // 4. Spherify (using the same logic as Planet)
-    FVector SphereDir = ACubeSpherePlanet::GetSpherifiedCubePoint(PointOnCube);
-
-    // 5. Altitude (Z is radial height). Center Z around 0 (surface) or offset as needed.
-    // Here we assume Z=Resolution/2 is the "surface" level to allow digging/building up.
-    float Altitude = (z - Resolution / 2.0f) * VoxelSize;
-
-    return SphereDir * (PlanetRadius + Altitude);
-}
-
-
-TArray<float> AVoxelChunk::GenerateDensityField(int32 Resolution, float VoxelSize, float PlanetRadius, const FVector& FaceNormal, const FVector& FaceRight, const FVector& FaceUp, const FVector2D& UVMin, const FVector2D& UVMax)
-{
-    const int SampleCount = Resolution + 1;
-    const int TotalVoxels = SampleCount * SampleCount * SampleCount;
-    TArray<float> LocalDensity;
-    LocalDensity.SetNumUninitialized(TotalVoxels);
-
-    int32 Index = 0;
-
-    for (int32 z = 0; z < SampleCount; z++)
-    {
-        for (int32 y = 0; y < SampleCount; y++)
-        {
-            for (int32 x = 0; x < SampleCount; x++)
-            {
-                // Calculate the warped position relative to the planet center (Planet Local Space)
-                FVector PlanetRelPos = GetProjectedPosition(x, y, z, Resolution, VoxelSize, PlanetRadius, FaceNormal, FaceRight, FaceUp, UVMin, UVMax);
-                
-                // Transform to Local Space for density calculation relative to center (if needed)
-                // But density is usually based on WorldPos (for noise) or Distance to Center.
-                // Distance to Planet Center is simple:
-                float DistToPlanetCenter = PlanetRelPos.Size();
-
-                // Simple sphere density
-                LocalDensity[Index++] = (PlanetRadius - DistToPlanetCenter) / VoxelSize;
-            }
-        }
-    }
-    return LocalDensity;
-}
-
-
 FVector AVoxelChunk::VertexInterp(const FVector &P1, const FVector &P2, float D1, float D2)
 {
     const float Epsilon = 1e-6f;
@@ -214,8 +183,9 @@ FVector AVoxelChunk::VertexInterp(const FVector &P1, const FVector &P2, float D1
 
 
 FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density, int32 Resolution, float VoxelSize, float PlanetRadius,
-                                                    const FTransform &PlanetTransform, const FTransform &ChunkTransform, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp,
-                                                    const FVector2D &UVMin, const FVector2D &UVMax, int32 LODLevel)
+                                                    const FTransform &PlanetTransform, const FTransform &ChunkTransform, const FVector &FaceNormal,
+                                                    const FVector &FaceRight, const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax,
+                                                    int32 LODLevel, const PlanetDensityGenerator &DensityGenerator)
 {
     FChunkMeshData MeshData;
     const int SampleCount = Resolution + 1;
@@ -257,10 +227,10 @@ FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const TArray<float> &Density
 
                     // Inline density access
                     D[i] = Density[ix + iy * SampleCount + iz * SampleCount * SampleCount];
-                    
+
                     // Calculate Warped Position in Planet Local Space (Vector from Planet Center)
-                    FVector PlanetRelPos = GetProjectedPosition(ix, iy, iz, Resolution, VoxelSize, PlanetRadius, FaceNormal, FaceRight, FaceUp, UVMin, UVMax);
-                    
+                    FVector PlanetRelPos = DensityGenerator.GetProjectedPosition(ix, iy, iz, Resolution, FaceNormal, FaceRight, FaceUp, UVMin, UVMax);
+
                     // 1. Transform to World Space (Apply Planet Rotation/Location)
                     FVector WorldPos = PlanetTransform.TransformPosition(PlanetRelPos);
 

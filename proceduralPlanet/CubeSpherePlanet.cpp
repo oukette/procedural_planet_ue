@@ -169,7 +169,7 @@ void ACubeSpherePlanet::UpdateLODAndStreaming()
             // If no upgrade, check for DOWNGRADE to a lower-detail LOD (larger index)
             if (TargetLOD == -1 && CurrentLOD < LODSettings.Num() - 1)
             {
-                const float DowngradeDistSq = FMath::Square(LODSettings[CurrentLOD].Distance * 1.1f); // Hysteresis
+                const float DowngradeDistSq = FMath::Square(LODSettings[CurrentLOD].Distance * LODHysteresisFactor); // Hysteresis
                 if (DistSq > DowngradeDistSq)
                 {
                     TargetLOD = CurrentLOD + 1;
@@ -179,7 +179,7 @@ void ACubeSpherePlanet::UpdateLODAndStreaming()
             // If still no change, it stays at its current LOD unless it needs to be despawned
             if (TargetLOD == -1)
             {
-                const float DespawnDistSq = FMath::Square(ChunkCullDist * 1.1f); // Hysteresis
+                const float DespawnDistSq = FMath::Square(ChunkCullDist * LODDespawnHysteresisFactor); // Hysteresis
                 TargetLOD = (DistSq > DespawnDistSq) ? -1 : CurrentLOD;
             }
         }
@@ -315,7 +315,7 @@ void ACubeSpherePlanet::ProcessMeshUpdateQueue()
     while (MeshUpdateQueue.Num() > 0 && ProcessedCount < ChunksMeshUpdatesPerFrame)
     {
         AVoxelChunk *Chunk = MeshUpdateQueue.Pop(false);  // Use FIFO for better visual progression
-        if (Chunk && IsValid(Chunk))
+        if (Chunk && IsValid(Chunk) && !Chunk->IsPendingKill())
         {
             Chunk->UploadMesh(DebugMaterial);
         }
@@ -329,12 +329,15 @@ bool ACubeSpherePlanet::ShouldTickIfViewportsOnly() const { return true; }
 
 void ACubeSpherePlanet::OnChunkGenerationFinished(AVoxelChunk *Chunk)
 {
-    if (Chunk)
+    // Decrement counter even if chunk is invalid
+    if (ActiveGenerationTasks > 0)
     {
-        if (ActiveGenerationTasks > 0)
-        {
-            ActiveGenerationTasks--;
-        }
+        ActiveGenerationTasks--;
+    }
+    
+    // Only queue valid chunks
+    if (Chunk && IsValid(Chunk) && !Chunk->IsPendingKill())
+    {
         MeshUpdateQueue.Add(Chunk);
     }
 }
@@ -623,6 +626,7 @@ void ACubeSpherePlanet::PrepareGeneration()
     UE_LOG(LogTemp, Warning, TEXT("Initialized %d potential chunks for planet radius %.1f"), ChunkInfos.Num(), PlanetRadius);
 }
 
+
 void ACubeSpherePlanet::CreateFarModel()
 {
     if (!GetWorld()) return;
@@ -668,6 +672,7 @@ void ACubeSpherePlanet::CreateFarModel()
         UE_LOG(LogTemp, Log, TEXT("Automatically created FarPlanetModel for planet."));
     }
 }
+
 
 FVector ACubeSpherePlanet::GetObserverPosition() const
 {

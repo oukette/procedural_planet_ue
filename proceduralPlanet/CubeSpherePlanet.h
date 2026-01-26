@@ -185,6 +185,12 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization|LOD", meta = (ClampMin = "100.0"))
         float CollisionDistance = 6000.0f;  // Distance at which collision is enabled
 
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization|LOD", meta = (ClampMin = "1.0", ClampMax = "2.0"))
+        float LODHysteresisFactor = 1.1f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization|LOD", meta = (ClampMin = "1.0", ClampMax = "2.0"))
+        float LODDespawnHysteresisFactor = 1.1f;
+
         // --- Staggered Generation ---
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization",
                   meta = (DisplayName = "Chunk Mesh Updates Per Frame", ClampMin = "1", ClampMax = "100"))
