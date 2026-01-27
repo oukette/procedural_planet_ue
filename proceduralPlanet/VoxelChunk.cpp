@@ -5,6 +5,7 @@
 #include "Kismet/KismetMathLibrary.h"
 #include "CubeSpherePlanet.h"  // Needed to access Planet queue
 #include "Async/Async.h"
+#include "DrawDebugHelpers.h"
 
 
 // Sets default values
@@ -98,7 +99,7 @@ void AVoxelChunk::GenerateChunkAsync()
               PlanetDensityGenerator DensityGen(DensityConfig);
 
               // 1. Generate Density
-              PlanetDensityGenerator::FGenData GenData = DensityGen.GenerateDensityField(resolution, fNormal, fRight, fUp, uvMin, uvMax);
+              PlanetDensityGenerator::GenData GenData = DensityGen.GenerateDensityField(resolution, fNormal, fRight, fUp, uvMin, uvMax);
 
               // 2. Generate Mesh
               FChunkMeshData MeshData = GenerateMeshFromDensity(
@@ -106,12 +107,77 @@ void AVoxelChunk::GenerateChunkAsync()
 
               // 3. Apply to Main Thread
               AsyncTask(ENamedThreads::GameThread,
-                        [weakThis, MeshData]()
+                        [weakThis,
+                         MeshData,
+                         resolution,
+                         planetRadius,
+                         voxelSize,
+                         fNormal,
+                         fRight,
+                         fUp,
+                         uvMin,
+                         uvMax,
+                         CapturedPlanetTransform]()
                         {
                             if (AVoxelChunk *Chunk = weakThis.Get())
                             {
                                 // Store data and request update from Planet
                                 Chunk->GeneratedMeshData = MeshData;
+
+                                // --- DEBUG VISUALIZATION START ---
+                                if (Chunk->GetWorld())
+                                {
+                                    // 1. Visualize Spikes: Check for vertices that are excessively far from chunk origin
+                                    // A chunk shouldn't really be larger than its physical size * sqrt(3) plus some padding.
+                                    const float MaxBoundsSq = FMath::Square(resolution * voxelSize * 3.0f);
+
+                                    for (const FVector &Vert : MeshData.Vertices)
+                                    {
+                                        if (Vert.SizeSquared() > MaxBoundsSq)
+                                        {
+                                            // Draw a RED line to the spiked vertex
+                                            FVector WorldVert = Chunk->GetActorTransform().TransformPosition(Vert);
+                                            DrawDebugLine(Chunk->GetWorld(), Chunk->GetActorLocation(), WorldVert, FColor::Red, false, 5.0f, 0, 8.0f);
+                                        }
+                                    }
+
+                                    // 2. Visualize Expected Corners: Draw where the chunk corners SHOULD be in World Space
+                                    PlanetDensityGenerator::DensityConfig DebugConfig;
+                                    DebugConfig.PlanetRadius = planetRadius;
+                                    DebugConfig.VoxelSize = voxelSize;
+                                    PlanetDensityGenerator DebugGen(DebugConfig);
+
+                                    // Check Min (0,0,0) and Max (Res,Res,Res) corners
+                                    int32 Corners[] = {0, resolution};
+                                    for (int32 z : Corners)
+                                    {
+                                        for (int32 y : Corners)
+                                        {
+                                            for (int32 x : Corners)
+                                            {
+                                                FVector PlanetRel = DebugGen.GetProjectedPosition(x, y, z, resolution, fNormal, fRight, fUp, uvMin, uvMax);
+                                                FVector WorldPos = CapturedPlanetTransform.TransformPosition(PlanetRel);
+                                                DrawDebugPoint(Chunk->GetWorld(), WorldPos, 10.0f, FColor::Green, false, 5.0f);
+                                            }
+                                        }
+                                    }
+
+                                    // 3. Visualize Chunk Bounding Box
+                                    // This shows the volume the mesh is supposed to occupy in world space.
+                                    const FVector LocalBoxCenter = FVector(resolution * voxelSize / 2.0f);
+                                    const FVector BoxExtent = FVector(resolution * voxelSize / 2.0f);
+                                    const FVector WorldBoxCenter = Chunk->GetActorTransform().TransformPosition(LocalBoxCenter);
+                                    DrawDebugBox(Chunk->GetWorld(),
+                                                 WorldBoxCenter,
+                                                 BoxExtent,
+                                                 Chunk->GetActorTransform().GetRotation(),
+                                                 FColor::Orange,
+                                                 false,
+                                                 5.0f,
+                                                 0,
+                                                 8.0f);
+                                }
+                                // --- DEBUG VISUALIZATION END ---
 
                                 if (ACubeSpherePlanet *Planet = Cast<ACubeSpherePlanet>(Chunk->GetOwner()))
                                 {
@@ -186,13 +252,19 @@ FVector AVoxelChunk::VertexInterp(const FVector &P1, const FVector &P2, float D1
 }
 
 
-FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const PlanetDensityGenerator::FGenData &GenData, int32 Resolution, FTransform CapturedChunkTransform,
+FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const PlanetDensityGenerator::GenData &GenData, int32 Resolution, FTransform CapturedChunkTransform,
                                                     FTransform CapturedPlanetTransform, const FVector &FaceNormal, const FVector &FaceRight,
                                                     const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax, int32 LODLevel,
                                                     const PlanetDensityGenerator &DensityGenerator)
 {
     FChunkMeshData MeshData;
-    const int SampleCount = Resolution + 1;
+
+    // Use the SampleCount from the generated data. This is the source of truth for the grid dimensions.
+    const int32 SampleCount = GenData.SampleCount;
+    if (SampleCount <= 1)
+    {
+        return MeshData; // Return empty mesh if data is invalid or has no volume
+    }
 
     // Automatic Debug Colors for multiple LODs. Green (LOD0) -> Yellow -> Orange -> Red...
     const static TArray<FColor> LODColors = {

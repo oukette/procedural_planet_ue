@@ -149,11 +149,23 @@ class FNoiseUtils
 };
 
 // Initialize the gradient table
-const FVector FNoiseUtils::GradTable[16] = {
-    FVector(1, 1, 0),  FVector(-1, 1, 0), FVector(1, -1, 0), FVector(-1, -1, 0), FVector(1, 0, 1),  FVector(-1, 0, 1), FVector(1, 0, -1),
-    FVector(-1, 0, -1), FVector(0, 1, 1), FVector(0, -1, 1), FVector(0, 1, -1), FVector(0, -1, -1),
-    // Add some more vectors for 3D. These are edges of a cube.
-    FVector(1, 1, 0),  FVector(-1, 1, 0), FVector(0, -1, 1), FVector(0, -1, -1)};
+const FVector FNoiseUtils::GradTable[16] = {FVector(1, 1, 0),
+                                            FVector(-1, 1, 0),
+                                            FVector(1, -1, 0),
+                                            FVector(-1, -1, 0),
+                                            FVector(1, 0, 1),
+                                            FVector(-1, 0, 1),
+                                            FVector(1, 0, -1),
+                                            FVector(-1, 0, -1),
+                                            FVector(0, 1, 1),
+                                            FVector(0, -1, 1),
+                                            FVector(0, 1, -1),
+                                            FVector(0, -1, -1),
+                                            // Add some more vectors for 3D. These are edges of a cube.
+                                            FVector(1, 1, 0),
+                                            FVector(-1, 1, 0),
+                                            FVector(0, -1, 1),
+                                            FVector(0, -1, -1)};
 
 
 PlanetDensityGenerator::PlanetDensityGenerator(const DensityConfig &InConfig) :
@@ -178,15 +190,16 @@ float PlanetDensityGenerator::SampleDensity(const FVector &PlanetRelativePositio
 }
 
 
-PlanetDensityGenerator::FGenData PlanetDensityGenerator::GenerateDensityField(int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight,
-                                                                              const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax) const
+PlanetDensityGenerator::GenData PlanetDensityGenerator::GenerateDensityField(int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight,
+                                                                             const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax) const
 {
     const int32 SampleCount = Resolution + 1;
     const int32 TotalVoxels = SampleCount * SampleCount * SampleCount;
 
-    FGenData Result;
+    GenData Result;
     Result.Densities.Reserve(TotalVoxels);
     Result.Positions.Reserve(TotalVoxels);
+    Result.SampleCount = SampleCount;
 
     // Iterate through all voxel grid points
     for (int32 z = 0; z < SampleCount; z++)

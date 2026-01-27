@@ -24,7 +24,7 @@ class PROCEDURALPLANET_API AVoxelChunk : public AActor
         GENERATED_BODY()
 
     private:
-        static FChunkMeshData GenerateMeshFromDensity(const PlanetDensityGenerator::FGenData &GenData, int32 Resolution, FTransform CapturedChunkTransform,
+        static FChunkMeshData GenerateMeshFromDensity(const PlanetDensityGenerator::GenData &GenData, int32 Resolution, FTransform CapturedChunkTransform,
                                                       FTransform CapturedPlanetTransform, const FVector &FaceNormal, const FVector &FaceRight,
                                                       const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax, int32 LODLevel,
                                                       const PlanetDensityGenerator &DensityGenerator);

@@ -47,10 +47,11 @@ class PROCEDURALPLANET_API PlanetDensityGenerator
         };
 
         // Container for generated field data to avoid re-calculating positions
-        struct FGenData
+        struct GenData
         {
                 TArray<float> Densities;
                 TArray<FVector> Positions;
+                int32 SampleCount = 0;
         };
 
         // Constructor
@@ -60,8 +61,8 @@ class PROCEDURALPLANET_API PlanetDensityGenerator
         float SampleDensity(const FVector &PlanetRelativePosition) const;
 
         // Generate entire density field for a chunk (optimized batch operation)
-        FGenData GenerateDensityField(int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp, const FVector2D &UVMin,
-                                      const FVector2D &UVMax) const;
+        GenData GenerateDensityField(int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp, const FVector2D &UVMin,
+                                     const FVector2D &UVMax) const;
 
         // Accessors for validation/debugging
         const DensityConfig &GetConfig() const { return Config; }
