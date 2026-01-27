@@ -318,6 +318,9 @@ void ACubeSpherePlanet::ProcessSpawnQueue()
             Chunk->PlanetCenter = PlanetCenterWorld;
             Chunk->NoiseAmplitude = NoiseAmplitude;
             Chunk->NoiseFrequency = NoiseFrequency;
+            Chunk->NoiseOctaves = NoiseOctaves;
+            Chunk->NoiseLacunarity = NoiseLacunarity;
+            Chunk->NoisePersistence = NoisePersistence;
             Chunk->Seed = Seed;
             Chunk->bEnableCollision = bEnableCollision;
             Chunk->FaceNormal = Info.FaceNormal;

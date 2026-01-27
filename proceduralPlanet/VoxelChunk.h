@@ -80,6 +80,18 @@ class PROCEDURALPLANET_API AVoxelChunk : public AActor
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel")
         float NoiseAmplitude;
 
+        // Noise octaves
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel")
+        int32 NoiseOctaves;
+
+        // Noise lacunarity
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel")
+        float NoiseLacunarity;
+
+        // Noise persistence
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel")
+        float NoisePersistence;
+
         // Noise frequency
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Voxel")
         float NoiseFrequency;

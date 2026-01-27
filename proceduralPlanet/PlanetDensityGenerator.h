@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 
+
 /**
  * Encapsulates all density field generation logic for procedural planets.
  * Thread-safe and stateless - can be used from async tasks.
@@ -22,6 +23,9 @@ class PROCEDURALPLANET_API PlanetDensityGenerator
                 float PlanetRadius;
                 float NoiseAmplitude;
                 float NoiseFrequency;
+                int32 NoiseOctaves;
+                float NoiseLacunarity;
+                float NoisePersistence;
                 int32 Seed;
                 float VoxelSize;  // For normalization
 
@@ -33,6 +37,9 @@ class PROCEDURALPLANET_API PlanetDensityGenerator
                     PlanetRadius(50000.f),
                     NoiseAmplitude(500.f),
                     NoiseFrequency(0.0003f),
+                    NoiseOctaves(6),
+                    NoiseLacunarity(2.0f),
+                    NoisePersistence(0.5f),
                     Seed(1337),
                     VoxelSize(100.f)
                 {
@@ -72,6 +79,9 @@ class PROCEDURALPLANET_API PlanetDensityGenerator
 
         // Base sphere density (distance to center)
         float SampleSphereDensity(const FVector &PlanetRelativePosition) const;
+
+        // Fractal Brownian Motion sampling
+        float SampleFBM(const FVector &Position) const;
 
         // Noise sampling (to be implemented with your noise system)
         float SampleNoise(const FVector &Position) const;

@@ -49,6 +49,9 @@ void AVoxelChunk::GenerateChunkAsync()
     // Capture noise parameters
     float noiseAmp = NoiseAmplitude;
     float noiseFreq = NoiseFrequency;
+    int32 noiseOctaves = NoiseOctaves;
+    float noiseLacunarity = NoiseLacunarity;
+    float noisePersistence = NoisePersistence;
     int32 seed = Seed;
 
     // Capture projection params
@@ -68,6 +71,9 @@ void AVoxelChunk::GenerateChunkAsync()
            planetRadius,
            noiseAmp,
            noiseFreq,
+           noiseOctaves,
+           noiseLacunarity,
+           noisePersistence,
            seed,
            CapturedChunkTransform,
            CapturedPlanetTransform,
@@ -83,6 +89,9 @@ void AVoxelChunk::GenerateChunkAsync()
               DensityConfig.PlanetRadius = planetRadius;
               DensityConfig.NoiseAmplitude = noiseAmp;
               DensityConfig.NoiseFrequency = noiseFreq;
+              DensityConfig.NoiseOctaves = noiseOctaves;
+              DensityConfig.NoiseLacunarity = noiseLacunarity;
+              DensityConfig.NoisePersistence = noisePersistence;
               DensityConfig.Seed = seed;
               DensityConfig.VoxelSize = voxelSize;
 

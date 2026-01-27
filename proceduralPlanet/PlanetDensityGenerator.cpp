@@ -5,6 +5,157 @@
 #include "Math/UnrealMathUtility.h"
 
 
+/**
+ * A self-contained, thread-safe utility class for generating 3D Simplex noise.
+ * This is implemented as a static class to keep it decoupled from the PlanetDensityGenerator instance.
+ * It uses a seed-based permutation table for deterministic, repeatable noise.
+ */
+class FNoiseUtils
+{
+    public:
+        // Generates 3D Simplex noise for a given point and seed.
+        static float SimplexNoise(const FVector &Position, int32 Seed)
+        {
+            // Simplex noise constants
+            const float F3 = 1.0f / 3.0f;
+            const float G3 = 1.0f / 6.0f;
+
+            // Skew the input space to determine which simplex cell we're in
+            float s = (Position.X + Position.Y + Position.Z) * F3;
+            int32 i = FMath::FloorToInt(Position.X + s);
+            int32 j = FMath::FloorToInt(Position.Y + s);
+            int32 k = FMath::FloorToInt(Position.Z + s);
+
+            float t = (i + j + k) * G3;
+            float X0 = i - t;  // Unskew the cell origin back to (x,y,z) space
+            float Y0 = j - t;
+            float Z0 = k - t;
+            float x0 = Position.X - X0;  // The x,y,z distances from the cell origin
+            float y0 = Position.Y - Y0;
+            float z0 = Position.Z - Z0;
+
+            // For the 3D case, the simplex shape is a tetrahedron.
+            // Determine which simplex we are in.
+            int32 i1, j1, k1;  // Offsets for second corner of simplex in (i,j,k) coords
+            int32 i2, j2, k2;  // Offsets for third corner of simplex in (i,j,k) coords
+
+            if (x0 >= y0)
+            {
+                if (y0 >= z0)
+                {
+                    i1 = 1;
+                    j1 = 0;
+                    k1 = 0;
+                    i2 = 1;
+                    j2 = 1;
+                    k2 = 0;
+                }  // X Y Z order
+                else if (x0 >= z0)
+                {
+                    i1 = 1;
+                    j1 = 0;
+                    k1 = 0;
+                    i2 = 1;
+                    j2 = 0;
+                    k2 = 1;
+                }  // X Z Y order
+                else
+                {
+                    i1 = 0;
+                    j1 = 0;
+                    k1 = 1;
+                    i2 = 1;
+                    j2 = 0;
+                    k2 = 1;
+                }  // Z X Y order
+            }
+            else
+            {  // x0 < y0
+                if (y0 < z0)
+                {
+                    i1 = 0;
+                    j1 = 0;
+                    k1 = 1;
+                    i2 = 0;
+                    j2 = 1;
+                    k2 = 1;
+                }  // Z Y X order
+                else if (x0 < z0)
+                {
+                    i1 = 0;
+                    j1 = 1;
+                    k1 = 0;
+                    i2 = 0;
+                    j2 = 1;
+                    k2 = 1;
+                }  // Y Z X order
+                else
+                {
+                    i1 = 0;
+                    j1 = 1;
+                    k1 = 0;
+                    i2 = 1;
+                    j2 = 1;
+                    k2 = 0;
+                }  // Y X Z order
+            }
+
+            // A step of (1,0,0) in (i,j,k) means a step of (1-c,-c,-c) in (x,y,z),
+            // and a step of (0,1,0) in (i,j,k) means a step of (-c,1-c,-c) in (x,y,z), etc.
+            // where c = 1/6.
+            float x1 = x0 - i1 + G3;
+            float y1 = y0 - j1 + G3;
+            float z1 = z0 - k1 + G3;
+            float x2 = x0 - i2 + 2.0f * G3;
+            float y2 = y0 - j2 + 2.0f * G3;
+            float z2 = z0 - k2 + 2.0f * G3;
+            float x3 = x0 - 1.0f + 3.0f * G3;
+            float y3 = y0 - 1.0f + 3.0f * G3;
+            float z3 = z0 - 1.0f + 3.0f * G3;
+
+            // Calculate the contribution from the four corners
+            float n = 0.0f;
+            n += CalculateCorner(x0, y0, z0, Grad(Hash(i, j, k, Seed), x0, y0, z0));
+            n += CalculateCorner(x1, y1, z1, Grad(Hash(i + i1, j + j1, k + k1, Seed), x1, y1, z1));
+            n += CalculateCorner(x2, y2, z2, Grad(Hash(i + i2, j + j2, k + k2, Seed), x2, y2, z2));
+            n += CalculateCorner(x3, y3, z3, Grad(Hash(i + 1, j + 1, k + 1, Seed), x3, y3, z3));
+
+            // The result is scaled to stay just inside [-1,1]
+            return 32.0f * n;
+        }
+
+    private:
+        // Simple hashing function for pseudo-random gradient selection
+        static int32 Hash(int32 i, int32 j, int32 k, int32 seed) { return Perm(Perm(Perm(i, seed) + j, seed) + k, seed); }
+
+        // Seeded permutation function
+        static int32 Perm(int32 x, int32 seed) { return (((x * x * 15731 + 789221) * x + 1376312589) ^ seed) & 0x7fffffff; }
+
+        static float Grad(int32 hash, float x, float y, float z) { return Dot(GradTable[hash & 15], x, y, z); }
+
+        static float Dot(const FVector &g, float x, float y, float z) { return g.X * x + g.Y * y + g.Z * z; }
+
+        static float CalculateCorner(float x, float y, float z, float grad)
+        {
+            float t = 0.6f - x * x - y * y - z * z;
+            if (t < 0)
+                return 0.0f;
+            t *= t;
+            return t * t * grad;
+        }
+
+        // Gradient vectors for 3D simplex noise
+        static const FVector GradTable[16];
+};
+
+// Initialize the gradient table
+const FVector FNoiseUtils::GradTable[16] = {
+    FVector(1, 1, 0),  FVector(-1, 1, 0), FVector(1, -1, 0), FVector(-1, -1, 0), FVector(1, 0, 1),  FVector(-1, 0, 1), FVector(1, 0, -1),
+    FVector(-1, 0, -1), FVector(0, 1, 1), FVector(0, -1, 1), FVector(0, 1, -1), FVector(0, -1, -1),
+    // Add some more vectors for 3D. These are edges of a cube.
+    FVector(1, 1, 0),  FVector(-1, 1, 0), FVector(0, -1, 1), FVector(0, -1, -1)};
+
+
 PlanetDensityGenerator::PlanetDensityGenerator(const DensityConfig &InConfig) :
     Config(InConfig)
 {
@@ -20,7 +171,7 @@ float PlanetDensityGenerator::SampleDensity(const FVector &PlanetRelativePositio
     float SphereDensity = SampleSphereDensity(PlanetRelativePosition);
 
     // 2. Add noise (currently placeholder, will be implemented next)
-    float Noise = SampleNoise(PlanetRelativePosition);
+    float Noise = SampleNoise(PlanetRelativePosition);  // This will now call the FBM function
 
     // 3. Combine
     return SphereDensity + Noise;
@@ -88,15 +239,10 @@ FVector PlanetDensityGenerator::GetProjectedPosition(int32 x, int32 y, int32 z, 
 
 float PlanetDensityGenerator::GetDensityAtPos(const FVector &PlanetLocalPos) const
 {
-    // This is the core logic previously in SampleSphereDensity
-    float DistanceToCenter = PlanetLocalPos.Size();
-    float SphereDensity = (Config.PlanetRadius - DistanceToCenter) / Config.VoxelSize;
-
-    // Once we add noise, it will be added here:
-    // float Noise = SampleNoise(LocalPos);
-    // return SphereDensity + Noise;
-
-    return SphereDensity;
+    // CORRECTED: This function must return the full density value, including noise,
+    // so that the gradient calculation for normals is accurate. It should not just
+    // return the sphere density.
+    return SampleDensity(PlanetLocalPos);
 }
 
 
@@ -134,17 +280,38 @@ float PlanetDensityGenerator::SampleSphereDensity(const FVector &PlanetRelativeP
 }
 
 
+float PlanetDensityGenerator::SampleFBM(const FVector &Position) const
+{
+    float Total = 0.0f;
+    float Frequency = Config.NoiseFrequency;
+    float Amplitude = 1.0f;
+    float MaxValue = 0.0f;  // Used for normalizing the result to [-1, 1]
+
+    for (int32 i = 0; i < Config.NoiseOctaves; i++)
+    {
+        Total += FNoiseUtils::SimplexNoise(Position * Frequency, Config.Seed + i) * Amplitude;
+        MaxValue += Amplitude;
+        Amplitude *= Config.NoisePersistence;
+        Frequency *= Config.NoiseLacunarity;
+    }
+
+    if (MaxValue > 0)
+    {
+        return Total / MaxValue;
+    }
+    return 0.0f;
+}
+
+
 float PlanetDensityGenerator::SampleNoise(const FVector &Position) const
 {
-    // PLACEHOLDER: Will be implemented with proper 3D noise (Simplex, Perlin, etc.)
-    // For now, return 0 to maintain current sphere behavior
+    // 1. Get the raw noise value from our FBM function. This will be in the range [-1, 1].
+    float FbmValue = SampleFBM(Position);
 
-    // Future implementation example:
-    // FVector NoiseCoord = Position * Config.NoiseFrequency;
-    // float NoiseValue = FMath::PerlinNoise3D(NoiseCoord);
-    // return NoiseValue * Config.NoiseAmplitude / Config.VoxelSize;
-
-    return 0.0f;
+    // 2. The noise value represents a displacement in world units. We scale it by the desired amplitude.
+    // 3. We then divide by VoxelSize to convert this world-space displacement into a "density unit"
+    //    displacement, which is what Marching Cubes expects to see.
+    return FbmValue * Config.NoiseAmplitude / Config.VoxelSize;
 }
 
 

@@ -7,6 +7,7 @@
 
 class AVoxelChunk;  // Forward declaration to avoid circular includes
 
+
 // A struct to define settings for a single Level of Detail.
 USTRUCT(BlueprintType)
 struct FLODInfo
@@ -21,6 +22,7 @@ struct FLODInfo
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LOD")
 	int32 VoxelResolution = 32;
 };
+
 
 // Lightweight struct to manage chunk state without spawning an actor
 struct FChunkInfo
@@ -153,13 +155,25 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         float PlanetRadius;
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        // --- Noise ---
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Noise", meta = (DisplayName = "Amplitude"))
         float NoiseAmplitude;
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Noise", meta = (DisplayName = "Base Frequency"))
         float NoiseFrequency;
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Noise", meta = (DisplayName = "Octaves", ClampMin = "1", ClampMax = "12"))
+        int32 NoiseOctaves = 6;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Noise", meta = (DisplayName = "Lacunarity", ClampMin = "1.0"))
+        float NoiseLacunarity = 2.0f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Noise", meta = (DisplayName = "Persistence (Gain)", ClampMin = "0.0", ClampMax = "1.0"))
+        float NoisePersistence = 0.5f;
+
+
+        // --- Voxel Settings ---
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Voxels")
         int32 VoxelResolution;  // Per-chunk voxel count (Resolution for LOD 0)
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
