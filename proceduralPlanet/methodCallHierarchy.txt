@@ -1,0 +1,25 @@
+ACubeSpherePlanet::Tick()
+└─ UpdateLODAndStreaming()
+    └─ UpdateAllChunksLOD()
+        └─ ApplyChunkStateChange()
+            └─ SpawnChunkActor()
+                └─ AVoxelChunk::GenerateChunkAsync()
+                    │
+                    ├─ [Background Thread]
+                    │   ├─ PlanetDensityGenerator::GenerateDensityField()
+                    │   │   └─ For each voxel:
+                    │   │       ├─ GetProjectedPosition()
+                    │   │       │   └─ GetSpherifiedCubePoint()
+                    │   │       └─ SampleDensity()
+                    │   │           ├─ SampleSphereDensity()
+                    │   │           └─ SampleNoise()
+                    │   │               └─ SampleFBM()
+                    │   │                   └─ FNoiseUtils::SimplexNoise()
+                    │   │
+                    │   └─ GenerateMeshFromDensity()
+                    │       └─ For each cube:
+                    │           ├─ VertexInterp()
+                    │           └─ GetNormalAtPos()
+                    │
+                    └─ [Game Thread]
+                        └─ CreateMeshSection()
