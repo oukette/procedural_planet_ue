@@ -262,7 +262,8 @@ float PlanetDensityGenerator::GetDensityAtPos(const FVector &PlanetLocalPos) con
 FVector PlanetDensityGenerator::GetNormalAtPos(const FVector &PlanetLocalPos) const
 {
     // Use a small offset to find the slope
-    const float eps = 1.0f;
+    // A smaller epsilon gives a more accurate local gradient. 1.0f can be too large in areas with high-frequency noise.
+    const float eps = 0.1f;
 
     // Gradient is the change in density in each axis
     float nx = GetDensityAtPos(PlanetLocalPos + FVector(eps, 0, 0)) - GetDensityAtPos(PlanetLocalPos - FVector(eps, 0, 0));
