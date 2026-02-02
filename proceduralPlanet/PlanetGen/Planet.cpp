@@ -21,12 +21,13 @@ void APlanet::BeginPlay()
     Super::BeginPlay();
 
     UE_LOG(LogTemp, Log, TEXT("=== Planet Math Validation Tests ==="));
-
-    // Run all tests
     TestCubeSphereProjection();
     TestFaceContinuity();
     TestPrecision();
     TestEdgeCases();
+
+    UE_LOG(LogTemp, Log, TEXT("=== Seed Utils Validation Tests ==="));
+    TestSeedUtils();
 
     // Summary
     UE_LOG(LogTemp, Log, TEXT("=== Test Summary ==="));
@@ -384,5 +385,54 @@ void APlanet::TestEdgeCases()
         float LengthError = FMath::Abs(Dir.Size() - 1.0f);
 
         LogTest("UV Clamping", LengthError < 0.001f, FString::Printf(TEXT("Length error: %f"), LengthError));
+    }
+}
+
+
+void APlanet::TestSeedUtils()
+{
+    UE_LOG(LogTemp, Log, TEXT("--- Testing Seed Utils ---"));
+
+    // Test 1: Determinism
+    {
+        uint64 Seed = 123456789;
+        float Result1 = FSeedUtils::RandomFloat(Seed);
+        float Result2 = FSeedUtils::RandomFloat(Seed);
+
+        LogTest("Deterministic Random", FMath::Abs(Result1 - Result2) < 1e-6f, FString::Printf(TEXT("Results: %f vs %f"), Result1, Result2));
+    }
+
+    // Test 2: Spatial hashing consistency
+    {
+        uint64 Seed = 987654321;
+        uint64 Hash1 = FSeedUtils::HashPosition(100.0f, 200.0f, 300.0f, Seed);
+        uint64 Hash2 = FSeedUtils::HashPosition(100.0f, 200.0f, 300.0f, Seed);
+
+        LogTest("Spatial Hash Consistency", Hash1 == Hash2, FString::Printf(TEXT("Hashes: %llu vs %llu"), Hash1, Hash2));
+    }
+
+    // Test 3: Chunk seed derivation
+    {
+        uint64 PlanetSeed = 555555;
+        uint64 ChunkSeed1 = FSeedUtils::GetChunkSeed(PlanetSeed, 0, 2, 10, 20);
+        uint64 ChunkSeed2 = FSeedUtils::GetChunkSeed(PlanetSeed, 0, 2, 10, 20);
+        uint64 DifferentSeed = FSeedUtils::GetChunkSeed(PlanetSeed, 1, 2, 10, 20);
+
+        bool bSame = (ChunkSeed1 == ChunkSeed2);
+        bool bDifferent = (ChunkSeed1 != DifferentSeed);
+
+        LogTest("Chunk Seed Logic", bSame && bDifferent, FString::Printf(TEXT("Same: %d, Different: %d"), bSame, bDifferent));
+    }
+
+    // Test 4: Random range
+    {
+        uint64 Seed = 111111;
+        float Min = 10.0f;
+        float Max = 20.0f;
+        float Value = FSeedUtils::RandomFloat(Seed, Min, Max);
+
+        bool bInRange = (Value >= Min && Value < Max);
+
+        LogTest("Random Range", bInRange, FString::Printf(TEXT("Value: %f in [%f, %f)"), Value, Min, Max));
     }
 }

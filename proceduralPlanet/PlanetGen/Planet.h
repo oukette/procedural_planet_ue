@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "MathUtils.h"
+#include "SeedUtils.h"
 #include "Planet.generated.h"
 
 
@@ -25,6 +26,8 @@ class PROCEDURALPLANET_API APlanet : public AActor
         void TestFaceContinuity();
         void TestPrecision();
         void TestEdgeCases();
+
+		void TestSeedUtils();
 
         // Helper to log test results
         void LogTest(const FString &TestName, bool bPassed, const FString &Details = "");
