@@ -28,6 +28,9 @@ void APlanet::BeginPlay()
 
     UE_LOG(LogTemp, Log, TEXT("=== Seed Utils Validation Tests ==="));
     TestSeedUtils();
+	
+    UE_LOG(LogTemp, Log, TEXT("=== Noise and Density Validation Tests ==="));
+	TestNoiseAndDensity();
 
     // Summary
     UE_LOG(LogTemp, Log, TEXT("=== Test Summary ==="));
@@ -45,7 +48,7 @@ void APlanet::BeginPlay()
     // Also print to screen for easy viewing
     if (GEngine)
     {
-        FString ScreenMessage = FString::Printf(TEXT("Math Tests: %d/%d Passed"), TestsPassed, TestsTotal);
+        FString ScreenMessage = FString::Printf(TEXT("Tests: %d/%d Passed"), TestsPassed, TestsTotal);
 
         GEngine->AddOnScreenDebugMessage(-1, 10.0f, (TestsPassed == TestsTotal) ? FColor::Green : FColor::Red, ScreenMessage);
     }
@@ -434,5 +437,88 @@ void APlanet::TestSeedUtils()
         bool bInRange = (Value >= Min && Value < Max);
 
         LogTest("Random Range", bInRange, FString::Printf(TEXT("Value: %f in [%f, %f)"), Value, Min, Max));
+    }
+}
+
+
+void APlanet::TestNoiseAndDensity()
+{
+    UE_LOG(LogTemp, Log, TEXT("--- Testing Noise & Density ---"));
+
+    // Test 1: Noise determinism
+    {
+        uint64 Seed = 123456;
+        auto Noise = MakeShared<FSimpleNoise>(Seed);
+
+        FVector Pos1(100.0f, 200.0f, 300.0f);
+        FVector Pos2(100.0f, 200.0f, 300.0f);
+
+        float Val1 = Noise->Sample(Pos1, 0.001f, 0);
+        float Val2 = Noise->Sample(Pos2, 0.001f, 0);
+
+        LogTest("Noise Determinism", FMath::Abs(Val1 - Val2) < 1e-6f, FString::Printf(TEXT("Values: %f vs %f"), Val1, Val2));
+    }
+
+    // Test 2: Density generator basics
+    {
+        uint64 Seed = 987654;
+        auto TerrainNoise = MakeShared<FSimpleNoise>(Seed);
+
+        FDensityGenerator::FParameters Params;
+        Params.Radius = 1000.0f;
+        Params.TerrainAmplitude = 100.0f;
+        Params.TerrainFrequency = 0.001f;
+
+        FDensityGenerator DensityGen(Params, TerrainNoise);
+
+        // Test at planet surface (WITHOUT terrain, to verify sphere SDF)
+        FVector SurfacePoint(0.0f, 0.0f, 1000.0f);
+
+        // First test base sphere without terrain
+        float BaseDensity = DensityGen.SampleBaseSphere(SurfacePoint);
+
+        LogTest("Base Sphere SDF", FMath::Abs(BaseDensity) < 0.001f, FString::Printf(TEXT("Base density at surface: %f (should be ~0)"), BaseDensity));
+
+        // Now test with terrain - it will be non-zero
+        float Density = DensityGen.SampleDensity(SurfacePoint);
+
+        // Should be in reasonable range [-Amplitude, Amplitude] roughly
+        bool bReasonable = FMath::Abs(Density) < Params.TerrainAmplitude * 1.5f;
+
+        LogTest("Surface Density with Terrain", bReasonable, FString::Printf(TEXT("Density at surface: %f (reasonable range)"), Density));
+
+        // Test inside planet
+        FVector InsidePoint(0.0f, 0.0f, 500.0f);
+        float InsideDensity = DensityGen.SampleDensity(InsidePoint);
+
+        LogTest("Inside Planet", InsideDensity < 0.0f, FString::Printf(TEXT("Density inside: %f (should be negative)"), InsideDensity));
+
+        // Test outside planet (well outside terrain range)
+        FVector OutsidePoint(0.0f, 0.0f, 1500.0f);
+        float OutsideDensity = DensityGen.SampleDensity(OutsidePoint);
+
+        LogTest("Outside Planet", OutsideDensity > 0.0f, FString::Printf(TEXT("Density outside: %f (should be positive)"), OutsideDensity));
+    }
+
+    // Test 3: Noise range
+    {
+        uint64 Seed = 555555;
+        auto Noise = MakeShared<FSimpleNoise>(Seed);
+
+        bool bAllInRange = true;
+        for (int i = 0; i < 100; i++)
+        {
+            FVector RandomPos = FVector(FMath::RandRange(-1000.0f, 1000.0f), FMath::RandRange(-1000.0f, 1000.0f), FMath::RandRange(-1000.0f, 1000.0f));
+
+            float NoiseVal = Noise->SampleFractal(RandomPos);
+
+            if (NoiseVal < -1.1f || NoiseVal > 1.1f)  // Some tolerance
+            {
+                bAllInRange = false;
+                break;
+            }
+        }
+
+        LogTest("Noise Value Range", bAllInRange);
     }
 }

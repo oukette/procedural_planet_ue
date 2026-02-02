@@ -1,0 +1,106 @@
+#include "DensityGenerator.h"
+#include <cmath>
+
+
+FDensityGenerator::FDensityGenerator(const FParameters &InParams, const TSharedPtr<IPlanetNoise> &InTerrainNoise, const TSharedPtr<IPlanetNoise> &InCaveNoise) :
+    Params(InParams),
+    TerrainNoise(InTerrainNoise),
+    CaveNoise(InCaveNoise)
+{
+    // Validate parameters
+    Params.Radius = FMath::Max(Params.Radius, 1.0f);
+    Params.CoreRadius = FMath::Clamp(Params.CoreRadius, 0.0f, Params.Radius * 0.9f);
+    Params.TerrainAmplitude = FMath::Max(Params.TerrainAmplitude, 0.0f);
+}
+
+
+float FDensityGenerator::SampleDensity(const FVector &WorldPosition) const
+{
+    // 1. Base sphere
+    float Base = SampleBaseSphere(WorldPosition);
+
+    // 2. Terrain displacement
+    float Terrain = ComputeTerrainDisplacement(WorldPosition);
+
+    // 3. Combine: negative terrain value carves into sphere
+    float Density = Base - Terrain;
+
+    // 4. Caves (optional)
+    if (Params.bEnableCaves && CaveNoise.IsValid())
+    {
+        float Cave = ComputeCaveDensity(WorldPosition);
+        Density = FMath::Min(Density, Cave);  // Union operation
+    }
+
+    // // 5. Sea level
+    // if (Params.SeaLevel > 0.0f)
+    // {
+    //     // Simple sea level: everything below sea level is solid
+    //     float HeightAboveSea = -(Base - Terrain);  // Positive = above sea
+    //     if (HeightAboveSea < -Params.SeaLevel)
+    //     {
+    //         Density = -1.0f;  // Solid below sea
+    //     }
+    // }
+
+    return Density;
+}
+
+
+float FDensityGenerator::SampleBaseSphere(const FVector &WorldPosition) const
+{
+    // Signed distance to ideal sphere
+    float Distance = WorldPosition.Size();
+
+    // Solid core (optional)
+    if (Params.CoreRadius > 0.0f)
+    {
+        // Sphere with solid core: negative inside core
+        return FMath::Max(Distance - Params.Radius, Params.CoreRadius - Distance);
+    }
+
+    return Distance - Params.Radius;
+}
+
+
+float FDensityGenerator::SampleTerrain(const FVector &WorldPosition) const { return ComputeTerrainDisplacement(WorldPosition); }
+
+
+float FDensityGenerator::ComputeTerrainDisplacement(const FVector &WorldPosition) const
+{
+    if (!TerrainNoise.IsValid() || Params.TerrainAmplitude <= 0.0f)
+    {
+        return 0.0f;
+    }
+
+    // Sample fractal noise
+    float Noise = TerrainNoise->SampleFractal(WorldPosition,
+                                              Params.TerrainFrequency,
+                                              4,     // Octaves
+                                              0.5f,  // Persistence
+                                              2.0f   // Lacunarity
+    );
+
+    return Noise * Params.TerrainAmplitude;
+}
+
+
+float FDensityGenerator::ComputeCaveDensity(const FVector &WorldPosition) const
+{
+    if (!CaveNoise.IsValid())
+    {
+        return 1.0f;  // No caves
+    }
+
+    float CaveNoiseValue = CaveNoise->SampleFractal(WorldPosition,
+                                                    Params.CaveFrequency,
+                                                    3,     // Octaves
+                                                    0.7f,  // Persistence
+                                                    1.8f   // Lacunarity
+    );
+
+    // Threshold to create caves
+    // CaveNoiseValue > Threshold = empty space (positive density)
+    // CaveNoiseValue < Threshold = solid (negative density)
+    return (CaveNoiseValue - Params.CaveThreshold) * 10.0f;
+}
