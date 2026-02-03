@@ -1,5 +1,5 @@
-#include <cmath>
 #include "MarchingCubes.h"
+#include <cmath>
 #include "DrawDebugHelpers.h"
 
 

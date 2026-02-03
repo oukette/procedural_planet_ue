@@ -2,8 +2,7 @@
 
 
 #include "Planet.h"
-#include "Chunk/ChunkId.h"
-#include "Chunk/ChunkTransform.h"
+#include "Chunk/Chunk.h"
 #include "DrawDebugHelpers.h"
 
 
@@ -49,21 +48,24 @@ void APlanet::BeginPlay()
     UE_LOG(LogTemp, Log, TEXT("=== Test Summary ==="));
     UE_LOG(LogTemp, Log, TEXT("Passed: %d / %d"), TestsPassed, TestsTotal);
 
-	
-	// test density sampling
-	TestDensitySampling();
-	
-	// Test vertex interp
-	TestVertexInterpolation();
-	
-	// Generate and render a test chunk
-	TestMarchingCubesClean();
-	
-	// Test spherified projection
-	TestSpherifiedProjection();
 
-	// Test Chunk structures
-	TestChunkStructures();
+    // test density sampling
+    TestDensitySampling();
+
+    // Test vertex interp
+    TestVertexInterpolation();
+
+    // Generate and render a test chunk
+    TestMarchingCubesClean();
+
+    // Test spherified projection
+    TestSpherifiedProjection();
+
+    // Test Chunk structures
+    TestChunkStructures();
+
+    // Test chunk implementation
+    TestChunkImplementation();
 
     if (TestsPassed == TestsTotal)
     {
@@ -868,7 +870,7 @@ void APlanet::TestSpherifiedProjection()
         DrawDebugSphere(GetWorld(), FaceCenterWorld, 8.0f, 8, FaceColor, true, 30.0f);
     }
 
-	LogTest("Spherified Projection", true, "");
+    LogTest("Spherified Projection", true, "");
 
 
     // Also test the pure cube point function with key points
@@ -896,7 +898,7 @@ void APlanet::TestSpherifiedProjection()
         UE_LOG(LogTemp, Log, TEXT("    Difference: %.6f"), DistError);
     }
 
-	LogTest("Direct Spherified Cube Point", true, "");
+    LogTest("Direct Spherified Cube Point", true, "");
 
     // Summary
     UE_LOG(LogTemp, Log, TEXT("=== Test Complete ==="));
@@ -946,4 +948,60 @@ void APlanet::TestChunkStructures()
     // Visualize
     DrawDebugBox(GetWorld(), Transform.WorldOrigin, FVector(Transform.ChunkWorldSize * 0.5f), FColor::Green, true, 30.0f);
     DrawDebugPoint(GetWorld(), Transform.WorldOrigin, 10.0f, FColor::Red, true, 30.0f);
+}
+
+
+void APlanet::TestChunkImplementation()
+{
+    UE_LOG(LogTemp, Log, TEXT("=== TESTING FCHUNK IMPLEMENTATION ==="));
+
+    // Create planet parameters
+    FVector PlanetCenter = GetActorLocation();
+    float PlanetRadius = 200.0f;
+
+    // Create chunk ID and transform
+    FChunkId ChunkId(FPlanetMath::FaceX_Pos, FIntVector(0, 0, 0), 0);
+    FChunkTransform ChunkTransform(PlanetCenter, PlanetRadius, FPlanetMath::FaceX_Pos, FIntVector(0, 0, 0), 0);
+
+    // Create chunk
+    FChunk Chunk(ChunkId, ChunkTransform);
+
+    UE_LOG(LogTemp, Log, TEXT("Created: %s"), *Chunk.ToString());
+    UE_LOG(LogTemp, Log, TEXT("IsValid: %s"), Chunk.IsValid() ? TEXT("true") : TEXT("false"));
+    UE_LOG(LogTemp, Log, TEXT("IsLoaded: %s"), Chunk.IsLoaded() ? TEXT("true") : TEXT("false"));
+
+    // Test state transitions
+    UE_LOG(LogTemp, Log, TEXT("Initial State: %s"), ::ToString(Chunk.State));
+
+    // These would be called by ChunkManager in real usage
+    Chunk.TransitionToState(EChunkState::Requested);
+    UE_LOG(LogTemp, Log, TEXT("After Requested: %s"), ::ToString(Chunk.State));
+
+    Chunk.IncrementGenerationId();
+    UE_LOG(LogTemp, Log, TEXT("GenerationId: %d"), Chunk.GenerationId);
+
+    // Test mesh data
+    TUniquePtr<FChunkMeshData> TestMeshData = MakeUnique<FChunkMeshData>();
+    TestMeshData->Vertices.Add(FVector(0, 0, 0));
+    TestMeshData->Vertices.Add(FVector(1, 0, 0));
+    TestMeshData->Vertices.Add(FVector(0, 1, 0));
+    TestMeshData->Triangles = {0, 1, 2};
+    TestMeshData->CalculateBounds();
+
+    Chunk.SetMeshData(MoveTemp(TestMeshData));
+    UE_LOG(LogTemp, Log, TEXT("Has MeshData: %s"), Chunk.GetMeshData() ? TEXT("true") : TEXT("false"));
+    UE_LOG(LogTemp, Log, TEXT("Ready for rendering: %s"), Chunk.IsReadyForRendering() ? TEXT("true") : TEXT("false"));
+
+    // Visualize
+    Chunk.DrawDebug(GetWorld());
+
+    // Test memory estimation
+    UE_LOG(LogTemp, Log, TEXT("Estimated memory: %d bytes"), Chunk.EstimateMemoryBytes());
+
+    // Test bounds
+    FVector BoundsMin, BoundsMax;
+    Chunk.GetWorldBounds(BoundsMin, BoundsMax);
+    UE_LOG(LogTemp, Log, TEXT("Bounds: Min=%s, Max=%s"), *BoundsMin.ToString(), *BoundsMax.ToString());
+
+    UE_LOG(LogTemp, Log, TEXT("=== FCHUNK TEST COMPLETE ==="));
 }
