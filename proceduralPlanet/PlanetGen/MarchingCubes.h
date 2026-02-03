@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "ChunkMeshData.h"
+#include "Chunk/ChunkMeshData.h"
 #include "DensityGenerator.h"
 #include "MarchingCubesTables.h"
 

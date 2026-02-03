@@ -8,8 +8,8 @@
 #include "SeedUtils.h"
 #include "SimpleNoise.h"
 #include "DensityGenerator.h"
-#include "ChunkMeshData.h"
 #include "MarchingCubes.h"
+#include "Chunk/ChunkMeshData.h"
 #include "ProceduralMeshComponent.h"
 #include "Planet.generated.h"
 
