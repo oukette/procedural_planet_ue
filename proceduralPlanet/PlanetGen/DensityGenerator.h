@@ -44,6 +44,7 @@ class PROCEDURALPLANET_API FDensityGenerator
         struct FParameters
         {
                 // Planet geometry
+                FVector PlanetPosition;
                 float Radius = 1000.0f;  // Meters
                 float SeaLevel = 0.0f;   // Relative to radius
 
@@ -75,10 +76,10 @@ class PROCEDURALPLANET_API FDensityGenerator
 
         /**
          * Compute terrain density at world position.
-         * @param WorldPosition Position relative to planet center
+         * @param PositionRelativeToPlanet Position relative to planet center
          * @return Density value: < 0 = inside terrain, > 0 = outside terrain
          */
-        float SampleDensity(const FVector &WorldPosition) const;
+        float SampleDensity(const FVector &PositionRelativeToPlanet) const;
 
         /**
          * Get the ideal sphere SDF (without terrain).
@@ -110,4 +111,5 @@ class PROCEDURALPLANET_API FDensityGenerator
         TSharedPtr<IPlanetNoise> TerrainNoise;
         TSharedPtr<IPlanetNoise> CaveNoise;
         uint64 PlanetSeed = 0;
+        FVector PlanetPosition;
 };

@@ -36,7 +36,11 @@ class PROCEDURALPLANET_API APlanet : public AActor
 
 		void TestNoiseAndDensity();
 
-		void GenerateAndRenderTestChunk();
+		void TestDensitySampling();
+
+		void TestMarchingCubesClean();
+
+		void TestVertexInterpolation() const;
 
         // Helper to log test results
         void LogTest(const FString &TestName, bool bPassed, const FString &Details = "");

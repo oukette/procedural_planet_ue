@@ -6,7 +6,8 @@
 FDensityGenerator::FDensityGenerator(const FParameters &InParams, const TSharedPtr<IPlanetNoise> &InTerrainNoise, const TSharedPtr<IPlanetNoise> &InCaveNoise) :
     Params(InParams),
     TerrainNoise(InTerrainNoise),
-    CaveNoise(InCaveNoise)
+    CaveNoise(InCaveNoise),
+    PlanetPosition(InParams.PlanetPosition)
 {
     // Validate parameters
     Params.Radius = FMath::Max(Params.Radius, 1.0f);
@@ -17,13 +18,13 @@ FDensityGenerator::FDensityGenerator(const FParameters &InParams, const TSharedP
 }
 
 
-float FDensityGenerator::SampleDensity(const FVector &WorldPosition) const
+float FDensityGenerator::SampleDensity(const FVector &PositionRelativeToPlanet) const
 {
     // 1. Base sphere
-    float Base = SampleBaseSphere(WorldPosition);
+    float Base = SampleBaseSphere(PositionRelativeToPlanet);
 
     // 2. Terrain displacement
-    float Terrain = ComputeTerrainDisplacement(WorldPosition);
+    float Terrain = ComputeTerrainDisplacement(PositionRelativeToPlanet);
 
     // 3. Combine: negative terrain value carves into sphere
     float Density = Base - Terrain;
@@ -31,7 +32,7 @@ float FDensityGenerator::SampleDensity(const FVector &WorldPosition) const
     // 4. Caves (optional)
     if (Params.bEnableCaves && CaveNoise.IsValid())
     {
-        float Cave = ComputeCaveDensity(WorldPosition);
+        float Cave = ComputeCaveDensity(PositionRelativeToPlanet);
         Density = FMath::Min(Density, Cave);  // Union operation
     }
 

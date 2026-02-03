@@ -2,6 +2,7 @@
 
 
 #include "Planet.h"
+#include "DrawDebugHelpers.h"
 
 
 // Sets default values
@@ -50,8 +51,14 @@ void APlanet::BeginPlay()
     {
         UE_LOG(LogTemp, Log, TEXT("✅ ALL TESTS PASSED"));
 
+        // test density sampling
+        TestDensitySampling();
+
+        // Test vertex interp
+        TestVertexInterpolation();
+
         // Generate and render a test chunk
-        GenerateAndRenderTestChunk();
+        TestMarchingCubesClean();
     }
     else
     {
@@ -89,6 +96,7 @@ void APlanet::LogTest(const FString &TestName, bool bPassed, const FString &Deta
         }
     }
 }
+
 
 void APlanet::TestCubeSphereProjection()
 {
@@ -184,6 +192,7 @@ void APlanet::TestCubeSphereProjection()
     }
 }
 
+
 void APlanet::TestFaceContinuity()
 {
     UE_LOG(LogTemp, Log, TEXT("--- Testing Face Continuity ---"));
@@ -263,6 +272,7 @@ void APlanet::TestFaceContinuity()
     }
 }
 
+
 void APlanet::TestPrecision()
 {
     UE_LOG(LogTemp, Log, TEXT("--- Testing Precision ---"));
@@ -340,6 +350,7 @@ void APlanet::TestPrecision()
         LogTest("Stretch Factor Bounds", bAllValid);
     }
 }
+
 
 void APlanet::TestEdgeCases()
 {
@@ -543,112 +554,205 @@ void APlanet::TestNoiseAndDensity()
 }
 
 
-void APlanet::GenerateAndRenderTestChunk()
+void APlanet::TestDensitySampling()
 {
-    UE_LOG(LogTemp, Log, TEXT("--- Generating Test Chunk ---"));
+    UE_LOG(LogTemp, Log, TEXT("--- Quick Density Test ---"));
 
-    // 1. Create noise
-    uint64 PlanetSeed = 123456789;
-    auto TerrainNoise = MakeShared<FSimpleNoise>(PlanetSeed);
-
-    // 2. Create density generator
+    // Simple sphere
     FDensityGenerator::FParameters Params;
-    Params.Radius = 1000.0f;
-    Params.TerrainAmplitude = 100.0f;
-    Params.TerrainFrequency = 0.001f;
+    Params.Radius = 100.0f;
+    Params.TerrainAmplitude = 0.0f;
 
-    FDensityGenerator DensityGen(Params, TerrainNoise);
+    auto NullNoise = MakeShared<FSimpleNoise>(0);
+    FDensityGenerator DensityGen(Params, NullNoise);
 
-    // 3. Configure marching cubes
+    // Test points
+    FVector Center(0, 0, 0);
+    FVector Surface(100, 0, 0);  // Exactly at radius
+    FVector Inside(50, 0, 0);    // Inside sphere
+    FVector Outside(150, 0, 0);  // Outside sphere
+
+    UE_LOG(LogTemp, Log, TEXT("Center (0,0,0): %f"), DensityGen.SampleDensity(Center));
+    UE_LOG(LogTemp, Log, TEXT("Surface (100,0,0): %f"), DensityGen.SampleDensity(Surface));
+    UE_LOG(LogTemp, Log, TEXT("Inside (50,0,0): %f"), DensityGen.SampleDensity(Inside));
+    UE_LOG(LogTemp, Log, TEXT("Outside (150,0,0): %f"), DensityGen.SampleDensity(Outside));
+
+    // Also test chunk origin position
+    FVector ChunkOrigin(75, 0, 0);
+    UE_LOG(LogTemp, Log, TEXT("ChunkOrigin (75,0,0): %f"), DensityGen.SampleDensity(ChunkOrigin));
+}
+
+
+void APlanet::TestMarchingCubesClean()
+{
+    UE_LOG(LogTemp, Log, TEXT("=== CLEAN MARCHING CUBES TEST ==="));
+
+    // 1. PLANET POSITION (in world space)
+    FVector PlanetWorldPosition = GetActorLocation();
+    UE_LOG(LogTemp, Log, TEXT("Planet at world position: %s"), *PlanetWorldPosition.ToString());
+
+    // 2. Create density generator with planet position
+    FDensityGenerator::FParameters Params;
+    Params.PlanetPosition = PlanetWorldPosition;  // CRITICAL!
+    Params.Radius = 200.0f;
+    Params.TerrainAmplitude = 0.0f;  // No noise for clean test
+
+    // Draw planet and its center
+    DrawDebugSphere(GetWorld(), Params.PlanetPosition, Params.Radius, 24, FColor::Red, true, 30.0f);
+    DrawDebugPoint(GetWorld(), Params.PlanetPosition, 5.0f, FColor::Red, true, 30.0f);
+
+    auto NullNoise = MakeShared<FSimpleNoise>(123);
+    FDensityGenerator DensityGen(Params, NullNoise);
+
+    // 3. Create a chunk RELATIVE TO PLANET
+    //    Chunk center is 150 units along +X from planet center
+    FVector ChunkCenterRelativeToPlanet = FVector(150, 0, 0);
+
+    // Convert to world for visualization
+    FVector ChunkWorldCenter = PlanetWorldPosition + ChunkCenterRelativeToPlanet;
+
+    // Draw chunk center
+    DrawDebugSphere(GetWorld(), ChunkWorldCenter, 5.0f, 8, FColor::Green, true, 30.0f);
+    DrawDebugLine(GetWorld(), PlanetWorldPosition, ChunkWorldCenter, FColor::Yellow, true, 30.0f);
+
+    // 4. Chunk orientation (simple axes)
+    FVector LocalX = FVector(1, 0, 0);
+    FVector LocalY = FVector(0, 1, 0);
+    FVector LocalZ = FVector(0, 0, 1);
+
+    // 5. Marching Cubes config
     FMarchingCubes::FConfig MCConfig;
-    MCConfig.GridResolution = 17;  // Small for testing (16 cells)
-    MCConfig.CellSize = 50.0f;     // 50m per cell
+    MCConfig.GridResolution = FIntVector(9, 9, 9);  // Small
+    MCConfig.CellSize = 25.0f;
     MCConfig.IsoLevel = 0.0f;
+    MCConfig.bUseGhostLayers = true;
 
-    // 4. Chunk transform (face +X, center at (R, 0, 0))
-    FVector ChunkOrigin = FVector(Params.Radius, 0, 0);
-    FVector LocalX = FVector(0, 0, -1);  // Tangent
-    FVector LocalY = FVector(0, 1, 0);   // Bitangent
-    FVector LocalZ = FVector(1, 0, 0);   // Normal (face normal)
+    // Draw chunk bounds
+    FVector ChunkExtent = FVector(MCConfig.GridResolution.X * MCConfig.CellSize * 0.5f,
+                                  MCConfig.GridResolution.Y * MCConfig.CellSize * 0.5f,
+                                  MCConfig.GridResolution.Z * MCConfig.CellSize * 0.5f);
+    DrawDebugBox(GetWorld(), ChunkWorldCenter, ChunkExtent, FColor::Blue, true, 30.0f);
 
-    // 5. Generate mesh
+    // 6. Generate mesh
     FMarchingCubes MarchingCubes;
     FChunkMeshData MeshData;
 
-    MarchingCubes.GenerateMeshFromFunction(DensityGen, ChunkOrigin, LocalX, LocalY, LocalZ, MCConfig, MeshData);
+    MarchingCubes.GenerateMesh(DensityGen,
+                               ChunkCenterRelativeToPlanet,  // Relative to planet!
+                               LocalX,
+                               LocalY,
+                               LocalZ,
+                               MCConfig,
+                               MeshData);
 
-    // 6. Log results
-    UE_LOG(LogTemp, Log, TEXT("Generated mesh stats:"));
-    UE_LOG(LogTemp, Log, TEXT("  Vertices: %d"), MeshData.Vertices.Num());
-    UE_LOG(LogTemp, Log, TEXT("  Triangles array size: %d"), MeshData.Triangles.Num());
-    UE_LOG(LogTemp, Log, TEXT("  Triangle count (Triangles/3): %d"), MeshData.GetTriangleCount());
-    UE_LOG(LogTemp, Log, TEXT("  Normals: %d"), MeshData.Normals.Num());
-    UE_LOG(LogTemp, Log, TEXT("  UVs: %d"), MeshData.UVs.Num());
-    UE_LOG(LogTemp, Log, TEXT("  IsValid(): %s"), MeshData.IsValid() ? TEXT("true") : TEXT("false"));
-    UE_LOG(LogTemp, Log, TEXT("Bounds: %s to %s"), *MeshData.BoundsMin.ToString(), *MeshData.BoundsMax.ToString());
+    // 7. Log results
+    UE_LOG(LogTemp, Log, TEXT("Mesh: %d vertices, %d triangles"), MeshData.GetVertexCount(), MeshData.GetTriangleCount());
 
-    // Debug: Print first few vertices and triangles
-    if (MeshData.Vertices.Num() > 0)
+    if (!MeshData.IsValid())
     {
-        UE_LOG(LogTemp, Log, TEXT("First vertex: %s"), *MeshData.Vertices[0].ToString());
-    }
-    if (MeshData.Triangles.Num() > 0)
-    {
-        UE_LOG(LogTemp, Log, TEXT("First triangle indices: %d, %d, %d"), MeshData.Triangles[0], MeshData.Triangles[1], MeshData.Triangles[2]);
+        UE_LOG(LogTemp, Error, TEXT("No mesh generated!"));
+        return;
     }
 
-    // Create debug mesh component now that we're in the game world
-    DebugMeshComponent = NewObject<UProceduralMeshComponent>(this);
+    // 8. Create and position mesh component
+    //    Mesh vertices are in CHUNK-LOCAL SPACE
+    //    So we position component at CHUNK WORLD CENTER
+    if (!DebugMeshComponent)
+    {
+        DebugMeshComponent = NewObject<UProceduralMeshComponent>(this, TEXT("DebugMesh"));
+    }
+
     if (DebugMeshComponent)
     {
-        // Clear any existing mesh
         DebugMeshComponent->ClearAllMeshSections();
-
-        // Setup
         DebugMeshComponent->SetupAttachment(RootComponent);
         DebugMeshComponent->RegisterComponent();
-        DebugMeshComponent->SetHiddenInGame(false);
-        UE_LOG(LogTemp, Log, TEXT("Debug mesh component created successfully"));
-    }
-    else
-    {
-        UE_LOG(LogTemp, Error, TEXT("Failed to create debug mesh component"));
-    }
 
-    // 7. Render in UE
-    if (MeshData.IsValid() && DebugMeshComponent)
-    {
         // Create mesh section
-        DebugMeshComponent->CreateMeshSection(0,  // Section index
-                                              MeshData.Vertices,
+        DebugMeshComponent->CreateMeshSection(0,
+                                              MeshData.Vertices,  // Chunk-local vertices
                                               MeshData.Triangles,
                                               MeshData.Normals,
                                               MeshData.UVs,
-                                              TArray<FColor>(),  // Vertex colors (empty)
-                                              MeshData.Tangents,
-                                              false  // Enable collision
-        );
+                                              TArray<FColor>(),
+                                              TArray<FProcMeshTangent>(),
+                                              true);
 
-        // Position RELATIVE to root (not world)
-        DebugMeshComponent->SetRelativeLocation(FVector(0, 0, 0));  // At root
+        // POSITION CRITICAL: Set component to chunk world position
+        DebugMeshComponent->SetWorldLocation(ChunkWorldCenter);
 
-        // Set material (create a basic material if needed)
-        if (!DebugMeshComponent->GetMaterial(0))
+        // Add material
+        static UMaterialInterface *Material = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+        if (Material)
+            DebugMeshComponent->SetMaterial(0, Material);
+
+        UE_LOG(LogTemp, Log, TEXT("✅ Mesh rendered at chunk world position"));
+
+        // Draw first vertex position (should be near chunk center)
+        if (MeshData.Vertices.Num() > 0)
         {
-            // Use a default material
-            UMaterial *DefaultMaterial = LoadObject<UMaterial>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-            if (DefaultMaterial)
-            {
-                DebugMeshComponent->SetMaterial(0, DefaultMaterial);
-            }
-        }
+            FVector FirstVertexLocal = MeshData.Vertices[0];
+            FVector FirstVertexWorld = ChunkWorldCenter + FirstVertexLocal;
+            DrawDebugSphere(GetWorld(), FirstVertexWorld, 2.0f, 8, FColor::Cyan, true, 30.0f);
 
-        UE_LOG(LogTemp, Log, TEXT("✅ Test chunk rendered successfully"));
+            UE_LOG(LogTemp, Log, TEXT("First vertex: Local=%s, World=%s"), *FirstVertexLocal.ToString(), *FirstVertexWorld.ToString());
+        }
     }
-    else
+}
+
+void APlanet::TestVertexInterpolation() const
+{
+    UE_LOG(LogTemp, Log, TEXT("=== VERTEX INTERPOLATION TEST ==="));
+
+    FMarchingCubes MC;
+
+    // Test 1: Simple case
     {
-        UE_LOG(LogTemp, Error, TEXT("❌ Failed to generate or render test chunk"));
-        UE_LOG(LogTemp, Error, TEXT("   MeshData.IsValid(): %s"), MeshData.IsValid() ? TEXT("true") : TEXT("false"));
-        UE_LOG(LogTemp, Error, TEXT("   DebugMeshComponent valid: %s"), DebugMeshComponent ? TEXT("true") : TEXT("false"));
+        FVector P1(0, 0, 0);
+        FVector P2(1, 0, 0);
+        float V1 = -1.0f;  // Inside
+        float V2 = 1.0f;   // Outside
+        float Iso = 0.0f;  // Surface
+
+        // Expected: T = (0 - (-1)) / (1 - (-1)) = 1/2 = 0.5
+        // Result: (0,0,0) + 0.5*(1,0,0) = (0.5,0,0)
+
+        // We need to call the actual function
+        // Since it's private, we'll test the logic directly:
+        float T = (Iso - V1) / (V2 - V1);
+        FVector Result = P1 + T * (P2 - P1);
+
+        UE_LOG(LogTemp, Log, TEXT("Test 1: T=%f, Result=%s (expected: 0.5, (0.5,0,0))"), T, *Result.ToString());
+    }
+
+    // Test 2: Extreme case
+    {
+        FVector P1(50, 50, 25);  // Some reasonable position
+        FVector P2(50, 50, 25);  // SAME position! (bug scenario)
+        float V1 = -75.0f;
+        float V2 = 291.0f;
+        float Iso = 0.0f;
+
+        float T = (Iso - V1) / (V2 - V1);
+        UE_LOG(LogTemp, Log, TEXT("Test 2: T=%f (should be ~0.205)"), T);
+
+        // If P1 == P2, then P2 - P1 = (0,0,0), result = P1 regardless of T
+        // So we wouldn't get Y=376...
+    }
+
+    // Test 3: What if densities are swapped?
+    {
+        FVector P1(50, 50, 25);
+        FVector P2(50, 400, 25);  // Extreme Y difference!
+        float V1 = 291.0f;        // WRONG ORDER: outside first
+        float V2 = -75.0f;        // inside second
+        float Iso = 0.0f;
+
+        float T = (Iso - V1) / (V2 - V1);
+        // T = (0 - 291) / (-75 - 291) = -291 / -366 = 0.795
+        // Result = 50 + 0.795*(400-50) = 50 + 0.795*350 = 50 + 278.25 = 328.25
+        // Still not 376, but closer...
+
+        UE_LOG(LogTemp, Log, TEXT("Test 3: T=%f, would give Y=%f"), T, 50 + T * 350);
     }
 }
