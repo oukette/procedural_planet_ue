@@ -2,6 +2,8 @@
 
 
 #include "Planet.h"
+#include "Chunk/ChunkId.h"
+#include "Chunk/ChunkTransform.h"
 #include "DrawDebugHelpers.h"
 
 
@@ -47,21 +49,25 @@ void APlanet::BeginPlay()
     UE_LOG(LogTemp, Log, TEXT("=== Test Summary ==="));
     UE_LOG(LogTemp, Log, TEXT("Passed: %d / %d"), TestsPassed, TestsTotal);
 
+	
+	// test density sampling
+	TestDensitySampling();
+	
+	// Test vertex interp
+	TestVertexInterpolation();
+	
+	// Generate and render a test chunk
+	TestMarchingCubesClean();
+	
+	// Test spherified projection
+	TestSpherifiedProjection();
+
+	// Test Chunk structures
+	TestChunkStructures();
+
     if (TestsPassed == TestsTotal)
     {
         UE_LOG(LogTemp, Log, TEXT("✅ ALL TESTS PASSED"));
-
-        // test density sampling
-        TestDensitySampling();
-
-        // Test vertex interp
-        TestVertexInterpolation();
-
-        // Generate and render a test chunk
-        TestMarchingCubesClean();
-
-        // Test spherified projection
-        TestSpherifiedProjection();
     }
     else
     {
@@ -101,7 +107,7 @@ void APlanet::LogTest(const FString &TestName, bool bPassed, const FString &Deta
 }
 
 
-void APlanet::TestCubeSphereProjection() // DEPRECATED
+void APlanet::TestCubeSphereProjection()  // DEPRECATED
 {
     UE_LOG(LogTemp, Log, TEXT("--- Testing Cube-Sphere Projection ---"));
 
@@ -862,6 +868,9 @@ void APlanet::TestSpherifiedProjection()
         DrawDebugSphere(GetWorld(), FaceCenterWorld, 8.0f, 8, FaceColor, true, 30.0f);
     }
 
+	LogTest("Spherified Projection", true, "");
+
+
     // Also test the pure cube point function with key points
     UE_LOG(LogTemp, Log, TEXT("--- Direct Spherified Cube Point Tests ---"));
 
@@ -887,8 +896,54 @@ void APlanet::TestSpherifiedProjection()
         UE_LOG(LogTemp, Log, TEXT("    Difference: %.6f"), DistError);
     }
 
+	LogTest("Direct Spherified Cube Point", true, "");
+
     // Summary
     UE_LOG(LogTemp, Log, TEXT("=== Test Complete ==="));
-    UE_LOG(LogTemp, Log, TEXT("Spherified mapping is now the default for CubeFaceToSphere()"));
-    UE_LOG(LogTemp, Log, TEXT("Standard normalization available via CubeFaceToSphereStandard()"));
+}
+
+
+void APlanet::TestChunkStructures()
+{
+    UE_LOG(LogTemp, Log, TEXT("=== TESTING CHUNK STRUCTURES ==="));
+
+    // Test FChunkId
+    FChunkId Id1(FPlanetMath::FaceX_Pos, FIntVector(2, 3, 0), 0);
+    FChunkId Id2(FPlanetMath::FaceX_Pos, FIntVector(2, 3, 0), 0);
+    FChunkId Id3(FPlanetMath::FaceY_Pos, FIntVector(2, 3, 0), 0);
+
+    UE_LOG(LogTemp, Log, TEXT("Id1: %s"), *Id1.ToString());
+    UE_LOG(LogTemp, Log, TEXT("Id2: %s"), *Id2.ToString());
+    UE_LOG(LogTemp, Log, TEXT("Id3: %s"), *Id3.ToString());
+    UE_LOG(LogTemp, Log, TEXT("Id1 == Id2: %s"), Id1 == Id2 ? TEXT("true") : TEXT("false"));
+    UE_LOG(LogTemp, Log, TEXT("Id1 == Id3: %s"), Id1 == Id3 ? TEXT("true") : TEXT("false"));
+    UE_LOG(LogTemp, Log, TEXT("Hash Id1: %u"), GetTypeHash(Id1));
+    UE_LOG(LogTemp, Log, TEXT("Hash Id3: %u"), GetTypeHash(Id3));
+
+    // Test FChunkTransform
+    FVector PlanetCenter = GetActorLocation();
+    float PlanetRadius = 200.0f;
+
+    FChunkTransform Transform(PlanetCenter, PlanetRadius, FPlanetMath::FaceX_Pos, FIntVector(0, 0, 0), 0);
+    UE_LOG(LogTemp, Log, TEXT("Transform: %s"), *Transform.ToString());
+    UE_LOG(LogTemp, Log, TEXT("IsValid: %s"), Transform.IsValid() ? TEXT("true") : TEXT("false"));
+
+    // Test coordinate conversion
+    FVector LocalPos(10.0f, 20.0f, 5.0f);
+    FVector WorldPos = Transform.LocalToWorld(LocalPos);
+    FVector BackToLocal = Transform.WorldToLocal(WorldPos);
+
+    UE_LOG(LogTemp, Log, TEXT("Local: %s"), *LocalPos.ToString());
+    UE_LOG(LogTemp, Log, TEXT("World: %s"), *WorldPos.ToString());
+    UE_LOG(LogTemp, Log, TEXT("Back to local: %s"), *BackToLocal.ToString());
+    UE_LOG(LogTemp, Log, TEXT("Conversion error: %f"), (LocalPos - BackToLocal).Size());
+
+    // Test bounds
+    FVector BoundsMin, BoundsMax;
+    Transform.GetWorldBounds(BoundsMin, BoundsMax);
+    UE_LOG(LogTemp, Log, TEXT("Bounds: Min=%s, Max=%s"), *BoundsMin.ToString(), *BoundsMax.ToString());
+
+    // Visualize
+    DrawDebugBox(GetWorld(), Transform.WorldOrigin, FVector(Transform.ChunkWorldSize * 0.5f), FColor::Green, true, 30.0f);
+    DrawDebugPoint(GetWorld(), Transform.WorldOrigin, 10.0f, FColor::Red, true, 30.0f);
 }

@@ -44,6 +44,8 @@ class PROCEDURALPLANET_API APlanet : public AActor
 
 		void TestSpherifiedProjection();
 
+		void TestChunkStructures();
+
         // Helper to log test results
         void LogTest(const FString &TestName, bool bPassed, const FString &Details = "");
 
