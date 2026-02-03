@@ -1,4 +1,5 @@
 #include "DensityGenerator.h"
+#include "SeedUtils.h"
 #include <cmath>
 
 
@@ -11,6 +12,8 @@ FDensityGenerator::FDensityGenerator(const FParameters &InParams, const TSharedP
     Params.Radius = FMath::Max(Params.Radius, 1.0f);
     Params.CoreRadius = FMath::Clamp(Params.CoreRadius, 0.0f, Params.Radius * 0.9f);
     Params.TerrainAmplitude = FMath::Max(Params.TerrainAmplitude, 0.0f);
+
+    PlanetSeed = FSeedUtils::Hash64(static_cast<uint64>(Params.Radius * 1000.0f) ^ static_cast<uint64>(Params.TerrainAmplitude * 100.0f));
 }
 
 
@@ -73,8 +76,10 @@ float FDensityGenerator::ComputeTerrainDisplacement(const FVector &WorldPosition
         return 0.0f;
     }
 
+    FDensityContext Context = CreateContext(WorldPosition);
+
     // Sample fractal noise
-    float Noise = TerrainNoise->SampleFractal(WorldPosition,
+    float Noise = TerrainNoise->SampleFractal(Context,
                                               Params.TerrainFrequency,
                                               4,     // Octaves
                                               0.5f,  // Persistence
@@ -85,6 +90,18 @@ float FDensityGenerator::ComputeTerrainDisplacement(const FVector &WorldPosition
 }
 
 
+FDensityContext FDensityGenerator::CreateContext(const FVector &WorldPosition) const
+{
+    FDensityContext Context;
+    Context.WorldPosition = WorldPosition;
+    Context.PlanetRadius = Params.Radius;
+    Context.PlanetSeed = PlanetSeed;
+    Context.TerrainAmplitude = Params.TerrainAmplitude;
+    Context.SeaLevel = Params.SeaLevel;
+    return Context;
+}
+
+
 float FDensityGenerator::ComputeCaveDensity(const FVector &WorldPosition) const
 {
     if (!CaveNoise.IsValid())
@@ -92,7 +109,9 @@ float FDensityGenerator::ComputeCaveDensity(const FVector &WorldPosition) const
         return 1.0f;  // No caves
     }
 
-    float CaveNoiseValue = CaveNoise->SampleFractal(WorldPosition,
+    FDensityContext Context = CreateContext(WorldPosition);
+
+    float CaveNoiseValue = CaveNoise->SampleFractal(Context,
                                                     Params.CaveFrequency,
                                                     3,     // Octaves
                                                     0.7f,  // Persistence

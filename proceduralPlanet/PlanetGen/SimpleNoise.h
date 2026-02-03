@@ -21,9 +21,9 @@ class PROCEDURALPLANET_API FSimpleNoise : public IPlanetNoise
         virtual ~FSimpleNoise() = default;
 
         // IPlanetNoise interface
-        virtual float Sample(const FVector &Position, float Frequency = 1.0f, int32 Octave = 0) const override;
+        virtual float Sample(const FNoiseContext &Context, float Frequency = 1.0f, int32 Octave = 0) const override;
 
-        virtual float SampleFractal(const FVector &Position, float BaseFrequency = 0.001f, int32 Octaves = 4, float Persistence = 0.5f,
+        virtual float SampleFractal(const FNoiseContext &Context, float BaseFrequency = 0.001f, int32 Octaves = 4, float Persistence = 0.5f,
                                     float Lacunarity = 2.0f) const override;
 
         virtual float GetMaxAmplitude() const override { return 1.0f; }

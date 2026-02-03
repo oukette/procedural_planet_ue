@@ -6,6 +6,34 @@
 
 
 /**
+ * Context for density sampling.
+ */
+struct FDensityContext : public FNoiseContext
+{
+        // Additional density-specific parameters can go here
+        float TerrainAmplitude;
+        float SeaLevel;
+
+        FDensityContext() = default;
+
+        FDensityContext(const FVector &InPosition, double InRadius, uint64 InSeed) :
+            FNoiseContext(InPosition, InRadius, InSeed),
+            TerrainAmplitude(0.0f),
+            SeaLevel(0.0f)
+        {
+        }
+
+        // Additional constructor for convenience
+        FDensityContext(const FVector &InPosition, double InRadius, uint64 InSeed, float InTerrainAmplitude, float InSeaLevel) :
+            FNoiseContext(InPosition, InRadius, InSeed),
+            TerrainAmplitude(InTerrainAmplitude),
+            SeaLevel(InSeaLevel)
+        {
+        }
+};
+
+
+/**
  * Authoritative terrain density generator.
  * Pure, stateless, deterministic.
  * Combines SDFs, noise, and planet parameters.
@@ -63,6 +91,11 @@ class PROCEDURALPLANET_API FDensityGenerator
         float SampleTerrain(const FVector &WorldPosition) const;
 
         /**
+         * Create a density context for a position.
+         */
+        FDensityContext CreateContext(const FVector &WorldPosition) const;
+
+        /**
          * Get parameters (read-only).
          */
         const FParameters &GetParameters() const { return Params; }
@@ -76,4 +109,5 @@ class PROCEDURALPLANET_API FDensityGenerator
         FParameters Params;
         TSharedPtr<IPlanetNoise> TerrainNoise;
         TSharedPtr<IPlanetNoise> CaveNoise;
+        uint64 PlanetSeed = 0;
 };

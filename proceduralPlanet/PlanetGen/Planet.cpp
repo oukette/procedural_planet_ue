@@ -12,6 +12,15 @@ APlanet::APlanet()
 
     TestsPassed = 0;
     TestsTotal = 0;
+
+    // Create a root component so the actor has transform controls
+    USceneComponent *SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("RootComponent"));
+    RootComponent = SceneRoot;
+
+    // Optional: Make root visible in editor
+    SceneRoot->bVisualizeComponent = true;
+
+    DebugMeshComponent = nullptr;
 }
 
 
@@ -20,6 +29,7 @@ void APlanet::BeginPlay()
 {
     Super::BeginPlay();
 
+    // Run validation tests
     UE_LOG(LogTemp, Log, TEXT("=== Planet Math Validation Tests ==="));
     TestCubeSphereProjection();
     TestFaceContinuity();
@@ -28,9 +38,9 @@ void APlanet::BeginPlay()
 
     UE_LOG(LogTemp, Log, TEXT("=== Seed Utils Validation Tests ==="));
     TestSeedUtils();
-	
+
     UE_LOG(LogTemp, Log, TEXT("=== Noise and Density Validation Tests ==="));
-	TestNoiseAndDensity();
+    TestNoiseAndDensity();
 
     // Summary
     UE_LOG(LogTemp, Log, TEXT("=== Test Summary ==="));
@@ -39,6 +49,9 @@ void APlanet::BeginPlay()
     if (TestsPassed == TestsTotal)
     {
         UE_LOG(LogTemp, Log, TEXT("✅ ALL TESTS PASSED"));
+
+        // Generate and render a test chunk
+        GenerateAndRenderTestChunk();
     }
     else
     {
@@ -450,11 +463,14 @@ void APlanet::TestNoiseAndDensity()
         uint64 Seed = 123456;
         auto Noise = MakeShared<FSimpleNoise>(Seed);
 
-        FVector Pos1(100.0f, 200.0f, 300.0f);
-        FVector Pos2(100.0f, 200.0f, 300.0f);
+        FVector Pos(100.0f, 200.0f, 300.0f);
 
-        float Val1 = Noise->Sample(Pos1, 0.001f, 0);
-        float Val2 = Noise->Sample(Pos2, 0.001f, 0);
+        // Create noise context
+        FNoiseContext Context1(Pos, 1000.0, Seed);
+        FNoiseContext Context2(Pos, 1000.0, Seed);  // Same inputs
+
+        float Val1 = Noise->Sample(Context1, 0.001f, 0);
+        float Val2 = Noise->Sample(Context2, 0.001f, 0);
 
         LogTest("Noise Determinism", FMath::Abs(Val1 - Val2) < 1e-6f, FString::Printf(TEXT("Values: %f vs %f"), Val1, Val2));
     }
@@ -510,7 +526,10 @@ void APlanet::TestNoiseAndDensity()
         {
             FVector RandomPos = FVector(FMath::RandRange(-1000.0f, 1000.0f), FMath::RandRange(-1000.0f, 1000.0f), FMath::RandRange(-1000.0f, 1000.0f));
 
-            float NoiseVal = Noise->SampleFractal(RandomPos);
+            // Create context for this position
+            FNoiseContext Context(RandomPos, 1000.0, Seed);
+
+            float NoiseVal = Noise->SampleFractal(Context);
 
             if (NoiseVal < -1.1f || NoiseVal > 1.1f)  // Some tolerance
             {
@@ -520,5 +539,116 @@ void APlanet::TestNoiseAndDensity()
         }
 
         LogTest("Noise Value Range", bAllInRange);
+    }
+}
+
+
+void APlanet::GenerateAndRenderTestChunk()
+{
+    UE_LOG(LogTemp, Log, TEXT("--- Generating Test Chunk ---"));
+
+    // 1. Create noise
+    uint64 PlanetSeed = 123456789;
+    auto TerrainNoise = MakeShared<FSimpleNoise>(PlanetSeed);
+
+    // 2. Create density generator
+    FDensityGenerator::FParameters Params;
+    Params.Radius = 1000.0f;
+    Params.TerrainAmplitude = 100.0f;
+    Params.TerrainFrequency = 0.001f;
+
+    FDensityGenerator DensityGen(Params, TerrainNoise);
+
+    // 3. Configure marching cubes
+    FMarchingCubes::FConfig MCConfig;
+    MCConfig.GridResolution = 17;  // Small for testing (16 cells)
+    MCConfig.CellSize = 50.0f;     // 50m per cell
+    MCConfig.IsoLevel = 0.0f;
+
+    // 4. Chunk transform (face +X, center at (R, 0, 0))
+    FVector ChunkOrigin = FVector(Params.Radius, 0, 0);
+    FVector LocalX = FVector(0, 0, -1);  // Tangent
+    FVector LocalY = FVector(0, 1, 0);   // Bitangent
+    FVector LocalZ = FVector(1, 0, 0);   // Normal (face normal)
+
+    // 5. Generate mesh
+    FMarchingCubes MarchingCubes;
+    FChunkMeshData MeshData;
+
+    MarchingCubes.GenerateMeshFromFunction(DensityGen, ChunkOrigin, LocalX, LocalY, LocalZ, MCConfig, MeshData);
+
+    // 6. Log results
+    UE_LOG(LogTemp, Log, TEXT("Generated mesh stats:"));
+    UE_LOG(LogTemp, Log, TEXT("  Vertices: %d"), MeshData.Vertices.Num());
+    UE_LOG(LogTemp, Log, TEXT("  Triangles array size: %d"), MeshData.Triangles.Num());
+    UE_LOG(LogTemp, Log, TEXT("  Triangle count (Triangles/3): %d"), MeshData.GetTriangleCount());
+    UE_LOG(LogTemp, Log, TEXT("  Normals: %d"), MeshData.Normals.Num());
+    UE_LOG(LogTemp, Log, TEXT("  UVs: %d"), MeshData.UVs.Num());
+    UE_LOG(LogTemp, Log, TEXT("  IsValid(): %s"), MeshData.IsValid() ? TEXT("true") : TEXT("false"));
+    UE_LOG(LogTemp, Log, TEXT("Bounds: %s to %s"), *MeshData.BoundsMin.ToString(), *MeshData.BoundsMax.ToString());
+
+    // Debug: Print first few vertices and triangles
+    if (MeshData.Vertices.Num() > 0)
+    {
+        UE_LOG(LogTemp, Log, TEXT("First vertex: %s"), *MeshData.Vertices[0].ToString());
+    }
+    if (MeshData.Triangles.Num() > 0)
+    {
+        UE_LOG(LogTemp, Log, TEXT("First triangle indices: %d, %d, %d"), MeshData.Triangles[0], MeshData.Triangles[1], MeshData.Triangles[2]);
+    }
+
+    // Create debug mesh component now that we're in the game world
+    DebugMeshComponent = NewObject<UProceduralMeshComponent>(this);
+    if (DebugMeshComponent)
+    {
+        // Clear any existing mesh
+        DebugMeshComponent->ClearAllMeshSections();
+
+        // Setup
+        DebugMeshComponent->SetupAttachment(RootComponent);
+        DebugMeshComponent->RegisterComponent();
+        DebugMeshComponent->SetHiddenInGame(false);
+        UE_LOG(LogTemp, Log, TEXT("Debug mesh component created successfully"));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to create debug mesh component"));
+    }
+
+    // 7. Render in UE
+    if (MeshData.IsValid() && DebugMeshComponent)
+    {
+        // Create mesh section
+        DebugMeshComponent->CreateMeshSection(0,  // Section index
+                                              MeshData.Vertices,
+                                              MeshData.Triangles,
+                                              MeshData.Normals,
+                                              MeshData.UVs,
+                                              TArray<FColor>(),  // Vertex colors (empty)
+                                              MeshData.Tangents,
+                                              false  // Enable collision
+        );
+
+        // Position RELATIVE to root (not world)
+        DebugMeshComponent->SetRelativeLocation(FVector(0, 0, 0));  // At root
+
+        // Set material (create a basic material if needed)
+        if (!DebugMeshComponent->GetMaterial(0))
+        {
+            // Use a default material
+            UMaterial *DefaultMaterial = LoadObject<UMaterial>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+            if (DefaultMaterial)
+            {
+                DebugMeshComponent->SetMaterial(0, DefaultMaterial);
+            }
+        }
+
+        UE_LOG(LogTemp, Log, TEXT("✅ Test chunk rendered successfully"));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to generate or render test chunk"));
+        UE_LOG(LogTemp, Error, TEXT("   MeshData.IsValid(): %s"), MeshData.IsValid() ? TEXT("true") : TEXT("false"));
+        UE_LOG(LogTemp, Error, TEXT("   DebugMeshComponent valid: %s"), DebugMeshComponent ? TEXT("true") : TEXT("false"));
     }
 }

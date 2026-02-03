@@ -8,6 +8,9 @@
 #include "SeedUtils.h"
 #include "SimpleNoise.h"
 #include "DensityGenerator.h"
+#include "ChunkMeshData.h"
+#include "MarchingCubes.h"
+#include "ProceduralMeshComponent.h"
 #include "Planet.generated.h"
 
 
@@ -33,10 +36,14 @@ class PROCEDURALPLANET_API APlanet : public AActor
 
 		void TestNoiseAndDensity();
 
+		void GenerateAndRenderTestChunk();
+
         // Helper to log test results
         void LogTest(const FString &TestName, bool bPassed, const FString &Details = "");
 
     private:
         int32 TestsPassed;
         int32 TestsTotal;
+
+		UProceduralMeshComponent* DebugMeshComponent;
 };

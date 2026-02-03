@@ -11,7 +11,7 @@ FSimpleNoise::FSimpleNoise(uint64 Seed, int32 InMaxOctaves) :
 }
 
 
-float FSimpleNoise::Sample(const FVector &Position, float Frequency, int32 Octave) const
+float FSimpleNoise::Sample(const FNoiseContext &Context, float Frequency, int32 Octave) const
 {
     if (Octave < 0 || Octave >= MaxOctaves)
     {
@@ -19,14 +19,14 @@ float FSimpleNoise::Sample(const FVector &Position, float Frequency, int32 Octav
     }
 
     // Scale position by frequency
-    FVector ScaledPos = Position * Frequency;
+    FVector ScaledPos = Context.WorldPosition * Frequency;
 
     // Sample gradient noise with this octave's seed
     return GradientNoise(ScaledPos, OctaveSeeds[Octave]);
 }
 
 
-float FSimpleNoise::SampleFractal(const FVector &Position, float BaseFrequency, int32 Octaves, float Persistence, float Lacunarity) const
+float FSimpleNoise::SampleFractal(const FNoiseContext &Context, float BaseFrequency, int32 Octaves, float Persistence, float Lacunarity) const
 {
     Octaves = FMath::Clamp(Octaves, 1, MaxOctaves);
 
@@ -37,7 +37,10 @@ float FSimpleNoise::SampleFractal(const FVector &Position, float BaseFrequency, 
 
     for (int32 i = 0; i < Octaves; i++)
     {
-        Value += Sample(Position, Frequency, i) * Amplitude;
+        // Create context for this octave
+        FNoiseContext OctaveContext = Context;
+
+        Value += Sample(OctaveContext, Frequency, i) * Amplitude;
         MaxValue += Amplitude;
 
         Amplitude *= Persistence;
