@@ -41,6 +41,11 @@ class PROCEDURALPLANET_API FPlanetMath
         static FVector CubeFaceToSphere(uint8 Face, float U, float V);
 
         /**
+         * Alternative projection using simple normalization (for comparison/testing).
+         */
+        static FVector CubeFaceToSphereStandard(uint8 Face, float U, float V);
+
+        /**
          * Projects a point from unit sphere surface to cube face coordinates.
          * Input: normalized direction vector
          * Output: face index, and u,v in [-1, 1] range
@@ -154,4 +159,13 @@ class PROCEDURALPLANET_API FPlanetMath
          * Returns the approximate surface area of a cube face on a sphere.
          */
         static float GetFaceSurfaceArea(float SphereRadius);
+
+        // ==================== Spherified Cube Mapping ====================
+
+        /**
+         * Projects a cube point to sphere using spherified cube mapping.
+         * Provides better area distribution than simple normalization.
+         * Reference: http://mathproofs.blogspot.com/2005/07/mapping-cube-to-sphere.html
+         */
+        static FVector GetSpherifiedCubePoint(const FVector &CubePoint);
 };

@@ -43,15 +43,25 @@ FVector FPlanetMath::CubeFaceToSphere(uint8 Face, float U, float V)
     CubePoint += CubeFaceTangents[Face] * U;
     CubePoint += CubeFaceBitangents[Face] * V;
 
-    // Project onto sphere (normalize)
-    double Length = std::sqrt(CubePoint.X * CubePoint.X + CubePoint.Y * CubePoint.Y + CubePoint.Z * CubePoint.Z);
+    return GetSpherifiedCubePoint(CubePoint);
+}
 
-    if (Length > 0.0)
-    {
-        return CubePoint / Length;
-    }
 
-    return CubeFaceNormals[Face];  // Fallback to face center
+FVector FPlanetMath::CubeFaceToSphereStandard(uint8 Face, float U, float V)
+{
+    check(Face < FaceCount);
+
+    // Clamp UV to safe range
+    U = Clamp(U, -1.0f, 1.0f);
+    V = Clamp(V, -1.0f, 1.0f);
+
+    // Start from cube face center and apply UV offsets
+    FVector CubePoint = CubeFaceNormals[Face];
+    CubePoint += CubeFaceTangents[Face] * U;
+    CubePoint += CubeFaceBitangents[Face] * V;
+
+    // Simple normalization (old method, kept for comparison)
+    return CubePoint.GetSafeNormal();
 }
 
 
@@ -98,7 +108,7 @@ void FPlanetMath::SphereToCubeFace(const FVector &SphereDir, uint8 &OutFace, flo
 }
 
 
-FVector FPlanetMath::CubePointToSphere(const FVector &CubePoint) { return CubePoint.GetSafeNormal(); }
+FVector FPlanetMath::CubePointToSphere(const FVector &CubePoint) { return GetSpherifiedCubePoint(CubePoint); }
 
 
 FVector FPlanetMath::SpherePointToCube(const FVector &SphereDir)
@@ -113,6 +123,26 @@ FVector FPlanetMath::SpherePointToCube(const FVector &SphereDir)
     float Scale = 1.0 / std::abs(SphereDir[Face / 2]);
 
     return SphereDir * Scale;
+}
+
+
+FVector FPlanetMath::GetSpherifiedCubePoint(const FVector &CubePoint)
+{
+    // Spherified Cube mapping for equal-area distribution
+    // Reference: http://mathproofs.blogspot.com/2005/07/mapping-cube-to-sphere.html
+
+    float x2 = CubePoint.X * CubePoint.X;
+    float y2 = CubePoint.Y * CubePoint.Y;
+    float z2 = CubePoint.Z * CubePoint.Z;
+
+    // Prevent division by zero for points exactly on axes
+    float epsilon = 1e-6f;
+
+    float x = CubePoint.X * FMath::Sqrt(FMath::Max(1.0f - y2 / 2.0f - z2 / 2.0f + y2 * z2 / 3.0f, epsilon));
+    float y = CubePoint.Y * FMath::Sqrt(FMath::Max(1.0f - z2 / 2.0f - x2 / 2.0f + z2 * x2 / 3.0f, epsilon));
+    float z = CubePoint.Z * FMath::Sqrt(FMath::Max(1.0f - x2 / 2.0f - y2 / 2.0f + x2 * y2 / 3.0f, epsilon));
+
+    return FVector(x, y, z).GetSafeNormal();
 }
 
 

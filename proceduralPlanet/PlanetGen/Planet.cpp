@@ -32,7 +32,7 @@ void APlanet::BeginPlay()
 
     // Run validation tests
     UE_LOG(LogTemp, Log, TEXT("=== Planet Math Validation Tests ==="));
-    TestCubeSphereProjection();
+    // TestCubeSphereProjection();
     TestFaceContinuity();
     TestPrecision();
     TestEdgeCases();
@@ -59,6 +59,9 @@ void APlanet::BeginPlay()
 
         // Generate and render a test chunk
         TestMarchingCubesClean();
+
+        // Test spherified projection
+        TestSpherifiedProjection();
     }
     else
     {
@@ -98,7 +101,7 @@ void APlanet::LogTest(const FString &TestName, bool bPassed, const FString &Deta
 }
 
 
-void APlanet::TestCubeSphereProjection()
+void APlanet::TestCubeSphereProjection() // DEPRECATED
 {
     UE_LOG(LogTemp, Log, TEXT("--- Testing Cube-Sphere Projection ---"));
 
@@ -612,7 +615,7 @@ void APlanet::TestMarchingCubesClean()
     FVector ChunkWorldCenter = PlanetWorldPosition + ChunkCenterRelativeToPlanet;
 
     // Draw chunk center
-    DrawDebugSphere(GetWorld(), ChunkWorldCenter, 5.0f, 8, FColor::Green, true, 30.0f);
+    DrawDebugSphere(GetWorld(), ChunkWorldCenter, 5.0f, 8, FColor::Blue, true, 30.0f);
     DrawDebugLine(GetWorld(), PlanetWorldPosition, ChunkWorldCenter, FColor::Yellow, true, 30.0f);
 
     // 4. Chunk orientation (simple axes)
@@ -700,6 +703,7 @@ void APlanet::TestMarchingCubesClean()
     }
 }
 
+
 void APlanet::TestVertexInterpolation() const
 {
     UE_LOG(LogTemp, Log, TEXT("=== VERTEX INTERPOLATION TEST ==="));
@@ -755,4 +759,136 @@ void APlanet::TestVertexInterpolation() const
 
         UE_LOG(LogTemp, Log, TEXT("Test 3: T=%f, would give Y=%f"), T, 50 + T * 350);
     }
+}
+
+
+void APlanet::TestSpherifiedProjection()
+{
+    UE_LOG(LogTemp, Log, TEXT("=== SPHERIFIED CUBE PROJECTION TEST (ALL FACES) ==="));
+
+    // Test parameters
+    float GridStep = 0.33f;  // From -1 to 1 (coarser grid for readability)
+    float PlanetRadius = 200.0f;
+    FVector PlanetCenter = GetActorLocation();
+
+    // Color coding
+    const TArray<FColor> FaceColors = {
+        FColor::Red,     // +X
+        FColor::Orange,  // -X
+        FColor::Green,   // +Y
+        FColor::Yellow,  // -Y
+        FColor::Blue,    // +Z
+        FColor::Purple   // -Z
+    };
+
+    // Test all 6 faces
+    for (uint8 Face = 0; Face < FPlanetMath::FaceCount; Face++)
+    {
+        FColor FaceColor = FaceColors[Face];
+        FString FaceName;
+
+        switch (Face)
+        {
+            case FPlanetMath::FaceX_Pos:
+                FaceName = "+X";
+                break;
+            case FPlanetMath::FaceX_Neg:
+                FaceName = "-X";
+                break;
+            case FPlanetMath::FaceY_Pos:
+                FaceName = "+Y";
+                break;
+            case FPlanetMath::FaceY_Neg:
+                FaceName = "-Y";
+                break;
+            case FPlanetMath::FaceZ_Pos:
+                FaceName = "+Z";
+                break;
+            case FPlanetMath::FaceZ_Neg:
+                FaceName = "-Z";
+                break;
+        }
+
+        UE_LOG(LogTemp, Log, TEXT("--- Testing Face %s ---"), *FaceName);
+
+        // Test grid of points on this face
+        for (float U = -1.0f; U <= 1.0f; U += GridStep)
+        {
+            for (float V = -1.0f; V <= 1.0f; V += GridStep)
+            {
+                // Get both projections
+                FVector Spherified = FPlanetMath::CubeFaceToSphere(Face, U, V);
+                FVector Standard = FPlanetMath::CubeFaceToSphereStandard(Face, U, V);
+
+                // Scale to planet radius for visualization
+                FVector WorldSpherified = PlanetCenter + Spherified * PlanetRadius;
+                FVector WorldStandard = PlanetCenter + Standard * PlanetRadius;
+
+                // Draw spherified projection (colored by face)
+                DrawDebugPoint(GetWorld(), WorldSpherified, 8.0f, FColor::Green, true, 30.0f);
+
+                // Draw standard projection (white, smaller)
+                DrawDebugPoint(GetWorld(), WorldStandard, 6.0f, FColor::Black, true, 30.0f);
+
+                // Draw line between them (gray)
+                DrawDebugLine(GetWorld(), WorldStandard, WorldSpherified, FColor(128, 128, 128), true, 30.0f);
+
+                // Log differences at key points
+                bool bIsCenter = (FMath::Abs(U) < 0.01f && FMath::Abs(V) < 0.01f);
+                bool bIsEdge = (FMath::Abs(U) > 0.9f || FMath::Abs(V) > 0.9f);
+                bool bIsCorner = (FMath::Abs(U) > 0.9f && FMath::Abs(V) > 0.9f);
+
+                if (bIsCenter || bIsCorner)
+                {
+                    float Distance = (Standard - Spherified).Size();
+                    float DistanceInMeters = Distance * PlanetRadius;
+
+                    if (bIsCenter)
+                    {
+                        UE_LOG(LogTemp, Log, TEXT("  %s Center (0,0): Methods differ by %f (%.2f meters)"), *FaceName, Distance, DistanceInMeters);
+                    }
+                    else if (bIsCorner)
+                    {
+                        UE_LOG(LogTemp, Log, TEXT("  %s Corner (%.1f,%.1f): Methods differ by %f (%.2f meters)"), *FaceName, U, V, Distance, DistanceInMeters);
+                    }
+                }
+            }
+        }
+
+        // Draw face normal line
+        FVector FaceNormal = FPlanetMath::CubeFaceNormals[Face];
+        FVector FaceCenterWorld = PlanetCenter + FaceNormal * PlanetRadius;
+        DrawDebugLine(GetWorld(), PlanetCenter, FaceCenterWorld, FaceColor, true, 30.0f);
+        DrawDebugSphere(GetWorld(), FaceCenterWorld, 8.0f, 8, FaceColor, true, 30.0f);
+    }
+
+    // Also test the pure cube point function with key points
+    UE_LOG(LogTemp, Log, TEXT("--- Direct Spherified Cube Point Tests ---"));
+
+    TArray<FVector> TestCubePoints = {
+        FVector(1, 0, 0),          // Face center
+        FVector(1, 0.5f, 0),       // Mid-edge
+        FVector(1, 1, 0),          // Corner
+        FVector(1, 0.5f, 0.5f),    // Inside face
+        FVector(0.7f, 0.7f, 0.7f)  // Near cube corner
+    };
+
+    for (const FVector &CubePoint : TestCubePoints)
+    {
+        FVector Spherified = FPlanetMath::GetSpherifiedCubePoint(CubePoint);
+        FVector Normalized = CubePoint.GetSafeNormal();
+
+        float DistError = (Spherified - Normalized).Size();
+        float SpherifiedLength = Spherified.Size();
+
+        UE_LOG(LogTemp, Log, TEXT("  Cube: (%.2f,%.2f,%.2f)"), CubePoint.X, CubePoint.Y, CubePoint.Z);
+        UE_LOG(LogTemp, Log, TEXT("    -> Sphere: (%.6f,%.6f,%.6f) [Length: %.6f]"), Spherified.X, Spherified.Y, Spherified.Z, SpherifiedLength);
+        UE_LOG(LogTemp, Log, TEXT("    vs Normalized: (%.6f,%.6f,%.6f)"), Normalized.X, Normalized.Y, Normalized.Z);
+        UE_LOG(LogTemp, Log, TEXT("    Difference: %.6f"), DistError);
+    }
+
+    // Summary
+    UE_LOG(LogTemp, Log, TEXT("=== Test Complete ==="));
+    UE_LOG(LogTemp, Log, TEXT("Spherified mapping is now the default for CubeFaceToSphere()"));
+    UE_LOG(LogTemp, Log, TEXT("Standard normalization available via CubeFaceToSphereStandard()"));
 }
