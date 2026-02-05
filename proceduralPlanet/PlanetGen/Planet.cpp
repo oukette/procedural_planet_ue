@@ -40,26 +40,6 @@ void APlanet::BeginPlay()
 
     // Generate and render a test chunk
     TestMarchingCubesChunk();
-
-
-
-
-    if (TestsPassed == TestsTotal)
-    {
-        UE_LOG(LogTemp, Log, TEXT("✅ ALL TESTS PASSED"));
-    }
-    else
-    {
-        UE_LOG(LogTemp, Error, TEXT("❌ SOME TESTS FAILED"));
-    }
-
-    // Also print to screen for easy viewing
-    if (GEngine)
-    {
-        FString ScreenMessage = FString::Printf(TEXT("Tests: %d/%d Passed"), TestsPassed, TestsTotal);
-
-        GEngine->AddOnScreenDebugMessage(-1, 10.0f, (TestsPassed == TestsTotal) ? FColor::Green : FColor::Red, ScreenMessage);
-    }
 }
 
 
@@ -105,10 +85,11 @@ void APlanet::TestMarchingCubesChunk()
     FVector ChunkWorldOrigin = PlanetWorldCenter + FVector(PlanetRadius, 0, 0);
 
     // 3. DEFINE DENSITY PARAMETERS
-    FDensityGenerator::FParameters Params;
-    Params.PlanetPosition = PlanetWorldCenter;
-    Params.Radius = PlanetRadius;
-    Params.TerrainAmplitude = 0.0f;  // Perfect sphere for validation
+    FDensityGenerator::FParameters DensityParams;
+    DensityParams.PlanetPosition = PlanetWorldCenter;
+    DensityParams.PlanetRadius = PlanetRadius;
+    // DensityParams.TerrainNoiseAmplitude = 0.0f;  // no amplitude = no noise, perfect sphere
+    DensityParams.TerrainNoiseAmplitude = 150.0f;  // a bit of noise
 
     // 4. DRAW DEBUGS (The "Ideal" Shapes)
     FlushPersistentDebugLines(GetWorld());
@@ -133,8 +114,8 @@ void APlanet::TestMarchingCubesChunk()
     DrawDebugPoint(GetWorld(), ChunkWorldOrigin, 25.0f, FColor::Green, true, 60.0f);
 
     // 5. GENERATE MESH
-    auto NullNoise = MakeShared<FSimpleNoise>(123);
-    FDensityGenerator DensityGen(Params, NullNoise);
+    auto Noise = MakeShared<FSimpleNoise>(12345);
+    FDensityGenerator DensityGen(DensityParams, Noise);
 
     FMarchingCubes::FConfig MCConfig;
     MCConfig.GridResolution = Resolution;
@@ -378,4 +359,3 @@ void APlanet::TestSpherifiedProjection()
     // Summary
     UE_LOG(LogTemp, Log, TEXT("=== Test Complete ==="));
 }
-

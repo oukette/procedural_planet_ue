@@ -10,11 +10,11 @@ FDensityGenerator::FDensityGenerator(const FParameters &InParams, const TSharedP
     PlanetPosition(InParams.PlanetPosition)
 {
     // Validate parameters
-    Params.Radius = FMath::Max(Params.Radius, 1.0f);
-    Params.CoreRadius = FMath::Clamp(Params.CoreRadius, 0.0f, Params.Radius * 0.9f);
-    Params.TerrainAmplitude = FMath::Max(Params.TerrainAmplitude, 0.0f);
+    Params.PlanetRadius = FMath::Max(Params.PlanetRadius, 1.0f);
+    Params.CoreRadius = FMath::Clamp(Params.CoreRadius, 0.0f, Params.PlanetRadius * 0.9f);
+    Params.TerrainNoiseAmplitude = FMath::Max(Params.TerrainNoiseAmplitude, 0.0f);
 
-    PlanetSeed = FSeedUtils::Hash64(static_cast<uint64>(Params.Radius * 1000.0f) ^ static_cast<uint64>(Params.TerrainAmplitude * 100.0f));
+    PlanetSeed = FSeedUtils::Hash64(static_cast<uint64>(Params.PlanetRadius * 1000.0f) ^ static_cast<uint64>(Params.TerrainNoiseAmplitude * 100.0f));
 }
 
 
@@ -60,10 +60,10 @@ float FDensityGenerator::SampleBaseSphere(const FVector &WorldPosition) const
     if (Params.CoreRadius > 0.0f)
     {
         // Sphere with solid core: negative inside core
-        return FMath::Max(Distance - Params.Radius, Params.CoreRadius - Distance);
+        return FMath::Max(Distance - Params.PlanetRadius, Params.CoreRadius - Distance);
     }
 
-    return Distance - Params.Radius;
+    return Distance - Params.PlanetRadius;
 }
 
 
@@ -72,7 +72,7 @@ float FDensityGenerator::SampleTerrain(const FVector &WorldPosition) const { ret
 
 float FDensityGenerator::ComputeTerrainDisplacement(const FVector &WorldPosition) const
 {
-    if (!TerrainNoise.IsValid() || Params.TerrainAmplitude <= 0.0f)
+    if (!TerrainNoise.IsValid() || Params.TerrainNoiseAmplitude <= 0.0f)
     {
         return 0.0f;
     }
@@ -81,13 +81,13 @@ float FDensityGenerator::ComputeTerrainDisplacement(const FVector &WorldPosition
 
     // Sample fractal noise
     float Noise = TerrainNoise->SampleFractal(Context,
-                                              Params.TerrainFrequency,
+                                              Params.TerrainNoiseFrequency,
                                               4,     // Octaves
                                               0.5f,  // Persistence
                                               2.0f   // Lacunarity
     );
 
-    return Noise * Params.TerrainAmplitude;
+    return Noise * Params.TerrainNoiseAmplitude;
 }
 
 
@@ -95,9 +95,9 @@ FDensityContext FDensityGenerator::CreateContext(const FVector &WorldPosition) c
 {
     FDensityContext Context;
     Context.WorldPosition = WorldPosition;
-    Context.PlanetRadius = Params.Radius;
+    Context.PlanetRadius = Params.PlanetRadius;
     Context.PlanetSeed = PlanetSeed;
-    Context.TerrainAmplitude = Params.TerrainAmplitude;
+    Context.TerrainAmplitude = Params.TerrainNoiseAmplitude;
     Context.SeaLevel = Params.SeaLevel;
     return Context;
 }

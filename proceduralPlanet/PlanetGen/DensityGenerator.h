@@ -45,12 +45,12 @@ class PROCEDURALPLANET_API FDensityGenerator
         {
                 // Planet geometry
                 FVector PlanetPosition;
-                float Radius = 1000.0f;  // Meters
-                float SeaLevel = 0.0f;   // Relative to radius
+                float PlanetRadius = 1000.0f;  // Meters
+                float SeaLevel = 0.0f;         // Relative to radius
 
                 // Terrain
-                float TerrainAmplitude = 100.0f;  // Max terrain height
-                float TerrainFrequency = 0.001f;  // Base noise frequency
+                float TerrainNoiseAmplitude = 100.0f;  // Max terrain height
+                float TerrainNoiseFrequency = 0.001f;  // Base noise frequency
 
                 // Core (optional)
                 float CoreRadius = 0.0f;  // Solid core radius (0 = no core)
