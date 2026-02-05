@@ -162,50 +162,38 @@ void FMarchingCubes::ProcessGridCells(const TArray<float> &DensityField, const F
                 if (Edges & 1)
                     EdgeVertices[0] = VertexInterpolation(CornerPositions[0], CornerPositions[1], CubeValues[0], CubeValues[1], Config.IsoLevel);
 
-                // Edge 1: between corner 1 and 2
                 if (Edges & 2)
                     EdgeVertices[1] = VertexInterpolation(CornerPositions[1], CornerPositions[2], CubeValues[1], CubeValues[2], Config.IsoLevel);
 
-                // Edge 2: between corner 2 and 3
                 if (Edges & 4)
                     EdgeVertices[2] = VertexInterpolation(CornerPositions[2], CornerPositions[3], CubeValues[2], CubeValues[3], Config.IsoLevel);
 
-                // Edge 3: between corner 3 and 0
                 if (Edges & 8)
                     EdgeVertices[3] = VertexInterpolation(CornerPositions[3], CornerPositions[0], CubeValues[3], CubeValues[0], Config.IsoLevel);
 
-                // Edge 4: between corner 4 and 5
                 if (Edges & 16)
                     EdgeVertices[4] = VertexInterpolation(CornerPositions[4], CornerPositions[5], CubeValues[4], CubeValues[5], Config.IsoLevel);
 
-                // Edge 5: between corner 5 and 6
                 if (Edges & 32)
                     EdgeVertices[5] = VertexInterpolation(CornerPositions[5], CornerPositions[6], CubeValues[5], CubeValues[6], Config.IsoLevel);
 
-                // Edge 6: between corner 6 and 7
                 if (Edges & 64)
                     EdgeVertices[6] = VertexInterpolation(CornerPositions[6], CornerPositions[7], CubeValues[6], CubeValues[7], Config.IsoLevel);
 
-                // Edge 7: between corner 7 and 4
                 if (Edges & 128)
                     EdgeVertices[7] = VertexInterpolation(CornerPositions[7], CornerPositions[4], CubeValues[7], CubeValues[4], Config.IsoLevel);
 
-                // Edge 8: between corner 0 and 4
                 if (Edges & 256)
                     EdgeVertices[8] = VertexInterpolation(CornerPositions[0], CornerPositions[4], CubeValues[0], CubeValues[4], Config.IsoLevel);
 
-                // Edge 9: between corner 1 and 5
                 if (Edges & 512)
                     EdgeVertices[9] = VertexInterpolation(CornerPositions[1], CornerPositions[5], CubeValues[1], CubeValues[5], Config.IsoLevel);
 
-                // Edge 10: between corner 2 and 6
                 if (Edges & 1024)
                     EdgeVertices[10] = VertexInterpolation(CornerPositions[2], CornerPositions[6], CubeValues[2], CubeValues[6], Config.IsoLevel);
 
-                // Edge 11: between corner 3 and 7
                 if (Edges & 2048)
                     EdgeVertices[11] = VertexInterpolation(CornerPositions[3], CornerPositions[7], CubeValues[3], CubeValues[7], Config.IsoLevel);
-
 
                 // Create triangles from triTable
                 for (int32 i = 0; TriTable[CubeIndex][i] != -1; i += 3)

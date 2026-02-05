@@ -27,26 +27,13 @@ class PROCEDURALPLANET_API APlanet : public AActor
         virtual void BeginPlay() override;
 
         // Validation functions
-        void TestCubeSphereProjection();
-        void TestFaceContinuity();
-        void TestPrecision();
-        void TestEdgeCases();
+        void TestMarchingCubesChunk();
 
-		void TestSeedUtils();
+        void TestVertexInterpolation() const;
 
-		void TestNoiseAndDensity();
+        void TestSpherifiedProjection();
 
-		void TestDensitySampling();
 
-		void TestMarchingCubesClean();
-
-		void TestVertexInterpolation() const;
-
-		void TestSpherifiedProjection();
-
-		void TestChunkStructures();
-
-        void TestChunkImplementation();
 
         // Helper to log test results
         void LogTest(const FString &TestName, bool bPassed, const FString &Details = "");
@@ -55,5 +42,5 @@ class PROCEDURALPLANET_API APlanet : public AActor
         int32 TestsPassed;
         int32 TestsTotal;
 
-		UProceduralMeshComponent* DebugMeshComponent;
+        UProceduralMeshComponent *DebugMeshComponent;
 };

@@ -55,7 +55,6 @@ FChunkId FChunkId::FromWorldPosition(const FVector &WorldPosition, float PlanetR
 }
 
 
-// Get neighbor IDs (for seam handling)
 FChunkId FChunkId::GetNeighbor(int32 DeltaX, int32 DeltaY) const
 {
     int32 ChunksPerFace = FMath::Pow(2, LOD);

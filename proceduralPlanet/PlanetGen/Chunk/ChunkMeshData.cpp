@@ -1,5 +1,5 @@
 #include "ChunkMeshData.h"
-#include "ProceduralMeshComponent.h"  // For FProcMeshTangent
+#include "ProceduralMeshComponent.h"
 
 
 void FChunkMeshData::Clear()

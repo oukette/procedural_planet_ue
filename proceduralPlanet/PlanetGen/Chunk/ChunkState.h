@@ -3,10 +3,8 @@
 #include "CoreMinimal.h"
 
 
-/**
- * Lifecycle state of a chunk.
- * State transitions are explicit and monotonic.
- */
+// Lifecycle state of a chunk.
+// State transitions are explicit and monotonic.
 enum class EChunkState : uint8
 {
     Unloaded,    // Chunk does not exist in memory

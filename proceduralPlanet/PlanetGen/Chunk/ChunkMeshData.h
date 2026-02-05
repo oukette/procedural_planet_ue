@@ -6,10 +6,9 @@
 #include "ProceduralMeshComponent.h"
 
 
-/**
- * Container for generated mesh data.
- * Thread-safe, plain data, no engine dependencies.
- */
+
+// Container for generated mesh data.
+// Thread-safe, plain data, no engine dependencies.
 struct PROCEDURALPLANET_API FChunkMeshData
 {
         // Vertex data

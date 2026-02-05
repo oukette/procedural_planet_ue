@@ -5,10 +5,9 @@
 #include "../MathUtils.h"
 
 
-/**
- * Unique identifier for a terrain chunk.
- * Immutable, thread-safe, no engine dependencies.
- */
+
+// Unique identifier for a terrain chunk.
+// Immutable, thread-safe, no engine dependencies.
 struct PROCEDURALPLANET_API FChunkId
 {
         uint8 CubeFace;
