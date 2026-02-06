@@ -10,7 +10,7 @@
 APlanet::APlanet()
 {
     // Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-    PrimaryActorTick.bCanEverTick = false;
+    PrimaryActorTick.bCanEverTick = true;
 
     TestsPassed = 0;
     TestsTotal = 0;
@@ -18,9 +18,7 @@ APlanet::APlanet()
     // Create a root component so the actor has transform controls
     USceneComponent *SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("RootComponent"));
     RootComponent = SceneRoot;
-
-    // Optional: Make root visible in editor
-    SceneRoot->bVisualizeComponent = true;
+    SceneRoot->bVisualizeComponent = true; // make the root visible in the editor
 
     DebugMeshComponent = nullptr;
 }
@@ -41,6 +39,15 @@ void APlanet::BeginPlay()
     // Generate and render a test chunk
     TestMarchingCubesChunk();
 }
+
+
+void APlanet::Tick(float DeltaTime)
+{
+    Super::Tick(DeltaTime);
+    
+    // ChunkManager update will go here in Step 7
+}
+
 
 
 void APlanet::LogTest(const FString &TestName, bool bPassed, const FString &Details)
@@ -76,8 +83,8 @@ void APlanet::TestMarchingCubesChunk()
     // Planet Radius: 10,000 units (100 meters)
     // Chunk Size: 16 voxels * 100 units = 1,600 units (16 meters)
     // Ratio: Chunk covers about ~10-15 degrees of the surface.
-    float PlanetRadius = 10000.0f;
-    float VoxelSize = 100.0f;
+    PlanetRadius = 10000.0f;
+    VoxelSize = 100.0f;
     FIntVector Resolution(16, 16, 16);  // 16x16x16 grid
 
     // 2. DEFINE THE CHUNK "WORLD ORIGIN" (CENTER)
@@ -89,7 +96,7 @@ void APlanet::TestMarchingCubesChunk()
     DensityParams.PlanetPosition = PlanetWorldCenter;
     DensityParams.PlanetRadius = PlanetRadius;
     // DensityParams.TerrainNoiseAmplitude = 0.0f;  // no amplitude = no noise, perfect sphere
-    DensityParams.TerrainNoiseAmplitude = 150.0f;  // a bit of noise
+    DensityParams.TerrainNoiseAmplitude = TerrainNoiseAmplitude;  // a bit of noise
 
     // 4. DRAW DEBUGS (The "Ideal" Shapes)
     FlushPersistentDebugLines(GetWorld());
@@ -232,7 +239,7 @@ void APlanet::TestSpherifiedProjection()
 
     // Test parameters
     float GridStep = 0.33f;  // From -1 to 1 (coarser grid for readability)
-    float PlanetRadius = 200.0f;
+    PlanetRadius = 200.0f;
     FVector PlanetCenter = GetActorLocation();
 
     // Color coding
