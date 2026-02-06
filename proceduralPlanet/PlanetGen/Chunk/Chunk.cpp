@@ -40,13 +40,13 @@ void FChunk::DrawDebug(UWorld *World) const
     FVector BoundsCenter = (BoundsMin + BoundsMax) * 0.5f;
     FVector BoundsExtent = (BoundsMax - BoundsMin) * 0.5f;
 
-    DrawDebugBox(World, BoundsCenter, BoundsExtent, StateColor, true, -1.0f, 0, 2.0f);
+    DrawDebugBox(World, BoundsCenter, BoundsExtent, StateColor, true, -1.0f, 0, 12.0f);
 
     // Draw chunk center
-    DrawDebugPoint(World, Transform.WorldOrigin, 5.0f, StateColor, true, -1.0f, 0);
+    DrawDebugPoint(World, Transform.WorldOrigin, 10.0f, StateColor, true, -1.0f, 0);
 
     // Draw face normal
-    DrawDebugLine(World, Transform.WorldOrigin, Transform.WorldOrigin + Transform.CubeNormal * 50.0f, FColor::Cyan, true, -1.0f, 0, 1.0f);
+    DrawDebugLine(World, Transform.WorldOrigin, Transform.WorldOrigin + Transform.CubeNormal * 50.0f, FColor::Cyan, true, -1.0f, 0, 10.0f);
 
     // Draw state text
     if (GEngine)

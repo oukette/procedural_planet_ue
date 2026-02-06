@@ -70,11 +70,21 @@ class PROCEDURALPLANET_API FChunkManager
         int32 GetChunkCount() const { return Chunks.Num(); }
         EChunkState GetChunkState(const FChunkId &Id) const;
 
+        // Iterate all chunks (for debug/testing)
+        template <typename Func>
+        void ForEachChunk(Func Function) const
+        {
+            for (const auto &Pair : Chunks)
+            {
+                Function(Pair.Key, Pair.Value.Get());
+            }
+        }
+
         // === DEBUG ===
         void DrawDebugVisualization(UWorld *World) const;
         void LogStatistics() const;
 
-    private:
+        // private:
         // === CHUNK OPERATIONS ===
         void CreateChunk(const FChunkId &Id);
         void DestroyChunk(const FChunkId &Id);

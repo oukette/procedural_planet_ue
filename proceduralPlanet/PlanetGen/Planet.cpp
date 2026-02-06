@@ -18,7 +18,7 @@ APlanet::APlanet()
     // Create a root component so the actor has transform controls
     USceneComponent *SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("RootComponent"));
     RootComponent = SceneRoot;
-    SceneRoot->bVisualizeComponent = true; // make the root visible in the editor
+    SceneRoot->bVisualizeComponent = true;  // make the root visible in the editor
 
     DebugMeshComponent = nullptr;
 }
@@ -37,17 +37,42 @@ void APlanet::BeginPlay()
     // TestSpherifiedProjection();
 
     // Generate and render a test chunk
-    TestMarchingCubesChunk();
+    // TestMarchingCubesChunk();
+
+    // Initialize chunk system
+    ChunkManager = MakeUnique<FChunkManager>();
+    ChunkManager->Initialize(this);
+
+    UE_LOG(LogTemp, Log, TEXT("=== Planet Initialized ==="));
+    UE_LOG(LogTemp, Log, TEXT("  Radius: %.1f"), PlanetRadius);
+    UE_LOG(LogTemp, Log, TEXT("  Voxel Size: %.1f"), VoxelSize);
+    UE_LOG(LogTemp, Log, TEXT("  Chunk Resolution: %d"), ChunkResolution);
+    UE_LOG(LogTemp, Log, TEXT("  View Distance: %d chunks"), ViewDistanceInChunks);
+
+    // === TEST CHUNK CREATION ===
+    TestChunkCreation();
 }
 
 
 void APlanet::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
-    
-    // ChunkManager update will go here in Step 7
-}
 
+    // ChunkManager update will go here in Step 7
+    if (ChunkManager)
+    {
+        // Temporary: use player camera position if available
+        APlayerCameraManager *CameraManager = GetWorld()->GetFirstPlayerController()->PlayerCameraManager;
+        FVector ViewOrigin = CameraManager ? CameraManager->GetCameraLocation() : GetActorLocation();
+
+        FPlanetViewContext ViewContext(ViewOrigin,
+                                       ViewDistanceInChunks * (PlanetRadius * PI / FMath::Pow(2, 0)),  // Approx chunk size
+                                       0                                                               // LOD 0 only for now
+        );
+
+        ChunkManager->Update(ViewContext);
+    }
+}
 
 
 void APlanet::LogTest(const FString &TestName, bool bPassed, const FString &Details)
@@ -365,4 +390,131 @@ void APlanet::TestSpherifiedProjection()
 
     // Summary
     UE_LOG(LogTemp, Log, TEXT("=== Test Complete ==="));
+}
+
+
+void APlanet::TestChunkCreation()
+{
+    UE_LOG(LogTemp, Log, TEXT("=== CHUNK CREATION TEST ==="));
+
+    check(ChunkManager);
+
+    FVector PlanetCenter = GetActorLocation();
+
+    // Draw the planet sphere for reference
+    DrawDebugSphere(GetWorld(), PlanetCenter, PlanetRadius, 64, FColor(100, 100, 100), true, 60.0f);
+
+    // Test 1: Create one chunk on each face
+    UE_LOG(LogTemp, Log, TEXT("--- Creating one chunk per face ---"));
+
+    // Color code by face
+    FColor FaceColors[6] = {
+        FColor::Red,     // +X
+        FColor::Orange,  // -X
+        FColor::Green,   // +Y
+        FColor::Yellow,  // -Y
+        FColor::Blue,    // +Z
+        FColor::Purple   // -Z
+    };
+
+    for (uint8 Face = 0; Face < 6; Face++)
+    {
+        FChunkId Id(Face, FIntVector(0, 0, 0), 0);  // Center chunk of each face
+        ChunkManager->CreateChunk(Id);
+
+        const FChunk *Chunk = ChunkManager->FindChunk(Id);
+        if (Chunk)
+        {
+            UE_LOG(LogTemp, Log, TEXT("  Face %d: %s"), Face, *Chunk->ToString());
+
+            // Verify transform
+            const FChunkTransform &Transform = Chunk->Transform;
+            float DistanceFromCenter = (Transform.WorldOrigin - PlanetCenter).Size();
+            float ExpectedDistance = PlanetRadius;
+            float Error = FMath::Abs(DistanceFromCenter - ExpectedDistance);
+
+            if (Error < 1.0f)  // Within 1 unit tolerance
+            {
+                LogTest(
+                    FString::Printf(TEXT("Face %d positioning"), Face), true, FString::Printf(TEXT("Distance: %.2f (error: %.2f)"), DistanceFromCenter, Error));
+            }
+            else
+            {
+                LogTest(FString::Printf(TEXT("Face %d positioning"), Face),
+                        false,
+                        FString::Printf(TEXT("Expected: %.2f, Got: %.2f, Error: %.2f"), ExpectedDistance, DistanceFromCenter, Error));
+            }
+        }
+        else
+        {
+            LogTest(FString::Printf(TEXT("Create chunk Face %d"), Face), false, TEXT("Chunk not found after creation"));
+        }
+    }
+
+    // Test 2: Create a 3x3 grid on Face 0 (+X)
+    UE_LOG(LogTemp, Log, TEXT("--- Creating 3x3 grid on Face 0 ---"));
+
+    for (int32 X = -1; X <= 1; X++)
+    {
+        for (int32 Y = -1; Y <= 1; Y++)
+        {
+            if (X == 0 && Y == 0)
+                continue;  // Already created in Test 1
+
+            FChunkId Id(0, FIntVector(X, Y, 0), 0);
+            ChunkManager->CreateChunk(Id);
+        }
+    }
+
+    // === DRAW ALL CHUNKS ===
+    UE_LOG(LogTemp, Log, TEXT("--- Drawing all %d chunks ---"), ChunkManager->GetChunkCount());
+
+    ChunkManager->ForEachChunk(
+        [&](const FChunkId &Id, const FChunk *Chunk)
+        {
+            if (Chunk)
+            {
+                const FChunkTransform &Transform = Chunk->Transform;
+
+                // Get bounding box
+                FVector ChunkMin, ChunkMax;
+                Transform.GetWorldBounds(ChunkMin, ChunkMax);
+                FVector ChunkExtent = (ChunkMax - ChunkMin) * 0.5f;
+
+                // Use face color
+                FColor ChunkColor = FaceColors[Id.CubeFace];
+
+                // Make grid chunks brighter for Face 0
+                if (Id.CubeFace == 0 && (Id.ChunkCoords.X != 0 || Id.ChunkCoords.Y != 0))
+                {
+                    ChunkColor = FColor::Cyan;  // Highlight the 3x3 grid
+                }
+
+                // Draw bounding box
+                DrawDebugBox(GetWorld(), Transform.WorldOrigin, ChunkExtent, ChunkColor, true, 60.0f, 0, 15.0f);
+
+                // Draw center point
+                DrawDebugPoint(GetWorld(), Transform.WorldOrigin, 25.0f, ChunkColor, true, 60.0f);
+
+                // Draw normal line
+                DrawDebugLine(GetWorld(),
+                              Transform.WorldOrigin,
+                              Transform.WorldOrigin + Transform.CubeNormal * (Transform.ChunkWorldSize * 0.5f),
+                              ChunkColor,
+                              true,
+                              60.0f,
+                              0,
+                              13.0f);
+
+                // Draw chunk coordinate label
+                FString ChunkLabel = FString::Printf(TEXT("[%d,%d]"), Id.ChunkCoords.X, Id.ChunkCoords.Y);
+                DrawDebugString(GetWorld(), Transform.WorldOrigin + FVector(0, 0, 500), ChunkLabel, nullptr, ChunkColor, 60.0f, true, 1.5f);
+            }
+        });
+
+    UE_LOG(LogTemp, Log, TEXT("Total chunks created: %d"), ChunkManager->GetChunkCount());
+    LogTest("Chunk creation", true, FString::Printf(TEXT("%d chunks"), ChunkManager->GetChunkCount()));
+
+    // Log final statistics
+    ChunkManager->LogStatistics();
 }

@@ -96,7 +96,36 @@ EChunkState FChunkManager::GetChunkState(const FChunkId &Id) const
 
 void FChunkManager::CreateChunk(const FChunkId &Id)
 {
-    // Step 3
+    check(IsInGameThread());
+
+    // Don't create if already exists
+    if (Chunks.Contains(Id))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("Chunk already exists: %s"), *Id.ToString());
+        return;
+    }
+
+    // Compute spatial transform
+    FChunkTransform Transform = ComputeChunkTransform(Id);
+
+    if (!Transform.IsValid())
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to compute valid transform for chunk: %s"), *Id.ToString());
+        return;
+    }
+
+    // Create chunk instance
+    TUniquePtr<FChunk> NewChunk = MakeUnique<FChunk>(Id, Transform);
+
+    // Transition to Requested state
+    NewChunk->TransitionToState(EChunkState::Requested);
+
+    // Store in map
+    Chunks.Add(Id, MoveTemp(NewChunk));
+
+    TotalChunksCreated++;
+
+    UE_LOG(LogTemp, Log, TEXT("✓ Created chunk: %s at %s"), *Id.ToString(), *Transform.WorldOrigin.ToString());
 }
 
 void FChunkManager::DestroyChunk(const FChunkId &Id)
@@ -142,8 +171,12 @@ bool FChunkManager::ShouldChunkBeVisible(const FChunkId &Id, const FPlanetViewCo
 
 FChunkTransform FChunkManager::ComputeChunkTransform(const FChunkId &Id) const
 {
-    // Step 3
-    return FChunkTransform();
+    check(OwnerPlanet);
+
+    FVector PlanetCenter = OwnerPlanet->GetActorLocation();
+    float PlanetRadius = OwnerPlanet->PlanetRadius;
+
+    return FChunkTransform(PlanetCenter, PlanetRadius, Id.CubeFace, Id.ChunkCoords, Id.LOD);
 }
 
 UProceduralMeshComponent *FChunkManager::AcquireRenderProxy()

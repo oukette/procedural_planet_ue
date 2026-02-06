@@ -8,16 +8,28 @@ FChunkTransform::FChunkTransform(const FVector &PlanetCenter, float PlanetRadius
     check(Face < FPlanetMath::FaceCount);
 
     // Calculate chunk size based on LOD
-    // At LOD 0, the face is divided into 1 chunk
-    // Each LOD increase quadruples the number of chunks
-    int32 ChunksPerFace = FMath::Pow(2, LOD);
-    ChunkWorldSize = (PlanetRadius * PI) / ChunksPerFace;  // Approximate
+    // At LOD 0, each face is divided into 1 chunk
+    // At LOD 1, each face is divided into 2x2 = 4 chunks
+    // At LOD 2, each face is divided into 4x4 = 16 chunks, etc.
+    int32 ChunksPerFaceEdge = FMath::Pow(2, LOD);  // 1, 2, 4, 8...
+
+    // Each face spans 2 units in UV space (from -1 to +1)
+    // So each chunk spans: 2.0 / ChunksPerFaceEdge in UV space
+    float ChunkUVSize = 2.0f / ChunksPerFaceEdge;
+
+    // In world space, we need to map this to actual meters
+    // The arc length of a quarter sphere (one face) is approximately: PlanetRadius * (PI/2)
+    // But since we're using a cube projection, we use the cube face size instead
+    // A cube inscribed in a sphere of radius R has face size: 2R/sqrt(3)
+    // However, for simplicity and consistency with your marching cubes test,
+    // we'll use a direct mapping based on the number of chunks
+
+    // SIMPLIFIED APPROACH (matches your TestMarchingCubesChunk logic):
+    // Total face "size" in world units = 2 * PlanetRadius (cube face edge length)
+    // ChunkWorldSize = (2 * PlanetRadius) / ChunksPerFaceEdge
+    ChunkWorldSize = (2.0f * PlanetRadius) / ChunksPerFaceEdge;
 
     // Calculate UV coordinates of chunk center
-    // UV range is [-1, 1] across the entire face
-    float FaceSize = 2.0f;  // UV space from -1 to 1
-    float ChunkUVSize = FaceSize / ChunksPerFace;
-
     float U = (ChunkCoords.X + 0.5f) * ChunkUVSize - 1.0f;  // Center of chunk in UV space
     float V = (ChunkCoords.Y + 0.5f) * ChunkUVSize - 1.0f;
 
@@ -97,7 +109,7 @@ void FChunkTransform::GetWorldBounds(FVector &OutMin, FVector &OutMax) const
     }
 
     // Account for terrain displacement (add some margin)
-    float TerrainMargin = ChunkWorldSize * 0.2f;  // 20% margin
+    float TerrainMargin = ChunkWorldSize * 0.05f;  // 5% margin
     OutMin -= FVector(TerrainMargin, TerrainMargin, TerrainMargin);
     OutMax += FVector(TerrainMargin, TerrainMargin, TerrainMargin);
 }

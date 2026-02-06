@@ -9,7 +9,7 @@
 #include "SimpleNoise.h"
 #include "DensityGenerator.h"
 #include "MarchingCubes.h"
-#include "Chunk/ChunkMeshData.h"
+#include "ChunkManager.h"
 #include "ProceduralMeshComponent.h"
 #include "Planet.generated.h"
 
@@ -54,6 +54,7 @@ class PROCEDURALPLANET_API APlanet : public AActor
         void TestMarchingCubesChunk();
         void TestVertexInterpolation() const;
         void TestSpherifiedProjection();
+        void TestChunkCreation();  // NEW!
 
         // Helper to log test results
         void LogTest(const FString &TestName, bool bPassed, const FString &Details = "");
@@ -63,4 +64,6 @@ class PROCEDURALPLANET_API APlanet : public AActor
         int32 TestsTotal;
 
         UProceduralMeshComponent *DebugMeshComponent;
+
+        TUniquePtr<FChunkManager> ChunkManager;
 };
