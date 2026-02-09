@@ -296,14 +296,14 @@ FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const PlanetDensityGenerator
                     // All interpolation will happen in this common space to ensure seams are watertight.
                     P[i] = GenData.Positions[ix + iy * SampleCount + iz * SampleCount * SampleCount];
 
-                    if (D[i] < 0.0f)
+                    if (D[i] > 0.0f)
                         CubeIndex |= (1 << i);
                 }
 
                 if (CubeIndex == 0 || CubeIndex == 255)
                     continue;
 
-                int32 edges = EdgeTable[CubeIndex];
+                int32 edges = MarchingCubesTables::EdgeTable[CubeIndex];
                 FVector EdgeVertex[12];
 
                 for (int32 e = 0; e < 12; e++)
@@ -315,11 +315,13 @@ FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const PlanetDensityGenerator
                     }
                 }
 
-                for (int32 i = 0; TriTable[CubeIndex][i] != -1; i += 3)
+                for (int32 i = 0; MarchingCubesTables::TriTable[CubeIndex][i] != -1; i += 3)
                 {
                     // The three vertices of the triangle, in Planet-Relative space.
                     FVector PlanetSpaceVertices[] = {
-                        EdgeVertex[TriTable[CubeIndex][i]], EdgeVertex[TriTable[CubeIndex][i + 1]], EdgeVertex[TriTable[CubeIndex][i + 2]]};
+                        EdgeVertex[MarchingCubesTables::TriTable[CubeIndex][i]], 
+                        EdgeVertex[MarchingCubesTables::TriTable[CubeIndex][i + 1]], 
+                        EdgeVertex[MarchingCubesTables::TriTable[CubeIndex][i + 2]]};
 
                     for (const FVector &PlanetSpaceVertex : PlanetSpaceVertices)
                     {
