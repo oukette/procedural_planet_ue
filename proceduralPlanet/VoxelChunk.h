@@ -5,17 +5,9 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "ProceduralMeshComponent.h"
-#include "PlanetDensityGenerator.h"
+#include "PlanetGen/DensityGenerator.h"
+#include "PlanetGen/DataTypes.h"
 #include "VoxelChunk.generated.h"
-
-
-struct FChunkMeshData
-{
-        TArray<FVector> Vertices;
-        TArray<int32> Triangles;
-        TArray<FVector> Normals;
-        TArray<FColor> Colors;
-};
 
 
 UCLASS()
@@ -24,10 +16,10 @@ class PROCEDURALPLANET_API AVoxelChunk : public AActor
         GENERATED_BODY()
 
     private:
-        static FChunkMeshData GenerateMeshFromDensity(const PlanetDensityGenerator::GenData &GenData, int32 Resolution, FTransform CapturedChunkTransform,
+        static FChunkMeshData GenerateMeshFromDensity(const DensityGenerator::GenData &GenData, int32 Resolution, FTransform CapturedChunkTransform,
                                                       FTransform CapturedPlanetTransform, const FVector &FaceNormal, const FVector &FaceRight,
                                                       const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax, int32 LODLevel,
-                                                      const PlanetDensityGenerator &DensityGenerator);
+                                                      const DensityGenerator &DensityGenerator);
 
         static FVector VertexInterp(const FVector &P1, const FVector &P2, float D1, float D2);
 

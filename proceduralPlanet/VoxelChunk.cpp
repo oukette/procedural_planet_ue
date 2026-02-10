@@ -86,7 +86,7 @@ void AVoxelChunk::GenerateChunkAsync()
            uvMax]()
           {
               // Create density generator with captured parameters
-              PlanetDensityGenerator::DensityConfig DensityConfig;
+              DensityGenerator::DensityConfig DensityConfig;
               DensityConfig.PlanetRadius = planetRadius;
               DensityConfig.NoiseAmplitude = noiseAmp;
               DensityConfig.NoiseFrequency = noiseFreq;
@@ -96,10 +96,10 @@ void AVoxelChunk::GenerateChunkAsync()
               DensityConfig.Seed = seed;
               DensityConfig.VoxelSize = voxelSize;
 
-              PlanetDensityGenerator DensityGen(DensityConfig);
+              DensityGenerator DensityGen(DensityConfig);
 
               // 1. Generate Density
-              PlanetDensityGenerator::GenData GenData = DensityGen.GenerateDensityField(resolution, fNormal, fRight, fUp, uvMin, uvMax);
+              DensityGenerator::GenData GenData = DensityGen.GenerateDensityField(resolution, fNormal, fRight, fUp, uvMin, uvMax);
 
               // 2. Generate Mesh
               FChunkMeshData MeshData = GenerateMeshFromDensity(
@@ -133,10 +133,10 @@ void AVoxelChunk::GenerateChunkAsync()
                               }
 
                               // 2. Visualize Expected Corners: Draw where the chunk corners SHOULD be in World Space
-                              PlanetDensityGenerator::DensityConfig DebugConfig;
+                              DensityGenerator::DensityConfig DebugConfig;
                               DebugConfig.PlanetRadius = planetRadius;
                               DebugConfig.VoxelSize = voxelSize;
-                              PlanetDensityGenerator DebugGen(DebugConfig);
+                              DensityGenerator DebugGen(DebugConfig);
 
                               // Check Min (0,0,0) and Max (Res,Res,Res) corners
                               int32 Corners[] = {0, resolution};
@@ -236,10 +236,10 @@ FVector AVoxelChunk::VertexInterp(const FVector &P1, const FVector &P2, float D1
 }
 
 
-FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const PlanetDensityGenerator::GenData &GenData, int32 Resolution, FTransform CapturedChunkTransform,
+FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const DensityGenerator::GenData &GenData, int32 Resolution, FTransform CapturedChunkTransform,
                                                     FTransform CapturedPlanetTransform, const FVector &FaceNormal, const FVector &FaceRight,
                                                     const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax, int32 LODLevel,
-                                                    const PlanetDensityGenerator &DensityGenerator)
+                                                    const DensityGenerator &DensityGenerator)
 {
     FChunkMeshData MeshData;
 
@@ -318,10 +318,9 @@ FChunkMeshData AVoxelChunk::GenerateMeshFromDensity(const PlanetDensityGenerator
                 for (int32 i = 0; MarchingCubesTables::TriTable[CubeIndex][i] != -1; i += 3)
                 {
                     // The three vertices of the triangle, in Planet-Relative space.
-                    FVector PlanetSpaceVertices[] = {
-                        EdgeVertex[MarchingCubesTables::TriTable[CubeIndex][i]], 
-                        EdgeVertex[MarchingCubesTables::TriTable[CubeIndex][i + 1]], 
-                        EdgeVertex[MarchingCubesTables::TriTable[CubeIndex][i + 2]]};
+                    FVector PlanetSpaceVertices[] = {EdgeVertex[MarchingCubesTables::TriTable[CubeIndex][i]],
+                                                     EdgeVertex[MarchingCubesTables::TriTable[CubeIndex][i + 1]],
+                                                     EdgeVertex[MarchingCubesTables::TriTable[CubeIndex][i + 2]]};
 
                     for (const FVector &PlanetSpaceVertex : PlanetSpaceVertices)
                     {

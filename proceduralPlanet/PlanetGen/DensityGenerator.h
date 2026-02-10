@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "MathUtils.h"
 
 
 /**
@@ -14,7 +15,7 @@
  *   Negative = Air (outside terrain)
  *   Zero = Surface
  */
-class PROCEDURALPLANET_API PlanetDensityGenerator
+class PROCEDURALPLANET_API DensityGenerator
 {
     public:
         // Configuration structure to keep parameters organized
@@ -55,7 +56,7 @@ class PROCEDURALPLANET_API PlanetDensityGenerator
         };
 
         // Constructor
-        explicit PlanetDensityGenerator(const DensityConfig &InConfig);
+        explicit DensityGenerator(const DensityConfig &InConfig);
 
         // Sample density at a world position (relative to planet center)
         float SampleDensity(const FVector &PlanetRelativePosition) const;

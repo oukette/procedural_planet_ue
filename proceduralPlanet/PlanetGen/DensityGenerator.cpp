@@ -1,13 +1,13 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 
-#include "PlanetDensityGenerator.h"
+#include "DensityGenerator.h"
 #include "Math/UnrealMathUtility.h"
 
 
 /**
  * A self-contained, thread-safe utility class for generating 3D Simplex noise.
- * This is implemented as a static class to keep it decoupled from the PlanetDensityGenerator instance.
+ * This is implemented as a static class to keep it decoupled from the DensityGenerator instance.
  * It uses a seed-based permutation table for deterministic, repeatable noise.
  */
 class FNoiseUtils
@@ -168,7 +168,7 @@ const FVector FNoiseUtils::GradTable[16] = {FVector(1, 1, 0),
                                             FVector(0, -1, -1)};
 
 
-PlanetDensityGenerator::PlanetDensityGenerator(const DensityConfig &InConfig) :
+DensityGenerator::DensityGenerator(const DensityConfig &InConfig) :
     Config(InConfig)
 {
     // Validation
@@ -177,7 +177,7 @@ PlanetDensityGenerator::PlanetDensityGenerator(const DensityConfig &InConfig) :
 }
 
 
-float PlanetDensityGenerator::SampleDensity(const FVector &PlanetRelativePosition) const
+float DensityGenerator::SampleDensity(const FVector &PlanetRelativePosition) const
 {
     // 1. Base sphere density
     float SphereDensity = SampleSphereDensity(PlanetRelativePosition);
@@ -190,8 +190,8 @@ float PlanetDensityGenerator::SampleDensity(const FVector &PlanetRelativePositio
 }
 
 
-PlanetDensityGenerator::GenData PlanetDensityGenerator::GenerateDensityField(int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight,
-                                                                             const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax) const
+DensityGenerator::GenData DensityGenerator::GenerateDensityField(int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp,
+                                                                 const FVector2D &UVMin, const FVector2D &UVMax) const
 {
     const int32 SampleCount = Resolution + 1;
     const int32 TotalVoxels = SampleCount * SampleCount * SampleCount;
@@ -224,33 +224,27 @@ PlanetDensityGenerator::GenData PlanetDensityGenerator::GenerateDensityField(int
 }
 
 
-FVector PlanetDensityGenerator::GetProjectedPosition(int32 x, int32 y, int32 z, int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight,
-                                                     const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax) const
+FVector DensityGenerator::GetProjectedPosition(int32 x, int32 y, int32 z, int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight,
+                                               const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax) const
 {
-    // 1. Calculate normalized U, V for this voxel (0.0 to 1.0 within the chunk)
-    float uPct = x / (float)Resolution;
-    float vPct = y / (float)Resolution;
+    // Step 1: Get the position on the Cube surface (-1 to 1 range)
+    // We pass z=0 here because z in the voxel grid represents depth/altitude, 
+    // whereas x and y are the "surface" coordinates.
+    FVector CubePos = FMathUtils::GetCubeSurfacePosition(FIntVector(x, y, 0), Resolution, FaceNormal, FaceRight, FaceUp, UVMin, UVMax);
 
-    // 2. Map to Face UV coordinates (-1.0 to 1.0 space of the whole cube face)
-    float u = FMath::Lerp(UVMin.X, UVMax.X, uPct);
-    float v = FMath::Lerp(UVMin.Y, UVMax.Y, vPct);
-
-    // 3. Point on unit cube face
-    FVector PointOnCube = FaceNormal + FaceRight * u + FaceUp * v;
-
-    // 4. Spherify using equal-area distribution
-    FVector SphereDir = GetSpherifiedCubePoint(PointOnCube);
+    // Step 2: Project that cube point onto a unit sphere (Radius = 1.0)
+    FVector UnitSpherePos = FMathUtils::CubeToSphere(CubePos);
 
     // 5. Calculate altitude (Z is radial height from surface). Z = Resolution/2 represents the planet surface
     float SurfaceLevel = Resolution / 2.0f;
-    float Altitude = (z - SurfaceLevel) * Config.VoxelSize;
+    float AltitudeOffset = (z - SurfaceLevel) * Config.VoxelSize;
 
     // 6. Final position: sphere direction * (radius + altitude)
-    return SphereDir * (Config.PlanetRadius + Altitude);
+    return UnitSpherePos * (Config.PlanetRadius + AltitudeOffset);
 }
 
 
-float PlanetDensityGenerator::GetDensityAtPos(const FVector &PlanetLocalPos) const
+float DensityGenerator::GetDensityAtPos(const FVector &PlanetLocalPos) const
 {
     // CORRECTED: This function must return the full density value, including noise,
     // so that the gradient calculation for normals is accurate. It should not just
@@ -259,7 +253,7 @@ float PlanetDensityGenerator::GetDensityAtPos(const FVector &PlanetLocalPos) con
 }
 
 
-FVector PlanetDensityGenerator::GetNormalAtPos(const FVector &PlanetLocalPos) const
+FVector DensityGenerator::GetNormalAtPos(const FVector &PlanetLocalPos) const
 {
     // Use a small offset to find the slope
     // A smaller epsilon gives a more accurate local gradient. 1.0f can be too large in areas with high-frequency noise.
@@ -283,7 +277,7 @@ FVector PlanetDensityGenerator::GetNormalAtPos(const FVector &PlanetLocalPos) co
 }
 
 
-float PlanetDensityGenerator::SampleSphereDensity(const FVector &PlanetRelativePosition) const
+float DensityGenerator::SampleSphereDensity(const FVector &PlanetRelativePosition) const
 {
     // Distance from planet center
     float DistanceToCenter = PlanetRelativePosition.Size();
@@ -294,7 +288,7 @@ float PlanetDensityGenerator::SampleSphereDensity(const FVector &PlanetRelativeP
 }
 
 
-float PlanetDensityGenerator::SampleFBM(const FVector &Position) const
+float DensityGenerator::SampleFBM(const FVector &Position) const
 {
     float Total = 0.0f;
     float Frequency = Config.NoiseFrequency;
@@ -317,7 +311,7 @@ float PlanetDensityGenerator::SampleFBM(const FVector &Position) const
 }
 
 
-float PlanetDensityGenerator::SampleNoise(const FVector &Position) const
+float DensityGenerator::SampleNoise(const FVector &Position) const
 {
     // 1. Get the raw noise value from our FBM function. This will be in the range [-1, 1].
     float FbmValue = SampleFBM(Position);
@@ -326,21 +320,4 @@ float PlanetDensityGenerator::SampleNoise(const FVector &Position) const
     // 3. We then divide by VoxelSize to convert this world-space displacement into a "density unit"
     //    displacement, which is what Marching Cubes expects to see.
     return FbmValue * Config.NoiseAmplitude / Config.VoxelSize;
-}
-
-
-FVector PlanetDensityGenerator::GetSpherifiedCubePoint(const FVector &CubePoint)
-{
-    // Spherified Cube mapping for equal-area distribution
-    // Reference: http://mathproofs.blogspot.com/2005/07/mapping-cube-to-sphere.html
-
-    float x2 = CubePoint.X * CubePoint.X;
-    float y2 = CubePoint.Y * CubePoint.Y;
-    float z2 = CubePoint.Z * CubePoint.Z;
-
-    float x = CubePoint.X * FMath::Sqrt(1.0f - y2 / 2.0f - z2 / 2.0f + y2 * z2 / 3.0f);
-    float y = CubePoint.Y * FMath::Sqrt(1.0f - z2 / 2.0f - x2 / 2.0f + z2 * x2 / 3.0f);
-    float z = CubePoint.Z * FMath::Sqrt(1.0f - x2 / 2.0f - y2 / 2.0f + x2 * y2 / 3.0f);
-
-    return FVector(x, y, z);
 }

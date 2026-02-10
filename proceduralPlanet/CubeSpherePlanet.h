@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "PlanetGen/SeedUtils.h"
 #include "CubeSpherePlanet.generated.h"
 
 
@@ -12,15 +13,15 @@ class AVoxelChunk;  // Forward declaration to avoid circular includes
 USTRUCT(BlueprintType)
 struct FLODInfo
 {
-	GENERATED_BODY()
+        GENERATED_BODY()
 
-	// Distance at which this LOD (and higher detail ones) becomes active.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LOD")
-	float Distance = 10000.f;
+        // Distance at which this LOD (and higher detail ones) becomes active.
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LOD")
+        float Distance = 10000.f;
 
-	// Voxel resolution for chunks at this LOD.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LOD")
-	int32 VoxelResolution = 32;
+        // Voxel resolution for chunks at this LOD.
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LOD")
+        int32 VoxelResolution = 32;
 };
 
 
@@ -75,12 +76,12 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
         void ProcessMeshUpdateQueue();
 
         // LOD update sub-functions, refactored from UpdateLODAndStreaming
-        bool UpdateFarModelAndChunkVisibility(const FVector& ObserverPosition);
+        bool UpdateFarModelAndChunkVisibility(const FVector &ObserverPosition);
         void CullAllVisibleChunks();
-        void UpdateAllChunksLOD(const FVector& ObserverPosition);
-        int32 DetermineTargetLOD(const FChunkInfo& ChunkInfo, float DistanceSq) const;
+        void UpdateAllChunksLOD(const FVector &ObserverPosition);
+        int32 DetermineTargetLOD(const FChunkInfo &ChunkInfo, float DistanceSq) const;
         void ApplyChunkStateChange(int32 ChunkIndex, int32 TargetLOD);
-        void UpdateChunkCollision(FChunkInfo& ChunkInfo, float DistanceSq) const;
+        void UpdateChunkCollision(FChunkInfo &ChunkInfo, float DistanceSq) const;
 
         // Destroys all existing chunks.
         UFUNCTION(CallInEditor, Category = "Planet|Actions", meta = (DisplayName = "Clear All Chunks"))
@@ -115,7 +116,7 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
         int32 CalculateAutoChunksPerFace() const;
 
         // Helper to map a point on a unit cube to a unit sphere
-        static FVector GetSpherifiedCubePoint(const FVector& p);
+        static FVector GetSpherifiedCubePoint(const FVector &p);
 
 
         // --- Generation Control ---
@@ -188,13 +189,13 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
         // --- Rendering ---
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rendering")
         UMaterialInterface *DebugMaterial;
-        
+
         // Flag to track if the FarPlanetModel was created by code.
         bool bIsFarModelAutoCreated = false;
 
         // Actor representing the planet when viewed from a great distance (e.g., a sphere with a procedural material).
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Rendering")
-        AActor* FarPlanetModel;
+        AActor *FarPlanetModel;
 
         // --- LOD & Streaming ---
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Optimization|LOD", meta = (ClampMin = "1000.0"))
