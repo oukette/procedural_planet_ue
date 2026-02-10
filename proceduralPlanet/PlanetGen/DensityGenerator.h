@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "MathUtils.h"
+#include "IPlanetNoise.h"
 
 
 /**
@@ -56,7 +57,7 @@ class PROCEDURALPLANET_API DensityGenerator
         };
 
         // Constructor
-        explicit DensityGenerator(const DensityConfig &InConfig);
+        explicit DensityGenerator(const DensityConfig &InConfig, const IPlanetNoise *InNoiseProvider = nullptr);
 
         // Sample density at a world position (relative to planet center)
         float SampleDensity(const FVector &PlanetRelativePosition) const;
@@ -78,6 +79,7 @@ class PROCEDURALPLANET_API DensityGenerator
 
     private:
         DensityConfig Config;
+        const IPlanetNoise *NoiseProvider;
 
         // Base sphere density (distance to center)
         float SampleSphereDensity(const FVector &PlanetRelativePosition) const;

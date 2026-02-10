@@ -6,6 +6,7 @@
 #include "CubeSpherePlanet.h"  // Needed to access Planet queue
 #include "Async/Async.h"
 #include "DrawDebugHelpers.h"
+#include "PlanetGen/SimpleNoise.h"
 
 
 // Sets default values
@@ -96,7 +97,8 @@ void AVoxelChunk::GenerateChunkAsync()
               DensityConfig.Seed = seed;
               DensityConfig.VoxelSize = voxelSize;
 
-              DensityGenerator DensityGen(DensityConfig);
+              SimpleNoise LocalNoise;  // Temporary stack allocation
+              DensityGenerator DensityGen(DensityConfig, &LocalNoise);
 
               // 1. Generate Density
               DensityGenerator::GenData GenData = DensityGen.GenerateDensityField(resolution, fNormal, fRight, fUp, uvMin, uvMax);
