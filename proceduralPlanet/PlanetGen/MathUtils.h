@@ -111,4 +111,17 @@ class PROCEDURALPLANET_API FMathUtils
             // Combine into a point on the cube face
             return Normal + (Right * u) + (Up * v);
         }
+
+
+        static FVector VertexInterp(const FVector &P1, const FVector &P2, float D1, float D2)
+        {
+            const float Epsilon = 1e-6f;
+            float Denom = D1 - D2;
+            if (FMath::Abs(Denom) < Epsilon)
+            {
+                return (P1 + P2) * 0.5f;
+            }
+            float T = D1 / Denom;
+            return P1 + T * (P2 - P1);
+        }
 };

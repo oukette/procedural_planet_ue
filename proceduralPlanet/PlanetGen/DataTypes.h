@@ -102,18 +102,23 @@ struct FChunkTransform
         UPROPERTY()
         FVector FaceNormal;  // Which cube face this belongs to
 
+        UPROPERTY()
+        FQuat Rotation;      // Orientation on the sphere surface
+
         // Default constructor
         FChunkTransform() :
             Location(FVector::ZeroVector),
             Scale(1.0f),
-            FaceNormal(FVector::UpVector)
+            FaceNormal(FVector::UpVector),
+            Rotation(FQuat::Identity)
         {
         }
 
-        FChunkTransform(FVector InLoc, float InScale, FVector InNormal) :
+        FChunkTransform(FVector InLoc, float InScale, FVector InNormal, FQuat InRot = FQuat::Identity) :
             Location(InLoc),
             Scale(InScale),
-            FaceNormal(InNormal)
+            FaceNormal(InNormal),
+            Rotation(InRot)
         {
         }
 };
@@ -171,6 +176,10 @@ struct FPlanetConfig
         float LODDespawnHysteresis;
         float FarDistanceThreshold;  // Distance to switch to Far Model
 
+        // Throttling
+        int32 MaxConcurrentGenerations;
+        int32 GenerationRate; // Chunks to start generating per tick
+
         // Default Constructor
         FPlanetConfig() :
             PlanetRadius(50000.0),
@@ -178,7 +187,18 @@ struct FPlanetConfig
             Seed(1337),
             LODHysteresis(1.1f),
             LODDespawnHysteresis(1.1f),
-            FarDistanceThreshold(200000.0f)
+            FarDistanceThreshold(200000.0f),
+            MaxConcurrentGenerations(32),
+            GenerationRate(8)
         {
         }
+};
+
+
+// Container for generated field data to avoid re-calculating positions
+struct GenData
+{
+        TArray<float> Densities;
+        TArray<FVector> Positions;
+        int32 SampleCount = 0;
 };

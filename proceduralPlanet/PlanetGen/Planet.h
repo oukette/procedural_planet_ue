@@ -2,12 +2,12 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "PlanetGen/SeedUtils.h"
-#include "PlanetGen/MathUtils.h"
-#include "PlanetGen/ChunkManager.h"
-#include "PlanetGen/DataTypes.h"
-#include "PlanetGen/SimpleNoise.h"
-#include "CubeSpherePlanet.generated.h"
+#include "SeedUtils.h"
+#include "MathUtils.h"
+#include "ChunkManager.h"
+#include "DataTypes.h"
+#include "SimpleNoise.h"
+#include "Planet.generated.h"
 
 
 class AVoxelChunk;  // Forward declaration to avoid circular includes
@@ -32,7 +32,7 @@ struct FChunkInfo
 
 
 UCLASS()
-class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
+class PROCEDURALPLANET_API APlanet : public AActor
 {
         GENERATED_BODY()
 
@@ -95,7 +95,7 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
         void CreateFarModel();
 
     public:
-        ACubeSpherePlanet();
+        APlanet();
         virtual void BeginPlay() override;
         virtual void Destroyed() override;
         virtual void Tick(float DeltaTime) override;

@@ -3,6 +3,7 @@
 #include "CoreMinimal.h"
 #include "Chunk.h"
 #include "DensityGenerator.h"
+#include "ChunkRenderer.h"
 
 
 /**
@@ -22,7 +23,7 @@ class FChunkManager
         int32 GetVisibleChunkCount() const;
 
         // Replaces the loop in your PrepareGeneration()
-        void Initialize();
+        void Initialize(AActor *Owner, UMaterialInterface *Material);
 
         /** Main update loop called by APlanet::Tick */
         void Update(const FPlanetViewContext &Context);
@@ -31,8 +32,13 @@ class FChunkManager
     private:
         FPlanetConfig Config;
         const DensityGenerator *Generator;          // Reference to the density generator (owned by APlanet)
+        TUniquePtr<ChunkRenderer> Renderer;         // Handles visual components
         TMap<FChunkId, TUniquePtr<FChunk>> Chunks;  // The central registry of all chunks
-        TQueue<FChunkId> GenerationQueue;           // Queue of chunks waiting to be generated (to throttle thread usage)
+        TArray<FChunkId> PendingGenerationQueue;    // Chunks waiting to be processed
+        TSet<FChunkId> CurrentlyGenerating;         // Chunks currently in a background thread
+
+        int32 MaxConcurrentGenerations;  // Limit total background threads
+        int32 GenerationRate;            // Limit how many start per tick
 
         // Helper to create a new chunk entry
         FChunk *CreateChunk(const FChunkId &Id);
@@ -40,15 +46,21 @@ class FChunkManager
         // Helper to get a chunk from the map if it exists, otherwise create it
         FChunk *GetChunk(const FChunkId &Id);
 
-        // 1. The Loop (Replaces UpdateAllChunksLOD)
+        // Loop (Replaces UpdateAllChunksLOD)
         void UpdateFace(uint8 Face, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired);
 
-        // 2. The Math (Replaces DetermineTargetLOD)
-        int32 CalculateTargetLOD(float DistanceSq) const;
+        // Math (Replaces DetermineTargetLOD)
+        int32 CalculateTargetLOD(float DistanceSq, int32 CurrentLOD) const;
 
-        // 3. The State Machine (Replaces ApplyChunkStateChange)
+        // State Machine (Replaces ApplyChunkStateChange)
         void HandleChunkState(FChunk *Chunk, int32 TargetLOD);
 
-        // 4. The Throttling (Replaces ProcessSpawnQueue)
+        // Throttling (Replaces ProcessSpawnQueue)
         void ProcessQueues();
+        void ProcessGenerationQueue();
+
+        void StartAsyncGeneration(const FChunkId &Id);
+
+        // Callback executed on Game Thread when async generation finishes
+        void OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData);
 };

@@ -62,7 +62,7 @@ float DensityGenerator::SampleDensity(const FVector &PlanetRelativePosition) con
 }
 
 
-DensityGenerator::GenData DensityGenerator::GenerateDensityField(int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp,
+GenData DensityGenerator::GenerateDensityField(int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp,
                                                                  const FVector2D &UVMin, const FVector2D &UVMax) const
 {
     const int32 SampleCount = Resolution + 1;

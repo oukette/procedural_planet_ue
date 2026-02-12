@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "MathUtils.h"
 #include "IPlanetNoise.h"
+#include "DataTypes.h"
 
 
 /**
@@ -46,14 +47,6 @@ class PROCEDURALPLANET_API DensityGenerator
                     VoxelSize(100.f)
                 {
                 }
-        };
-
-        // Container for generated field data to avoid re-calculating positions
-        struct GenData
-        {
-                TArray<float> Densities;
-                TArray<FVector> Positions;
-                int32 SampleCount = 0;
         };
 
         // Constructor

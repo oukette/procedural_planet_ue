@@ -1,7 +1,7 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-#include "CubeSpherePlanet.h"
-#include "VoxelChunk.h"
+#include "Planet.h"
+#include "../VoxelChunk.h"
 #include "Math/RandomStream.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Engine/StaticMeshActor.h"
@@ -10,7 +10,7 @@
 
 
 // Sets default values
-ACubeSpherePlanet::ACubeSpherePlanet()
+APlanet::APlanet()
 {
     // Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
     PrimaryActorTick.bCanEverTick = true;
@@ -51,7 +51,7 @@ ACubeSpherePlanet::ACubeSpherePlanet()
 }
 
 
-void ACubeSpherePlanet::OnConstruction(const FTransform &Transform)
+void APlanet::OnConstruction(const FTransform &Transform)
 {
     Super::OnConstruction(Transform);
     // IMPORTANT: We no longer generate here by default as it causes severe editor freezes
@@ -60,7 +60,7 @@ void ACubeSpherePlanet::OnConstruction(const FTransform &Transform)
 }
 
 
-void ACubeSpherePlanet::BeginPlay()
+void APlanet::BeginPlay()
 {
     Super::BeginPlay();
     if (bGenerateOnBeginPlay)
@@ -69,14 +69,14 @@ void ACubeSpherePlanet::BeginPlay()
         // Sort from closest distance (LOD 0) to furthest.
         LODSettings.Sort([](const FLODInfo &A, const FLODInfo &B) { return A.Distance < B.Distance; });
 
-        GeneratePlanet();  // OLD LOGIC
+        // GeneratePlanet();  // OLD LOGIC - Replaced by initPlanet()
 
         initPlanet();  // currently only init the chunk manager
     }
 }
 
 
-void ACubeSpherePlanet::Tick(float DeltaTime)
+void APlanet::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
@@ -114,13 +114,13 @@ void ACubeSpherePlanet::Tick(float DeltaTime)
     }
 
     // OLD LOGIC
-    UpdateLODAndStreaming();
-    ProcessSpawnQueue();
-    ProcessMeshUpdateQueue();
+    // UpdateLODAndStreaming();
+    // ProcessSpawnQueue();
+    // ProcessMeshUpdateQueue();
 }
 
 
-void ACubeSpherePlanet::UpdateLODAndStreaming()
+void APlanet::UpdateLODAndStreaming()
 {
     const FVector ObserverPosition = GetObserverPosition();
 
@@ -137,7 +137,7 @@ void ACubeSpherePlanet::UpdateLODAndStreaming()
 }
 
 
-bool ACubeSpherePlanet::UpdateFarModelAndChunkVisibility(const FVector &ObserverPosition)
+bool APlanet::UpdateFarModelAndChunkVisibility(const FVector &ObserverPosition)
 {
     const float DistToSurface = FMath::Max(0.0f, FVector::Dist(GetActorLocation(), ObserverPosition) - PlanetRadius);
 
@@ -159,7 +159,7 @@ bool ACubeSpherePlanet::UpdateFarModelAndChunkVisibility(const FVector &Observer
 }
 
 
-void ACubeSpherePlanet::CullAllVisibleChunks()
+void APlanet::CullAllVisibleChunks()
 {
     // To prevent generating chunks that will just be hidden, we can clear the queues.
     ChunkSpawnQueue.Empty();
@@ -180,7 +180,7 @@ void ACubeSpherePlanet::CullAllVisibleChunks()
 }
 
 
-void ACubeSpherePlanet::UpdateAllChunksLOD(const FVector &ObserverPosition)
+void APlanet::UpdateAllChunksLOD(const FVector &ObserverPosition)
 {
     for (int32 i = 0; i < ChunkInfos.Num(); ++i)
     {
@@ -195,7 +195,7 @@ void ACubeSpherePlanet::UpdateAllChunksLOD(const FVector &ObserverPosition)
 }
 
 
-int32 ACubeSpherePlanet::DetermineTargetLOD(const FChunkInfo &ChunkInfo, float DistanceSq) const
+int32 APlanet::DetermineTargetLOD(const FChunkInfo &ChunkInfo, float DistanceSq) const
 {
     if (ChunkInfo.ActiveChunk)
     {
@@ -248,7 +248,7 @@ int32 ACubeSpherePlanet::DetermineTargetLOD(const FChunkInfo &ChunkInfo, float D
 }
 
 
-void ACubeSpherePlanet::ApplyChunkStateChange(int32 ChunkIndex, int32 TargetLOD)
+void APlanet::ApplyChunkStateChange(int32 ChunkIndex, int32 TargetLOD)
 {
     FChunkInfo &Info = ChunkInfos[ChunkIndex];
 
@@ -280,7 +280,7 @@ void ACubeSpherePlanet::ApplyChunkStateChange(int32 ChunkIndex, int32 TargetLOD)
 }
 
 
-void ACubeSpherePlanet::UpdateChunkCollision(FChunkInfo &ChunkInfo, float DistanceSq) const
+void APlanet::UpdateChunkCollision(FChunkInfo &ChunkInfo, float DistanceSq) const
 {
     if (ChunkInfo.ActiveChunk)
     {
@@ -291,7 +291,7 @@ void ACubeSpherePlanet::UpdateChunkCollision(FChunkInfo &ChunkInfo, float Distan
 }
 
 
-void ACubeSpherePlanet::ProcessSpawnQueue()
+void APlanet::ProcessSpawnQueue()
 {
     // Spawn new chunk actors if we have capacity in the async pipeline
     int32 SpawnedThisFrame = 0;
@@ -373,7 +373,7 @@ void ACubeSpherePlanet::ProcessSpawnQueue()
     }
 }
 
-void ACubeSpherePlanet::ProcessMeshUpdateQueue()
+void APlanet::ProcessMeshUpdateQueue()
 {
     // Process a limited number of finished chunks per frame to upload their mesh to the GPU
     int32 ProcessedCount = 0;
@@ -389,10 +389,10 @@ void ACubeSpherePlanet::ProcessMeshUpdateQueue()
 }
 
 
-bool ACubeSpherePlanet::ShouldTickIfViewportsOnly() const { return true; }
+bool APlanet::ShouldTickIfViewportsOnly() const { return true; }
 
 
-void ACubeSpherePlanet::OnChunkGenerationFinished(AVoxelChunk *Chunk)
+void APlanet::OnChunkGenerationFinished(AVoxelChunk *Chunk)
 {
     // Decrement counter even if chunk is invalid
     if (ActiveGenerationTasks > 0)
@@ -408,7 +408,7 @@ void ACubeSpherePlanet::OnChunkGenerationFinished(AVoxelChunk *Chunk)
 }
 
 
-int32 ACubeSpherePlanet::CalculateAutoChunksPerFace() const
+int32 APlanet::CalculateAutoChunksPerFace() const
 {
     // If auto-sizing is disabled, return the manual setting
     if (!bAutoChunkSizing)
@@ -438,7 +438,7 @@ int32 ACubeSpherePlanet::CalculateAutoChunksPerFace() const
 }
 
 
-void ACubeSpherePlanet::Destroyed()
+void APlanet::Destroyed()
 {
     Super::Destroyed();
 
@@ -447,7 +447,7 @@ void ACubeSpherePlanet::Destroyed()
 }
 
 
-void ACubeSpherePlanet::ClearAllChunks()
+void APlanet::ClearAllChunks()
 {
     // Stop any generation in progress
     ChunkSpawnQueue.Empty();
@@ -488,14 +488,14 @@ void ACubeSpherePlanet::ClearAllChunks()
 }
 
 
-void ACubeSpherePlanet::GeneratePlanet()
+void APlanet::GeneratePlanet()
 {
     // This is the new public-facing function to start generation.
     PrepareGeneration();
 }
 
 
-void ACubeSpherePlanet::GenerateSeedBasedPlanet()
+void APlanet::GenerateSeedBasedPlanet()
 {
     // Use the seed to generate a random radius
     FRandomStream randStream(Seed);
@@ -511,7 +511,7 @@ void ACubeSpherePlanet::GenerateSeedBasedPlanet()
 }
 
 
-void ACubeSpherePlanet::initPlanet()
+void APlanet::initPlanet()
 {
     // --- STEP 1: Handle Visuals (Far Model) ---
     if (!FarPlanetModel)
@@ -580,6 +580,8 @@ void ACubeSpherePlanet::initPlanet()
     ManagerConfig.FarDistanceThreshold = FinalRenderDist;
     ManagerConfig.LODHysteresis = LODHysteresisFactor;
     ManagerConfig.LODDespawnHysteresis = LODDespawnHysteresisFactor;
+    ManagerConfig.MaxConcurrentGenerations = MaxConcurrentChunkGenerations;
+    ManagerConfig.GenerationRate = ChunksToSpawnPerFrame;
 
     // Create Noise Provider
     NoiseProvider = MakeUnique<SimpleNoise>();
@@ -596,11 +598,11 @@ void ACubeSpherePlanet::initPlanet()
 
     // Finally, spawn the Manager
     ChunkManager = MakeUnique<FChunkManager>(ManagerConfig, Generator.Get());
-    ChunkManager->Initialize();  // This now ONLY builds the grid using the correct ChunksPerFace
+    ChunkManager->Initialize(this, DebugMaterial);  // Pass context for rendering
 }
 
 
-void ACubeSpherePlanet::PrepareGeneration()
+void APlanet::PrepareGeneration()
 {
     // 1. Clean up any previous state and stop ongoing generation.
     ClearAllChunks();
@@ -772,7 +774,7 @@ void ACubeSpherePlanet::PrepareGeneration()
 }
 
 
-void ACubeSpherePlanet::CreateFarModel()
+void APlanet::CreateFarModel()
 {
     if (!GetWorld())
         return;
@@ -820,7 +822,7 @@ void ACubeSpherePlanet::CreateFarModel()
 }
 
 
-FVector ACubeSpherePlanet::GetObserverPosition() const
+FVector APlanet::GetObserverPosition() const
 {
     FVector Pos = FVector::ZeroVector;
     if (GetWorld())

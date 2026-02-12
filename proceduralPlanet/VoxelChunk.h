@@ -16,25 +16,18 @@ class PROCEDURALPLANET_API AVoxelChunk : public AActor
         GENERATED_BODY()
 
     private:
-        static FChunkMeshData GenerateMeshFromDensity(const DensityGenerator::GenData &GenData, int32 Resolution, FTransform CapturedChunkTransform,
-                                                      FTransform CapturedPlanetTransform, const FVector &FaceNormal, const FVector &FaceRight,
-                                                      const FVector &FaceUp, const FVector2D &UVMin, const FVector2D &UVMax, int32 LODLevel,
-                                                      const DensityGenerator &DensityGenerator);
-
-        static FVector VertexInterp(const FVector &P1, const FVector &P2, float D1, float D2);
-
     protected:
         virtual void OnConstruction(const FTransform &Transform) override;
 
         UPROPERTY()
-        class ACubeSpherePlanet *ParentPlanet;
+        class APlanet *ParentPlanet;
 
     public:
         // Sets default values for this actor's properties
         AVoxelChunk();
 
         // A simple setter to call when spawning
-        void SetParentPlanet(ACubeSpherePlanet *Planet) { ParentPlanet = Planet; }
+        void SetParentPlanet(APlanet *Planet) { ParentPlanet = Planet; }
 
         // New Async function
         void GenerateChunkAsync();
