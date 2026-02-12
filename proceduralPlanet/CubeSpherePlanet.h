@@ -3,26 +3,14 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "PlanetGen/SeedUtils.h"
+#include "PlanetGen/MathUtils.h"
+#include "PlanetGen/ChunkManager.h"
+#include "PlanetGen/DataTypes.h"
+#include "PlanetGen/SimpleNoise.h"
 #include "CubeSpherePlanet.generated.h"
 
 
 class AVoxelChunk;  // Forward declaration to avoid circular includes
-
-
-// A struct to define settings for a single Level of Detail.
-USTRUCT(BlueprintType)
-struct FLODInfo
-{
-        GENERATED_BODY()
-
-        // Distance at which this LOD (and higher detail ones) becomes active.
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LOD")
-        float Distance = 10000.f;
-
-        // Voxel resolution for chunks at this LOD.
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LOD")
-        int32 VoxelResolution = 32;
-};
 
 
 // Lightweight struct to manage chunk state without spawning an actor
@@ -64,10 +52,15 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
         // Counter for chunks currently running async generation.
         int32 ActiveGenerationTasks;
 
+        TUniquePtr<FChunkManager> ChunkManager;
+        TUniquePtr<SimpleNoise> NoiseProvider;
+        TUniquePtr<DensityGenerator> Generator;
+
     protected:
         virtual void OnConstruction(const FTransform &Transform) override;
 
         // Initializes the generation process by populating the spawn queue.
+        void initPlanet();
         void PrepareGeneration();
 
         // Tick sub-functions
@@ -114,10 +107,6 @@ class PROCEDURALPLANET_API ACubeSpherePlanet : public AActor
         // Calculate automatic chunks per face based on planet parameters
         UFUNCTION(BlueprintCallable, Category = "Planet|Chunking")
         int32 CalculateAutoChunksPerFace() const;
-
-        // Helper to map a point on a unit cube to a unit sphere
-        static FVector GetSpherifiedCubePoint(const FVector &p);
-
 
         // --- Generation Control ---
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Generation")

@@ -69,7 +69,9 @@ void ACubeSpherePlanet::BeginPlay()
         // Sort from closest distance (LOD 0) to furthest.
         LODSettings.Sort([](const FLODInfo &A, const FLODInfo &B) { return A.Distance < B.Distance; });
 
-        GeneratePlanet();
+        GeneratePlanet();  // OLD LOGIC
+
+        initPlanet();  // currently only init the chunk manager
     }
 }
 
@@ -78,7 +80,30 @@ void ACubeSpherePlanet::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
-    // Debug Display: Distance to Center and Surface
+    // 1. Build View Context
+    FPlanetViewContext Context;
+    Context.ObserverLocation = GetObserverPosition();
+    // We don't need to pass static config (LODs, Radius) here anymore,
+    // because the Manager already has FPlanetConfig!
+
+    // 2. Update Manager
+    if (ChunkManager.IsValid())
+    {
+        ChunkManager->Update(Context);
+
+        // 3. Debug Output
+        if (GEngine)
+        {
+            int32 Total = ChunkManager->GetChunkCount();
+            int32 Visible = ChunkManager->GetVisibleChunkCount();
+
+            FColor TextColor = (Visible == 0) ? FColor::Red : FColor::Green;
+
+            GEngine->AddOnScreenDebugMessage(10, 0.f, TextColor, FString::Printf(TEXT("Manager: %d Active / %d Total"), Visible, Total));
+        }
+    }
+
+    // Debug : Distance to Center and Surface
     if (GEngine)
     {
         FVector ObserverPos = GetObserverPosition();
@@ -88,6 +113,7 @@ void ACubeSpherePlanet::Tick(float DeltaTime)
             101, 0.0f, FColor::Cyan, FString::Printf(TEXT("Dist to Center: %.0f | Dist to Surface: %.0f"), DistToCenter, DistToSurface));
     }
 
+    // OLD LOGIC
     UpdateLODAndStreaming();
     ProcessSpawnQueue();
     ProcessMeshUpdateQueue();
@@ -382,20 +408,6 @@ void ACubeSpherePlanet::OnChunkGenerationFinished(AVoxelChunk *Chunk)
 }
 
 
-// Helper function to map a point on a unit cube to a unit sphere with equal area distribution.
-// (Spherified Cube mapping)
-FVector ACubeSpherePlanet::GetSpherifiedCubePoint(const FVector &p)
-{
-    float x2 = p.X * p.X;
-    float y2 = p.Y * p.Y;
-    float z2 = p.Z * p.Z;
-    float x = p.X * FMath::Sqrt(1.0f - y2 / 2.0f - z2 / 2.0f + y2 * z2 / 3.0f);
-    float y = p.Y * FMath::Sqrt(1.0f - z2 / 2.0f - x2 / 2.0f + z2 * x2 / 3.0f);
-    float z = p.Z * FMath::Sqrt(1.0f - x2 / 2.0f - y2 / 2.0f + x2 * y2 / 3.0f);
-    return FVector(x, y, z);
-}
-
-
 int32 ACubeSpherePlanet::CalculateAutoChunksPerFace() const
 {
     // If auto-sizing is disabled, return the manual setting
@@ -496,6 +508,95 @@ void ACubeSpherePlanet::GenerateSeedBasedPlanet()
 
     // The rest of the generation logic will adapt to the new radius.
     PrepareGeneration();
+}
+
+
+void ACubeSpherePlanet::initPlanet()
+{
+    // --- STEP 1: Handle Visuals (Far Model) ---
+    if (!FarPlanetModel)
+    {
+        CreateFarModel();
+    }
+    // Update Far Model scale if needed (logic from PrepareGeneration)
+    if (FarPlanetModel && bIsFarModelAutoCreated)
+    {
+        FarPlanetModel->SetActorScale3D(FVector(PlanetRadius / 50.0f));
+    }
+
+    // --- STEP 2: Calculate "Auto" Settings (Configuration) ---
+    // This replicates the "Adaptive" logic from PrepareGeneration.
+    // We calculate these LOCAL variables to fill the config struct.
+    int32 FinalChunksPerFace = ChunksPerFace;
+    float FinalVoxelSize = VoxelSize;
+    int32 FinalResolution = VoxelResolution;
+
+    if (bAutoChunkSizing)
+    {
+        // 2a. Adapt Voxel Size
+        float TargetVoxelSize = PlanetRadius / 150.0f;
+        FinalVoxelSize = FMath::Clamp(TargetVoxelSize, 25.0f, 400.0f);
+
+        // 2b. Adapt Resolution
+        FinalResolution = (PlanetRadius < 3000.0f) ? 16 : 32;
+
+        // 2c. Adapt Chunk Count
+        float RequiredCoverage = PlanetRadius * HALF_PI;
+        float ChunkPhysicalWidth = FinalResolution * FinalVoxelSize;
+        int32 NeededChunks = FMath::CeilToInt(RequiredCoverage / ChunkPhysicalWidth);
+
+        FinalChunksPerFace = FMath::Clamp(NeededChunks, MinChunksPerFace, MaxChunksPerFace);
+
+        // Compensate VoxelSize if capped
+        if (NeededChunks > MaxChunksPerFace)
+        {
+            FinalVoxelSize = RequiredCoverage / (FinalChunksPerFace * FinalResolution);
+        }
+    }
+
+    // --- STEP 3: Calculate Auto LODs ---
+    TArray<FLODInfo> FinalLODs = LODSettings;
+    float FinalRenderDist = RenderDistance;
+
+    if (bAutoLOD)
+    {
+        FinalRenderDist = FMath::Clamp(PlanetRadius * 3.0f, 30000.0f, 250000.0f);
+        FinalLODs.Empty();
+
+        // Replicate your AutoLOD logic exactly:
+        FinalLODs.Add({5000.0f, FinalResolution * 2});                                 // LOD 0
+        FinalLODs.Add({FinalRenderDist * 0.15f, FinalResolution});                     // LOD 1
+        FinalLODs.Add({FinalRenderDist * 0.40f, FMath::Max(8, FinalResolution / 2)});  // LOD 2
+        FinalLODs.Add({FinalRenderDist * 1.05f, FMath::Max(4, FinalResolution / 4)});  // LOD 3
+    }
+
+    // --- STEP 4: Initialize the Manager with FINALIZED Config ---
+    // Fill the config struct
+    FPlanetConfig ManagerConfig;
+    ManagerConfig.PlanetRadius = PlanetRadius;
+    ManagerConfig.ChunksPerFace = FinalChunksPerFace;  // The calculated value!
+    ManagerConfig.Seed = Seed;
+    ManagerConfig.LODSettings = FinalLODs;  // The calculated LODs!
+    ManagerConfig.FarDistanceThreshold = FinalRenderDist;
+    ManagerConfig.LODHysteresis = LODHysteresisFactor;
+    ManagerConfig.LODDespawnHysteresis = LODDespawnHysteresisFactor;
+
+    // Create Noise Provider
+    NoiseProvider = MakeUnique<SimpleNoise>();
+
+    // Create Generator
+    DensityGenerator::DensityConfig DenConfig;
+    DenConfig.PlanetRadius = PlanetRadius;
+    DenConfig.Seed = Seed;
+    DenConfig.VoxelSize = FinalVoxelSize;
+    DenConfig.NoiseAmplitude = NoiseAmplitude;
+    DenConfig.NoiseFrequency = NoiseFrequency;
+
+    Generator = MakeUnique<DensityGenerator>(DenConfig, NoiseProvider.Get());
+
+    // Finally, spawn the Manager
+    ChunkManager = MakeUnique<FChunkManager>(ManagerConfig, Generator.Get());
+    ChunkManager->Initialize();  // This now ONLY builds the grid using the correct ChunksPerFace
 }
 
 
@@ -636,7 +737,7 @@ void ACubeSpherePlanet::PrepareGeneration()
                 FVector pointOnUnitCube = face.Normal + face.Right * uCenter + face.Up * vCenter;
 
                 // 2. Apply Spherified Cube mapping to distribute chunks evenly on the sphere
-                FVector chunkUpDirection = GetSpherifiedCubePoint(pointOnUnitCube);
+                FVector chunkUpDirection = FMathUtils::CubeToSphere(pointOnUnitCube);
 
                 // 3. Scale by radius to get the chunk's LOCAL position relative to planet center.
                 // We do NOT add PlanetCenterWorld here, keeping it local.

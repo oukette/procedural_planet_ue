@@ -17,6 +17,7 @@ enum class EChunkState : uint8
     Unloading    // Marked for destruction/pooling
 };
 
+
 /** Unique identifier for a chunk on the CubeSphere */
 USTRUCT(BlueprintType)
 struct FChunkId
@@ -27,21 +28,21 @@ struct FChunkId
         uint8 FaceIndex;  // 0-5
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite)
-        int32 LOD;
+        FIntVector Coords;  // Face-local grid coordinates (X, Y)
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite)
-        FIntVector Coords;  // Face-local grid coordinates (X, Y)
+        int32 LOD;
 
         FChunkId() :
             FaceIndex(0),
-            LOD(0),
-            Coords(FIntVector::ZeroValue)
+            Coords(FIntVector::ZeroValue),
+            LOD(0)
         {
         }
         FChunkId(uint8 InFace, int32 InLOD, FIntVector InCoords) :
             FaceIndex(InFace),
-            LOD(InLOD),
-            Coords(InCoords)
+            Coords(InCoords),
+            LOD(InLOD)
         {
         }
 
@@ -52,6 +53,7 @@ struct FChunkId
             return HashCombine(HashCombine(GetTypeHash(Other.FaceIndex), GetTypeHash(Other.LOD)), GetTypeHash(Other.Coords));
         }
 };
+
 
 /** All data required for a single Mesh Section */
 USTRUCT(BlueprintType)
@@ -84,6 +86,39 @@ struct FChunkMeshData
         }
 };
 
+
+/** Represents the physical placement of a chunk in planet-space. */
+USTRUCT(BlueprintType)
+struct FChunkTransform
+{
+        GENERATED_BODY()
+
+        UPROPERTY()
+        FVector Location;  // Center of the chunk in Planet Space
+
+        UPROPERTY()
+        float Scale;  // Uniform scale (derived from LOD)
+
+        UPROPERTY()
+        FVector FaceNormal;  // Which cube face this belongs to
+
+        // Default constructor
+        FChunkTransform() :
+            Location(FVector::ZeroVector),
+            Scale(1.0f),
+            FaceNormal(FVector::UpVector)
+        {
+        }
+
+        FChunkTransform(FVector InLoc, float InScale, FVector InNormal) :
+            Location(InLoc),
+            Scale(InScale),
+            FaceNormal(InNormal)
+        {
+        }
+};
+
+
 /** Context provided to the Manager to evaluate LODs and visibility */
 USTRUCT(BlueprintType)
 struct FPlanetViewContext
@@ -98,4 +133,52 @@ struct FPlanetViewContext
 
         UPROPERTY()
         int32 MaxAllowedLOD;
+};
+
+
+// A struct to define settings for a single Level of Detail.
+USTRUCT(BlueprintType)
+struct FLODInfo
+{
+        GENERATED_BODY()
+
+        // Distance at which this LOD (and higher detail ones) becomes active.
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LOD")
+        float Distance = 10000.f;
+
+        // Voxel resolution for chunks at this LOD.
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LOD")
+        int32 VoxelResolution = 32;
+};
+
+
+/**
+ * Static configuration for the planet.
+ * Passed to the Manager once at startup.
+ */
+struct FPlanetConfig
+{
+        // Basic Dimensions
+        double PlanetRadius;
+        int32 ChunksPerFace;  // The grid size (e.g. 16 or 32)
+
+        // Generation Settings
+        int32 Seed;
+
+        // LOD Rules
+        TArray<FLODInfo> LODSettings;
+        float LODHysteresis;
+        float LODDespawnHysteresis;
+        float FarDistanceThreshold;  // Distance to switch to Far Model
+
+        // Default Constructor
+        FPlanetConfig() :
+            PlanetRadius(50000.0),
+            ChunksPerFace(16),
+            Seed(1337),
+            LODHysteresis(1.1f),
+            LODDespawnHysteresis(1.1f),
+            FarDistanceThreshold(200000.0f)
+        {
+        }
 };
