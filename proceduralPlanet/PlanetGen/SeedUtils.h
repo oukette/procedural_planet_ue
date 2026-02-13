@@ -1,15 +1,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DataTypes.h"  // For FChunkId
+#include "DataTypes.h"
 
-
-class FSeedUtils
+// Pure math utilities for generating seeds and hashes.
+class PROCEDURALPLANET_API FSeedUtils
 {
     public:
-        /** * Generates a deterministic seed for a specific chunk.
-         * Uses a simple but effective bit-mixing hash.
-         */
+        // Generates a deterministic seed for a specific chunk. Uses a simple but effective bit-mixing hash.
         static int32 GetChunkSeed(int32 PlanetSeed, const FChunkId &Id)
         {
             uint32 Hash = HashCombine(GetTypeHash(PlanetSeed), GetTypeHash(Id));

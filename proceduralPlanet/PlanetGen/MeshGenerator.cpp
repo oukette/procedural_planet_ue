@@ -1,6 +1,5 @@
 #include "MeshGenerator.h"
-#include "../MarchingCubesTables.h"
-
+#include "MarchingCubesTables.h"
 
 
 FChunkMeshData MeshGenerator::GenerateMesh(const GenData &GenData, int32 Resolution, const FTransform &ChunkTransform, const FTransform &PlanetTransform,
@@ -15,19 +14,7 @@ FChunkMeshData MeshGenerator::GenerateMesh(const GenData &GenData, int32 Resolut
         return MeshData;
     }
 
-    // Automatic Debug Colors for multiple LODs.
-    const static TArray<FColor> LODColors = {
-        FColor::Green,        // LOD 0
-        FColor::Yellow,       // LOD 1
-        FColor(255, 165, 0),  // LOD 2 (Orange)
-        FColor::Red,          // LOD 3
-        FColor::Magenta,      // LOD 4
-        FColor::Cyan,         // LOD 5
-        FColor(0, 255, 128),  // LOD 6 (Spring Green)
-        FColor(128, 0, 255)   // LOD 7 (Purple)
-    };
-
-    FColor DebugColor = (LODLevel >= 0 && LODLevel < LODColors.Num()) ? LODColors[LODLevel] : FColor::White;
+    FColor DebugColor = (LODLevel >= 0 && LODLevel < LODColorsDebug.Num()) ? LODColorsDebug[LODLevel] : FColor::White;
 
     const FVector CornerOffsets[8] = {
         FVector(0, 0, 0), FVector(1, 0, 0), FVector(1, 1, 0), FVector(0, 1, 0), FVector(0, 0, 1), FVector(1, 0, 1), FVector(1, 1, 1), FVector(0, 1, 1)};
@@ -67,7 +54,7 @@ FChunkMeshData MeshGenerator::GenerateMesh(const GenData &GenData, int32 Resolut
                 {
                     if (edges & (1 << e))
                     {
-                        EdgeVertex[e] = FMathUtils::VertexInterp(P[EdgeIndex[e][0]], P[EdgeIndex[e][1]], D[EdgeIndex[e][0]], D[EdgeIndex[e][1]]);
+                        EdgeVertex[e] = FMathUtils::computeVertexInterp(P[EdgeIndex[e][0]], P[EdgeIndex[e][1]], D[EdgeIndex[e][0]], D[EdgeIndex[e][1]]);
                     }
                 }
 

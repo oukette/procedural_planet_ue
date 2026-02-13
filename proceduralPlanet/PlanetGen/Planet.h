@@ -10,27 +10,6 @@
 #include "Planet.generated.h"
 
 
-class AVoxelChunk;  // Forward declaration to avoid circular includes
-
-
-// Lightweight struct to manage chunk state without spawning an actor
-struct FChunkInfo
-{
-        FTransform Transform;   // Local Transform relative to Planet
-        FVector LocalLocation;  // Cached Local Location for fast distance checks
-        AVoxelChunk *ActiveChunk = nullptr;
-        bool bPendingSpawn = false;
-        int32 LODLevel = -1;  // Current LOD level, -1 if inactive
-
-        // Projection Parameters for Warped Chunks
-        FVector FaceNormal;
-        FVector FaceRight;
-        FVector FaceUp;
-        FVector2D UVMin;
-        FVector2D UVMax;
-};
-
-
 UCLASS()
 class PROCEDURALPLANET_API APlanet : public AActor
 {
@@ -39,18 +18,6 @@ class PROCEDURALPLANET_API APlanet : public AActor
     private:
         UPROPERTY(VisibleAnywhere, Category = "Planet")
         USceneComponent *Root;
-
-        // Master list of all potential chunks (lightweight)
-        TArray<FChunkInfo> ChunkInfos;
-
-        // Queue of INDICES into ChunkInfos waiting to be spawned
-        TArray<int32> ChunkSpawnQueue;
-
-        // Queue for chunks with ready mesh data, waiting for GPU upload.
-        TArray<AVoxelChunk *> MeshUpdateQueue;
-
-        // Counter for chunks currently running async generation.
-        int32 ActiveGenerationTasks;
 
         TUniquePtr<FChunkManager> ChunkManager;
         TUniquePtr<SimpleNoise> NoiseProvider;
@@ -61,32 +28,6 @@ class PROCEDURALPLANET_API APlanet : public AActor
 
         // Initializes the generation process by populating the spawn queue.
         void initPlanet();
-        void PrepareGeneration();
-
-        // Tick sub-functions
-        void UpdateLODAndStreaming();
-        void ProcessSpawnQueue();
-        void ProcessMeshUpdateQueue();
-
-        // LOD update sub-functions, refactored from UpdateLODAndStreaming
-        bool UpdateFarModelAndChunkVisibility(const FVector &ObserverPosition);
-        void CullAllVisibleChunks();
-        void UpdateAllChunksLOD(const FVector &ObserverPosition);
-        int32 DetermineTargetLOD(const FChunkInfo &ChunkInfo, float DistanceSq) const;
-        void ApplyChunkStateChange(int32 ChunkIndex, int32 TargetLOD);
-        void UpdateChunkCollision(FChunkInfo &ChunkInfo, float DistanceSq) const;
-
-        // Destroys all existing chunks.
-        UFUNCTION(CallInEditor, Category = "Planet|Actions", meta = (DisplayName = "Clear All Chunks"))
-        void ClearAllChunks();
-
-        // Starts the staggered generation process.
-        UFUNCTION(CallInEditor, Category = "Planet|Actions", meta = (DisplayName = "Generate Planet"))
-        void GeneratePlanet();
-
-        // Starts the staggered generation process with a seed-based radius.
-        UFUNCTION(CallInEditor, Category = "Planet|Actions", meta = (DisplayName = "Generate Seed-Based Planet"))
-        void GenerateSeedBasedPlanet();
 
         // Helper to get the camera position in both Editor and Runtime
         FVector GetObserverPosition() const;
@@ -100,13 +41,6 @@ class PROCEDURALPLANET_API APlanet : public AActor
         virtual void Destroyed() override;
         virtual void Tick(float DeltaTime) override;
         virtual bool ShouldTickIfViewportsOnly() const override;
-
-        // Called by a VoxelChunk when its async mesh generation is complete.
-        void OnChunkGenerationFinished(AVoxelChunk *Chunk);
-
-        // Calculate automatic chunks per face based on planet parameters
-        UFUNCTION(BlueprintCallable, Category = "Planet|Chunking")
-        int32 CalculateAutoChunksPerFace() const;
 
         // --- Generation Control ---
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Generation")
@@ -160,7 +94,6 @@ class PROCEDURALPLANET_API APlanet : public AActor
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Noise", meta = (DisplayName = "Persistence (Gain)", ClampMin = "0.0", ClampMax = "1.0"))
         float NoisePersistence = 0.5f;
-
 
         // --- Voxel Settings ---
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Voxels")

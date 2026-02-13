@@ -1,42 +1,6 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "DensityGenerator.h"
-
-
-/**
- * A self-contained, thread-safe utility class for generating 3D Simplex noise.
- * This is implemented as a static class to keep it decoupled from the DensityGenerator instance.
- * It uses a seed-based permutation table for deterministic, repeatable noise.
- */
-class FNoiseUtils
-{
-    public:
-        // Generates 3D Simplex noise for a given point and seed.
-
-    private:
-        // Simple hashing function for pseudo-random gradient selection
-        static int32 Hash(int32 i, int32 j, int32 k, int32 seed) { return Perm(Perm(Perm(i, seed) + j, seed) + k, seed); }
-
-        // Seeded permutation function
-        static int32 Perm(int32 x, int32 seed) { return (((x * x * 15731 + 789221) * x + 1376312589) ^ seed) & 0x7fffffff; }
-
-        static float Grad(int32 hash, float x, float y, float z) { return Dot(GradTable[hash & 15], x, y, z); }
-
-        static float Dot(const FVector &g, float x, float y, float z) { return g.X * x + g.Y * y + g.Z * z; }
-
-        static float CalculateCorner(float x, float y, float z, float grad)
-        {
-            float t = 0.6f - x * x - y * y - z * z;
-            if (t < 0)
-                return 0.0f;
-            t *= t;
-            return t * t * grad;
-        }
-
-        // Gradient vectors for 3D simplex noise
-        static const FVector GradTable[16];
-};
 
 
 DensityGenerator::DensityGenerator(const DensityConfig &InConfig, const IPlanetNoise *InNoiseProvider) :
@@ -63,7 +27,7 @@ float DensityGenerator::SampleDensity(const FVector &PlanetRelativePosition) con
 
 
 GenData DensityGenerator::GenerateDensityField(int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp,
-                                                                 const FVector2D &UVMin, const FVector2D &UVMax) const
+                                               const FVector2D &UVMin, const FVector2D &UVMax) const
 {
     const int32 SampleCount = Resolution + 1;
     const int32 TotalVoxels = SampleCount * SampleCount * SampleCount;
@@ -102,10 +66,10 @@ FVector DensityGenerator::GetProjectedPosition(int32 x, int32 y, int32 z, int32 
     // Step 1: Get the position on the Cube surface (-1 to 1 range)
     // We pass z=0 here because z in the voxel grid represents depth/altitude,
     // whereas x and y are the "surface" coordinates.
-    FVector CubePos = FMathUtils::GetCubeSurfacePosition(FIntVector(x, y, 0), Resolution, FaceNormal, FaceRight, FaceUp, UVMin, UVMax);
+    FVector CubePos = FMathUtils::computeCubeSurfacePosition(FIntVector(x, y, 0), Resolution, FaceNormal, FaceRight, FaceUp, UVMin, UVMax);
 
     // Step 2: Project that cube point onto a unit sphere (Radius = 1.0)
-    FVector UnitSpherePos = FMathUtils::CubeToSphere(CubePos);
+    FVector UnitSpherePos = FMathUtils::projectCubeToSphere(CubePos);
 
     // 5. Calculate altitude (Z is radial height from surface). Z = Resolution/2 represents the planet surface
     float SurfaceLevel = Resolution / 2.0f;
@@ -180,7 +144,7 @@ float DensityGenerator::SampleFBM(const FVector &Position) const
 
         // NEW CODE (Interface Call):
         // We pass the modified seed (BaseSeed + OctaveIndex) just like before
-        float Signal = NoiseProvider->GetNoise(Position * Frequency, Config.Seed + i);
+        float Signal = NoiseProvider->getNoise(Position * Frequency, Config.Seed + i);
 
         Total += Signal * Amplitude;
 

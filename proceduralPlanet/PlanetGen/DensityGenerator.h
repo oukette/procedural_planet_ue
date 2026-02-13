@@ -8,47 +8,15 @@
 #include "DataTypes.h"
 
 
-/**
- * Encapsulates all density field generation logic for procedural planets.
- * Thread-safe and stateless - can be used from async tasks.
- *
- * Density Convention:
- *   Positive = Solid (inside terrain)
- *   Negative = Air (outside terrain)
- *   Zero = Surface
- */
+// Encapsulates all density field generation logic for procedural planets.
+// Thread-safe and stateless - can be used from async tasks.
+// Density Convention:
+//   Positive = Solid (inside terrain)
+//   Negative = Air (outside terrain)
+//   Zero = Surface
 class PROCEDURALPLANET_API DensityGenerator
 {
     public:
-        // Configuration structure to keep parameters organized
-        struct DensityConfig
-        {
-                float PlanetRadius;
-                float NoiseAmplitude;
-                float NoiseFrequency;
-                int32 NoiseOctaves;
-                float NoiseLacunarity;
-                float NoisePersistence;
-                int32 Seed;
-                float VoxelSize;  // For normalization
-
-                // Future expansion: biomes, caves, etc.
-                // bool bEnableCaves = false;
-                // float CaveFrequency = 0.01f;
-
-                DensityConfig() :
-                    PlanetRadius(50000.f),
-                    NoiseAmplitude(500.f),
-                    NoiseFrequency(0.0003f),
-                    NoiseOctaves(6),
-                    NoiseLacunarity(2.0f),
-                    NoisePersistence(0.5f),
-                    Seed(1337),
-                    VoxelSize(100.f)
-                {
-                }
-        };
-
         // Constructor
         explicit DensityGenerator(const DensityConfig &InConfig, const IPlanetNoise *InNoiseProvider = nullptr);
 

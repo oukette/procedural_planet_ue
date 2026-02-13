@@ -1,9 +1,11 @@
 #include "ChunkRenderer.h"
 
+
 ChunkRenderer::ChunkRenderer(AActor* InOwner, UMaterialInterface* InMaterial)
     : OwnerActor(InOwner), Material(InMaterial)
 {
 }
+
 
 ChunkRenderer::~ChunkRenderer()
 {
@@ -11,6 +13,7 @@ ChunkRenderer::~ChunkRenderer()
     // We just need to clear our references.
     ComponentPool.Empty();
 }
+
 
 UProceduralMeshComponent* ChunkRenderer::GetFreeComponent()
 {
@@ -28,11 +31,13 @@ UProceduralMeshComponent* ChunkRenderer::GetFreeComponent()
         NewComp->RegisterComponent();
         NewComp->AttachToComponent(OwnerActor->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
         NewComp->bUseAsyncCooking = true; // Important for performance
+        NewComp->SetComponentTickEnabled(false); // Critical: Disable ticking to save performance
         return NewComp;
     }
 
     return nullptr;
 }
+
 
 void ChunkRenderer::RenderChunk(FChunk* Chunk)
 {
@@ -67,6 +72,7 @@ void ChunkRenderer::RenderChunk(FChunk* Chunk)
     // 4. Link
     Chunk->RenderProxy = Comp;
 }
+
 
 void ChunkRenderer::HideChunk(FChunk* Chunk)
 {

@@ -4,10 +4,8 @@
 #include "DataTypes.h"
 
 
-/**
- * A pure C++ representation of a terrain chunk.
- * This class is not an Actor. It manages the state and data of a single quadtree node.
- */
+// A pure C++ representation of a terrain chunk.
+// This class is not an Actor. It manages the state and data of a single quadtree node.
 class FChunk
 {
     public:

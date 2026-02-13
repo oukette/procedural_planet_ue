@@ -2,10 +2,10 @@
 #include "Math/UnrealMathUtility.h"
 
 
-int32 SimpleNoise::Floor(float x) { return x >= 0 ? (int32)x : (int32)x - 1; }
+int32 SimpleNoise::floor(float x) { return x >= 0 ? (int32)x : (int32)x - 1; }
 
 
-float SimpleNoise::GetNoise(const FVector &Position, int32 Seed) const
+float SimpleNoise::getNoise(const FVector &Position, int32 Seed) const
 {
     // Simplex noise constants
     const float F3 = 1.0f / 3.0f;
@@ -106,17 +106,17 @@ float SimpleNoise::GetNoise(const FVector &Position, int32 Seed) const
 
     // Calculate the contribution from the four corners
     float n = 0.0f;
-    n += CalculateCorner(x0, y0, z0, Grad(Hash(i, j, k, Seed), x0, y0, z0));
-    n += CalculateCorner(x1, y1, z1, Grad(Hash(i + i1, j + j1, k + k1, Seed), x1, y1, z1));
-    n += CalculateCorner(x2, y2, z2, Grad(Hash(i + i2, j + j2, k + k2, Seed), x2, y2, z2));
-    n += CalculateCorner(x3, y3, z3, Grad(Hash(i + 1, j + 1, k + 1, Seed), x3, y3, z3));
+    n += calculateCorner(x0, y0, z0, grad(hash(i, j, k, Seed), x0, y0, z0));
+    n += calculateCorner(x1, y1, z1, grad(hash(i + i1, j + j1, k + k1, Seed), x1, y1, z1));
+    n += calculateCorner(x2, y2, z2, grad(hash(i + i2, j + j2, k + k2, Seed), x2, y2, z2));
+    n += calculateCorner(x3, y3, z3, grad(hash(i + 1, j + 1, k + 1, Seed), x3, y3, z3));
 
     // The result is scaled to stay just inside [-1,1]
     return 32.0f * n;
 }
 
 // Initialize the gradient table
-const FVector SimpleNoise::GradTable[16] = {FVector(1, 1, 0),
+const FVector SimpleNoise::gradTable[16] = {FVector(1, 1, 0),
                                             FVector(-1, 1, 0),
                                             FVector(1, -1, 0),
                                             FVector(-1, -1, 0),

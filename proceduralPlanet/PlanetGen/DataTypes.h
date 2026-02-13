@@ -5,7 +5,7 @@
 #include "DataTypes.generated.h"
 
 
-/** The state of a chunk in its lifecycle */
+// The state of a chunk in its lifecycle
 UENUM(BlueprintType)
 enum class EChunkState : uint8
 {
@@ -18,7 +18,7 @@ enum class EChunkState : uint8
 };
 
 
-/** Unique identifier for a chunk on the CubeSphere */
+// Unique identifier for a Chunk on the CubeSphere
 USTRUCT(BlueprintType)
 struct FChunkId
 {
@@ -55,7 +55,7 @@ struct FChunkId
 };
 
 
-/** All data required for a single Mesh Section */
+// All data required for a single Mesh Section
 USTRUCT(BlueprintType)
 struct FChunkMeshData
 {
@@ -87,7 +87,7 @@ struct FChunkMeshData
 };
 
 
-/** Represents the physical placement of a chunk in planet-space. */
+// Represents the physical placement of a chunk in planet-space.
 USTRUCT(BlueprintType)
 struct FChunkTransform
 {
@@ -103,7 +103,7 @@ struct FChunkTransform
         FVector FaceNormal;  // Which cube face this belongs to
 
         UPROPERTY()
-        FQuat Rotation;      // Orientation on the sphere surface
+        FQuat Rotation;  // Orientation on the sphere surface
 
         // Default constructor
         FChunkTransform() :
@@ -124,7 +124,7 @@ struct FChunkTransform
 };
 
 
-/** Context provided to the Manager to evaluate LODs and visibility */
+// Context provided to the Manager to evaluate LODs and visibility
 USTRUCT(BlueprintType)
 struct FPlanetViewContext
 {
@@ -157,12 +157,12 @@ struct FLODInfo
 };
 
 
-/**
- * Static configuration for the planet.
- * Passed to the Manager once at startup.
- */
+// Static configuration for the planet. Passed to the ChunkManager once at startup.
+USTRUCT(BlueprintType)
 struct FPlanetConfig
 {
+        GENERATED_BODY()
+
         // Basic Dimensions
         double PlanetRadius;
         int32 ChunksPerFace;  // The grid size (e.g. 16 or 32)
@@ -178,7 +178,7 @@ struct FPlanetConfig
 
         // Throttling
         int32 MaxConcurrentGenerations;
-        int32 GenerationRate; // Chunks to start generating per tick
+        int32 GenerationRate;  // Chunks to start generating per tick
 
         // Default Constructor
         FPlanetConfig() :
@@ -195,10 +195,53 @@ struct FPlanetConfig
 };
 
 
+// Configuration structure to keep parameters organized
+struct DensityConfig
+{
+        float PlanetRadius;
+        float NoiseAmplitude;
+        float NoiseFrequency;
+        int32 NoiseOctaves;
+        float NoiseLacunarity;
+        float NoisePersistence;
+        int32 Seed;
+        float VoxelSize;  // For normalization
+
+        // Future expansion: biomes, caves, etc.
+        // bool bEnableCaves = false;
+        // float CaveFrequency = 0.01f;
+
+        DensityConfig() :
+            PlanetRadius(50000.f),
+            NoiseAmplitude(500.f),
+            NoiseFrequency(0.0003f),
+            NoiseOctaves(6),
+            NoiseLacunarity(2.0f),
+            NoisePersistence(0.5f),
+            Seed(1337),
+            VoxelSize(100.f)
+        {
+        }
+};
+
+
 // Container for generated field data to avoid re-calculating positions
 struct GenData
 {
         TArray<float> Densities;
         TArray<FVector> Positions;
         int32 SampleCount = 0;
+};
+
+
+// Automatic Debug Colors for multiple LODs.
+const static TArray<FColor> LODColorsDebug = {
+    FColor::Green,        // LOD 0
+    FColor::Yellow,       // LOD 1
+    FColor(255, 165, 0),  // LOD 2 (Orange)
+    FColor::Red,          // LOD 3
+    FColor::Magenta,      // LOD 4
+    FColor::Cyan,         // LOD 5
+    FColor(0, 255, 128),  // LOD 6 (Spring Green)
+    FColor(128, 0, 255)   // LOD 7 (Purple)
 };

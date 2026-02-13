@@ -3,18 +3,14 @@
 #include "CoreMinimal.h"
 
 
-/**
- * Pure math utilities for Cube-to-Sphere projection and spatial transformations.
- * These functions are stateless and thread-safe.
- */
+// Pure math utilities for Cube-to-Sphere projection and spatial transformations.
+// These functions are stateless and thread-safe.
 class PROCEDURALPLANET_API FMathUtils
 {
     public:
-        /**
-         *  Projects a point from a unit cube [-1, 1] to a unit sphere.
-         *  Uses the "Modified Cube-to-Sphere Mapping" to maintain better area distribution.
-         */
-        static FVector CubeToSphere(const FVector &p)
+        // Projects a point from a unit cube [-1, 1] to a unit sphere.
+        // Uses the "Modified Cube-to-Sphere Mapping" to maintain better area distribution.
+        static FVector projectCubeToSphere(const FVector &p)
         {
             // Spherified Cube mapping for equal-area distribution
             // Reference: http://mathproofs.blogspot.com/2005/07/mapping-cube-to-sphere.html
@@ -28,8 +24,8 @@ class PROCEDURALPLANET_API FMathUtils
                            p.Z * FMath::Sqrt(1.0f - (x2 / 2.0f) - (y2 / 2.0f) + (x2 * y2 / 3.0f)));
         }
 
-        /** Calculates the normalized direction vector for a given face index (0-5) */
-        static FVector GetFaceNormal(uint8 FaceIndex)
+        // Calculates the normalized direction vector for a given face index (0-5)
+        static FVector getFaceNormal(uint8 FaceIndex)
         {
             switch (FaceIndex)
             {
@@ -50,8 +46,8 @@ class PROCEDURALPLANET_API FMathUtils
             }
         }
 
-        /** Returns the 'Right' vector for a given face to build a local coordinate system */
-        static FVector GetFaceRight(uint8 FaceIndex)
+        // Returns the 'Right' vector for a given face to build a local coordinate system
+        static FVector getFaceRight(uint8 FaceIndex)
         {
             switch (FaceIndex)
             {
@@ -72,8 +68,8 @@ class PROCEDURALPLANET_API FMathUtils
             }
         }
 
-        /** Returns the 'Up' vector for a given face to build a local coordinate system */
-        static FVector GetFaceUp(uint8 FaceIndex)
+        // Returns the 'Up' vector for a given face to build a local coordinate system
+        static FVector getFaceUp(uint8 FaceIndex)
         {
             switch (FaceIndex)
             {
@@ -94,26 +90,25 @@ class PROCEDURALPLANET_API FMathUtils
             }
         }
 
-        /**
-         ** Interpolates between UVMin and UVMax based on local chunk grid coordinates
-         *  to find the specific cube-surface position before projection.
-         */
-        static FVector GetCubeSurfacePosition(const FIntVector &GridCoords, int32 Resolution, const FVector &Normal, const FVector &Right, const FVector &Up,
-                                              const FVector2D &UVMin, const FVector2D &UVMax)
+
+        // Interpolates between UVMin and UVMax based on local chunk grid coordinates
+        // to find the specific cube-surface position before projection.
+        static FVector computeCubeSurfacePosition(const FIntVector &GridCoords, int32 Resolution, const FVector &Normal, const FVector &Right,
+                                                  const FVector &Up, const FVector2D &UVMin, const FVector2D &UVMax)
         {
             float u = FMath::Lerp(UVMin.X, UVMax.X, (float)GridCoords.X / Resolution);
             float v = FMath::Lerp(UVMin.Y, UVMax.Y, (float)GridCoords.Y / Resolution);
-            
+
             // Map 0..1 to the -1..1 range expected by the CubeSphere projection
             float uScaled = u * 2.0f - 1.0f;
             float vScaled = v * 2.0f - 1.0f;
-            
+
             // Combine into a point on the cube face
             return Normal + (Right * u) + (Up * v);
         }
 
 
-        static FVector VertexInterp(const FVector &P1, const FVector &P2, float D1, float D2)
+        static FVector computeVertexInterp(const FVector &P1, const FVector &P2, float D1, float D2)
         {
             const float Epsilon = 1e-6f;
             float Denom = D1 - D2;

@@ -6,17 +6,15 @@
 #include "ChunkRenderer.h"
 
 
-/**
- * Manages the lifecycle of all chunks (Quadtree logic, LOD selection, Async requests).
- * Owned strictly by the APlanet actor.
- */
+// Manages the lifecycle of all chunks (Quadtree logic, LOD selection, Async requests).
+// Owned strictly by the APlanet actor.
 class FChunkManager
 {
     public:
         FChunkManager(const FPlanetConfig &InConfig, const DensityGenerator *InGenerator);
         ~FChunkManager();
 
-        /** Returns the total number of chunks currently tracked */
+        // Returns the total number of chunks currently tracked
         int32 GetChunkCount() const { return Chunks.Num(); }
 
         // Returns the number of chunks that currently have a valid LOD (are visible)
@@ -25,7 +23,7 @@ class FChunkManager
         // Replaces the loop in your PrepareGeneration()
         void Initialize(AActor *Owner, UMaterialInterface *Material);
 
-        /** Main update loop called by APlanet::Tick */
+        // Main update loop called by APlanet::Tick
         void Update(const FPlanetViewContext &Context);
 
 

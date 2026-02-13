@@ -1,12 +1,12 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "Planet.h"
-#include "../VoxelChunk.h"
 #include "Math/RandomStream.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Engine/StaticMeshActor.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/Engine.h"
+#include "DrawDebugHelpers.h"
 
 
 // Sets default values
@@ -44,7 +44,6 @@ APlanet::APlanet()
     bGenerateOnBeginPlay = true;
     ChunksToSpawnPerFrame = 8;
     MaxConcurrentChunkGenerations = 32;
-    ActiveGenerationTasks = 0;
     RenderDistance = 150000.0f;
     CollisionDistance = 8000.0f;
     bAutoLOD = true;
@@ -54,9 +53,6 @@ APlanet::APlanet()
 void APlanet::OnConstruction(const FTransform &Transform)
 {
     Super::OnConstruction(Transform);
-    // IMPORTANT: We no longer generate here by default as it causes severe editor freezes
-    // on large planets. Use the "Generate Planet" button in the details panel or enable
-    // bGenerateOnBeginPlay for runtime generation.
 }
 
 
@@ -69,9 +65,10 @@ void APlanet::BeginPlay()
         // Sort from closest distance (LOD 0) to furthest.
         LODSettings.Sort([](const FLODInfo &A, const FLODInfo &B) { return A.Distance < B.Distance; });
 
-        // GeneratePlanet();  // OLD LOGIC - Replaced by initPlanet()
+        // DEBUG
+        DrawDebugSphere(GetWorld(), GetActorLocation(), PlanetRadius, 32, FColor::Red, false, 60.0f, 0, 20.0f);
 
-        initPlanet();  // currently only init the chunk manager
+        initPlanet();
     }
 }
 
@@ -112,402 +109,17 @@ void APlanet::Tick(float DeltaTime)
         GEngine->AddOnScreenDebugMessage(
             101, 0.0f, FColor::Cyan, FString::Printf(TEXT("Dist to Center: %.0f | Dist to Surface: %.0f"), DistToCenter, DistToSurface));
     }
-
-    // OLD LOGIC
-    // UpdateLODAndStreaming();
-    // ProcessSpawnQueue();
-    // ProcessMeshUpdateQueue();
-}
-
-
-void APlanet::UpdateLODAndStreaming()
-{
-    const FVector ObserverPosition = GetObserverPosition();
-
-    const bool bAreChunksVisible = UpdateFarModelAndChunkVisibility(ObserverPosition);
-
-    if (bAreChunksVisible)
-    {
-        UpdateAllChunksLOD(ObserverPosition);
-    }
-    else
-    {
-        CullAllVisibleChunks();
-    }
-}
-
-
-bool APlanet::UpdateFarModelAndChunkVisibility(const FVector &ObserverPosition)
-{
-    const float DistToSurface = FMath::Max(0.0f, FVector::Dist(GetActorLocation(), ObserverPosition) - PlanetRadius);
-
-    // Transition Logic:
-    // 1. Far Model starts appearing at 75% of RenderDistance (Overlap start)
-    // 2. Chunks disappear at 100% of RenderDistance (Overlap end)
-    const float FarModelActivateDist = RenderDistance * 0.75f;
-    const float ChunkCullDist = RenderDistance;
-
-    const bool bShowFarModel = DistToSurface > FarModelActivateDist;
-    const bool bShowChunks = DistToSurface < ChunkCullDist;
-
-    if (FarPlanetModel)
-    {
-        FarPlanetModel->SetActorHiddenInGame(!bShowFarModel);
-    }
-
-    return bShowChunks;
-}
-
-
-void APlanet::CullAllVisibleChunks()
-{
-    // To prevent generating chunks that will just be hidden, we can clear the queues.
-    ChunkSpawnQueue.Empty();
-
-    // Destroying is better than hiding for the Editor, as it clears them from the World Outliner
-    // and ensures "despawn" behavior is visually confirmed.
-    for (FChunkInfo &Info : ChunkInfos)
-    {
-        if (Info.ActiveChunk)
-        {
-            Info.ActiveChunk->Destroy();
-            Info.ActiveChunk = nullptr;
-        }
-        Info.bPendingSpawn = false;
-        // Reset LOD level so they respawn correctly when re-entering
-        Info.LODLevel = -1;
-    }
-}
-
-
-void APlanet::UpdateAllChunksLOD(const FVector &ObserverPosition)
-{
-    for (int32 i = 0; i < ChunkInfos.Num(); ++i)
-    {
-        FChunkInfo &Info = ChunkInfos[i];
-        const FVector ChunkWorldLocation = GetActorTransform().TransformPosition(Info.LocalLocation);
-        const float DistSq = FVector::DistSquared(ChunkWorldLocation, ObserverPosition);
-
-        const int32 TargetLOD = DetermineTargetLOD(Info, DistSq);
-        ApplyChunkStateChange(i, TargetLOD);
-        UpdateChunkCollision(Info, DistSq);
-    }
-}
-
-
-int32 APlanet::DetermineTargetLOD(const FChunkInfo &ChunkInfo, float DistanceSq) const
-{
-    if (ChunkInfo.ActiveChunk)
-    {
-        // Ensure chunk is visible if we are in chunk-mode
-        ChunkInfo.ActiveChunk->SetActorHiddenInGame(false);
-
-        // Hysteresis logic for existing chunks
-        const int32 CurrentLOD = ChunkInfo.LODLevel;
-
-        // Check for UPGRADE to a higher-detail LOD (smaller index)
-        if (CurrentLOD > 0)
-        {
-            const float UpgradeDistSq = FMath::Square(LODSettings[CurrentLOD - 1].Distance);
-            if (DistanceSq < UpgradeDistSq)
-            {
-                return CurrentLOD - 1;
-            }
-        }
-
-        // Check for DOWNGRADE to a lower-detail LOD (larger index)
-        if (CurrentLOD < LODSettings.Num() - 1)
-        {
-            const float DowngradeDistSq = FMath::Square(LODSettings[CurrentLOD].Distance * LODHysteresisFactor);  // Hysteresis
-            if (DistanceSq > DowngradeDistSq)
-            {
-                return CurrentLOD + 1;
-            }
-        }
-
-        // Check for DESPAWN
-        const float DespawnDistSq = FMath::Square(RenderDistance * LODDespawnHysteresisFactor);  // Hysteresis
-        if (DistanceSq > DespawnDistSq)
-        {
-            return -1;  // Despawn
-        }
-
-        return CurrentLOD;  // No change
-    }
-
-    // No active chunk, determine if we need to spawn one
-    for (int32 LodIndex = 0; LodIndex < LODSettings.Num(); ++LodIndex)
-    {
-        if (DistanceSq < FMath::Square(LODSettings[LodIndex].Distance))
-        {
-            return LodIndex;  // Spawn at this LOD
-        }
-    }
-
-    return -1;  // Do not spawn, out of range
-}
-
-
-void APlanet::ApplyChunkStateChange(int32 ChunkIndex, int32 TargetLOD)
-{
-    FChunkInfo &Info = ChunkInfos[ChunkIndex];
-
-    if (Info.ActiveChunk)
-    {
-        if (TargetLOD == -1)  // Despawn
-        {
-            Info.ActiveChunk->Destroy();
-            Info.ActiveChunk = nullptr;
-            Info.LODLevel = -1;
-        }
-        else if (TargetLOD != Info.LODLevel)  // Change LOD
-        {
-            const int32 NewRes = LODSettings[TargetLOD].VoxelResolution;
-            // Compensate VoxelSize to keep physical chunk size constant
-            // Assumes VoxelResolution and VoxelSize on the planet are for the base LOD.
-            const float NewVoxelSize = (VoxelResolution * VoxelSize) / (float)FMath::Max(1, NewRes);
-
-            Info.ActiveChunk->UpdateChunkLOD(TargetLOD, NewRes, NewVoxelSize);
-            Info.LODLevel = TargetLOD;
-        }
-    }
-    else if (TargetLOD != -1 && !Info.bPendingSpawn)  // Spawn
-    {
-        Info.LODLevel = TargetLOD;
-        ChunkSpawnQueue.Add(ChunkIndex);
-        Info.bPendingSpawn = true;
-    }
-}
-
-
-void APlanet::UpdateChunkCollision(FChunkInfo &ChunkInfo, float DistanceSq) const
-{
-    if (ChunkInfo.ActiveChunk)
-    {
-        const float CollisionDistSq = CollisionDistance * CollisionDistance;
-        const bool bShouldCollide = (DistanceSq < CollisionDistSq) && bEnableCollision;
-        ChunkInfo.ActiveChunk->SetCollisionEnabled(bShouldCollide);
-    }
-}
-
-
-void APlanet::ProcessSpawnQueue()
-{
-    // Spawn new chunk actors if we have capacity in the async pipeline
-    int32 SpawnedThisFrame = 0;
-    const FVector PlanetCenterWorld = GetActorLocation();
-
-    while (ChunkSpawnQueue.Num() > 0 && ActiveGenerationTasks < MaxConcurrentChunkGenerations && SpawnedThisFrame < ChunksToSpawnPerFrame)
-    {
-        // Get index of the chunk to spawn
-        int32 ChunkIndex = ChunkSpawnQueue.Pop(false);
-
-        // Calculate RenderDistSq locally
-        float CurrentRenderDistSq = RenderDistance * RenderDistance;
-        FVector ObserverPos = GetObserverPosition();
-
-        // Safety check
-        if (!ChunkInfos.IsValidIndex(ChunkIndex))
-            continue;
-
-        FChunkInfo &Info = ChunkInfos[ChunkIndex];
-        Info.bPendingSpawn = false;  // No longer pending
-
-        FVector ChunkWorldLocation = GetActorTransform().TransformPosition(Info.LocalLocation);
-
-        // Double check distance before spawning (in case player moved fast)
-        if (FVector::DistSquared(ChunkWorldLocation, ObserverPos) > CurrentRenderDistSq)
-            continue;
-
-        // If already exists (rare edge case), skip
-        if (Info.ActiveChunk != nullptr)
-            continue;
-
-        // Calculate correct World Transform for spawning
-        FTransform SpawnTransform = Info.Transform * GetActorTransform();
-
-        AVoxelChunk *Chunk = GetWorld()->SpawnActorDeferred<AVoxelChunk>(AVoxelChunk::StaticClass(), SpawnTransform, this);
-        if (Chunk)
-        {
-            Chunk->SetParentPlanet(this);
-
-            // Set chunk parameters BEFORE finishing spawn.
-            int32 TargetRes = LODSettings[Info.LODLevel].VoxelResolution;
-
-            // Calculate compensated size so the chunk fills the same physical volume
-            float TargetSize = (VoxelResolution * VoxelSize) / (float)FMath::Max(1, TargetRes);
-
-            Chunk->CurrentLOD = Info.LODLevel;
-            Chunk->VoxelResolution = TargetRes;
-            Chunk->VoxelSize = TargetSize;
-            Chunk->PlanetRadius = PlanetRadius;
-            Chunk->PlanetCenter = PlanetCenterWorld;
-            Chunk->NoiseAmplitude = NoiseAmplitude;
-            Chunk->NoiseFrequency = NoiseFrequency;
-            Chunk->NoiseOctaves = NoiseOctaves;
-            Chunk->NoiseLacunarity = NoiseLacunarity;
-            Chunk->NoisePersistence = NoisePersistence;
-            Chunk->Seed = Seed;
-            Chunk->bEnableCollision = bEnableCollision;
-            Chunk->FaceNormal = Info.FaceNormal;
-            Chunk->FaceRight = Info.FaceRight;
-            Chunk->FaceUp = Info.FaceUp;
-            Chunk->ChunkUVMin = Info.UVMin;
-            Chunk->ChunkUVMax = Info.UVMax;
-            Chunk->ProceduralMesh->SetCastShadow(bCastShadows);
-
-            // Finish spawning. This will call OnConstruction on the chunk.
-            Chunk->FinishSpawning(SpawnTransform);
-
-            Chunk->AttachToActor(this, FAttachmentTransformRules::KeepWorldTransform);
-            Chunk->SetOwner(this);
-
-            // Trigger the async generation and track it.
-            Chunk->GenerateChunkAsync();
-            ActiveGenerationTasks++;
-
-            // Link back to our info struct
-            Info.ActiveChunk = Chunk;
-        }
-        SpawnedThisFrame++;
-    }
-}
-
-void APlanet::ProcessMeshUpdateQueue()
-{
-    // Process a limited number of finished chunks per frame to upload their mesh to the GPU
-    int32 ProcessedCount = 0;
-    while (MeshUpdateQueue.Num() > 0 && ProcessedCount < ChunksMeshUpdatesPerFrame)
-    {
-        AVoxelChunk *Chunk = MeshUpdateQueue.Pop(false);  // Use FIFO for better visual progression
-        if (Chunk && IsValid(Chunk) && !Chunk->IsPendingKill())
-        {
-            Chunk->UploadMesh(DebugMaterial);
-        }
-        ProcessedCount++;
-    }
 }
 
 
 bool APlanet::ShouldTickIfViewportsOnly() const { return true; }
 
 
-void APlanet::OnChunkGenerationFinished(AVoxelChunk *Chunk)
-{
-    // Decrement counter even if chunk is invalid
-    if (ActiveGenerationTasks > 0)
-    {
-        ActiveGenerationTasks--;
-    }
-
-    // Only queue valid chunks
-    if (Chunk && IsValid(Chunk) && !Chunk->IsPendingKill())
-    {
-        MeshUpdateQueue.Add(Chunk);
-    }
-}
-
-
-int32 APlanet::CalculateAutoChunksPerFace() const
-{
-    // If auto-sizing is disabled, return the manual setting
-    if (!bAutoChunkSizing)
-    {
-        return ChunksPerFace;
-    }
-
-    // 1. Face Width (Arc Length)
-    // With Projected Grid Mapping, we can use the average arc length (HALF_PI)
-    // because the chunks warp to fill the gaps.
-    float FaceArcLength = PlanetRadius * HALF_PI;
-
-    // 2. Chunk Size
-    // Calculate chunk physical size based on voxel settings
-    float ChunkPhysicalSize = VoxelResolution * VoxelSize;
-
-    // 3. Final Calculation
-    // We no longer need massive overlap factors.
-    float NeededChunks = (FaceArcLength / ChunkPhysicalSize) * ChunkDensityFactor;
-
-    // Round up to ensure coverage, then clamp
-    int32 CalculatedChunks = FMath::CeilToInt(NeededChunks);
-    CalculatedChunks = FMath::Clamp(CalculatedChunks, MinChunksPerFace, MaxChunksPerFace);
-
-    // Ensure it's at least 1 and a reasonable value
-    return FMath::Max(1, CalculatedChunks);
-}
-
-
 void APlanet::Destroyed()
 {
     Super::Destroyed();
 
-    // Ensure all generated chunks are destroyed with the planet
-    ClearAllChunks();
-}
-
-
-void APlanet::ClearAllChunks()
-{
-    // Stop any generation in progress
-    ChunkSpawnQueue.Empty();
-    MeshUpdateQueue.Empty();
-    ActiveGenerationTasks = 0;
-
-    // Destroy auto-created far model if it exists
-    if (bIsFarModelAutoCreated && FarPlanetModel && IsValid(FarPlanetModel))
-    {
-        FarPlanetModel->Destroy();
-        FarPlanetModel = nullptr;
-        bIsFarModelAutoCreated = false;
-    }
-
-    // Destroy all tracked chunks
-    for (FChunkInfo &Info : ChunkInfos)
-    {
-        if (Info.ActiveChunk && IsValid(Info.ActiveChunk))
-        {
-            Info.ActiveChunk->Destroy();
-        }
-        Info.ActiveChunk = nullptr;
-        Info.bPendingSpawn = false;
-    }
-    ChunkInfos.Empty();
-
-    // Fallback for any other attached chunks that might not have been in the VoxelChunks array
-    // (e.g., during a partial generation).
-    TArray<AActor *> AttachedActors;
-    GetAttachedActors(AttachedActors);
-    for (AActor *Child : AttachedActors)
-    {
-        if (Child && Child->IsA(AVoxelChunk::StaticClass()))
-        {
-            Child->Destroy();
-        }
-    }
-}
-
-
-void APlanet::GeneratePlanet()
-{
-    // This is the new public-facing function to start generation.
-    PrepareGeneration();
-}
-
-
-void APlanet::GenerateSeedBasedPlanet()
-{
-    // Use the seed to generate a random radius
-    FRandomStream randStream(Seed);
-
-    // Set radius based on seed, with a max of 250,000 as requested.
-    // Using a reasonable minimum to avoid tiny planets.
-    PlanetRadius = randStream.RandRange(2000, 250000);
-
-    UE_LOG(LogTemp, Log, TEXT("Seed %d: Generated new PlanetRadius: %.2f"), Seed, PlanetRadius);
-
-    // The rest of the generation logic will adapt to the new radius.
-    PrepareGeneration();
+    // Chunk manager shall handle chunk clearing.
 }
 
 
@@ -525,8 +137,6 @@ void APlanet::initPlanet()
     }
 
     // --- STEP 2: Calculate "Auto" Settings (Configuration) ---
-    // This replicates the "Adaptive" logic from PrepareGeneration.
-    // We calculate these LOCAL variables to fill the config struct.
     int32 FinalChunksPerFace = ChunksPerFace;
     float FinalVoxelSize = VoxelSize;
     int32 FinalResolution = VoxelResolution;
@@ -587,7 +197,7 @@ void APlanet::initPlanet()
     NoiseProvider = MakeUnique<SimpleNoise>();
 
     // Create Generator
-    DensityGenerator::DensityConfig DenConfig;
+    DensityConfig DenConfig;
     DenConfig.PlanetRadius = PlanetRadius;
     DenConfig.Seed = Seed;
     DenConfig.VoxelSize = FinalVoxelSize;
@@ -599,178 +209,6 @@ void APlanet::initPlanet()
     // Finally, spawn the Manager
     ChunkManager = MakeUnique<FChunkManager>(ManagerConfig, Generator.Get());
     ChunkManager->Initialize(this, DebugMaterial);  // Pass context for rendering
-}
-
-
-void APlanet::PrepareGeneration()
-{
-    // 1. Clean up any previous state and stop ongoing generation.
-    ClearAllChunks();
-    if (!GetWorld())
-    {
-        return;
-    }
-
-    // 2. Auto-create or update FarPlanetModel
-    if (!FarPlanetModel)
-    {
-        CreateFarModel();
-    }
-    else if (bIsFarModelAutoCreated)
-    {
-        // If it was auto-created, update its scale in case the radius changed.
-        // The default sphere has a diameter of 100 units (radius 50).
-        float SphereScale = PlanetRadius / 50.0f;
-        FarPlanetModel->SetActorScale3D(FVector(SphereScale));
-        // Also update material in case it changed
-        if (AStaticMeshActor *SMA = Cast<AStaticMeshActor>(FarPlanetModel))
-        {
-            SMA->GetStaticMeshComponent()->SetMaterial(0, DebugMaterial);
-        }
-    }
-
-    // Define 6 cube faces
-    struct FaceInfo
-    {
-            FVector Normal;  // Points outward from cube center
-            FVector Right;   // Tangent direction 1
-            FVector Up;      // Tangent direction 2
-    };
-
-    // Each face positioned along one axis, with proper right/up vectors
-    FaceInfo Faces[6] = {// +X face (Right) - looking at +X, Y goes right, Z goes up
-                         {FVector(1, 0, 0), FVector(0, 1, 0), FVector(0, 0, 1)},
-                         // -X face (Left) - looking at -X, Y goes left, Z goes up
-                         {FVector(-1, 0, 0), FVector(0, -1, 0), FVector(0, 0, 1)},
-                         // +Y face (Forward) - looking at +Y, X goes left, Z goes up
-                         {FVector(0, 1, 0), FVector(-1, 0, 0), FVector(0, 0, 1)},
-                         // -Y face (Back) - looking at -Y, X goes right, Z goes up
-                         {FVector(0, -1, 0), FVector(1, 0, 0), FVector(0, 0, 1)},
-                         // +Z face (Top) - looking at +Z (down), X goes right, Y goes forward
-                         {FVector(0, 0, 1), FVector(1, 0, 0), FVector(0, 1, 0)},
-                         // -Z face (Bottom) - looking at -Z (up), X goes right, Y goes back
-                         {FVector(0, 0, -1), FVector(1, 0, 0), FVector(0, -1, 0)}};
-
-    // Adaptive voxel logic
-    if (bAutoChunkSizing)
-    {
-        // 1. Adapt Voxel Size: Maintain relative smoothness (Radius ~ 150x VoxelSize)
-        // This prevents "blocky" small planets and "noisy" large planets.
-        float TargetVoxelSize = PlanetRadius / 150.0f;
-        VoxelSize = FMath::Clamp(TargetVoxelSize, 25.0f, 400.0f);
-
-        // 2. Adapt Resolution:
-        // 32 is the sweet spot for Marching Cubes.
-        // We drop to 16 only for very small planets to save performance.
-        VoxelResolution = (PlanetRadius < 3000.0f) ? 16 : 32;
-        // LowResVoxelResolution is now handled by the LODSettings array
-    }
-
-    // Adaptive chunks per face logic
-    if (bAutoChunkSizing)
-    {
-        // Calculate required chunks to cover the face center (worst case spacing)
-        // With projection, we fit to the arc length.
-        float RequiredCoverage = PlanetRadius * HALF_PI;
-        float ChunkPhysicalWidth = VoxelResolution * VoxelSize;
-
-        int32 NeededChunks = FMath::CeilToInt(RequiredCoverage / ChunkPhysicalWidth);
-
-        ChunksPerFace = FMath::Clamp(NeededChunks, MinChunksPerFace, MaxChunksPerFace);
-
-        // If we are capped by MaxChunksPerFace, we MUST increase VoxelSize to bridge the gap
-        if (NeededChunks > MaxChunksPerFace)
-        {
-            // Back-calculate VoxelSize: ChunksPerFace * Res * NewVoxelSize = RequiredCoverage
-            VoxelSize = RequiredCoverage / (ChunksPerFace * VoxelResolution);
-            UE_LOG(LogTemp, Warning, TEXT("Planet too large for MaxChunksPerFace! Increased VoxelSize to %.2f to ensure coverage."), VoxelSize);
-        }
-    }
-
-    // Adaptive LOD & Render Distance
-    // This fixes the issue where LOD rings didn't scale with the planet.
-    if (bAutoLOD)
-    {
-        // Scale RenderDistance with PlanetRadius, clamped to reasonable limits.
-        // Small planets (10km) -> RenderDist ~30km. Large planets (1000km) -> RenderDist ~250km.
-        RenderDistance = FMath::Clamp(PlanetRadius * 3.0f, 30000.0f, 250000.0f);
-
-        LODSettings.Empty();
-
-        // LOD 0: Ultra-high detail for on-foot gameplay. Fixed short distance, double the base resolution.
-        // This resolution is high (e.g., 64^3), so keep the distance small to manage performance.
-        LODSettings.Add({5000.0f, VoxelResolution * 2});
-
-        // LOD 1 - Close range (15% of view) - Uses base VoxelResolution
-        LODSettings.Add({RenderDistance * 0.15f, VoxelResolution});
-
-        // LOD 2 - Mid range (40% of view) - Half resolution
-        LODSettings.Add({RenderDistance * 0.40f, FMath::Max(8, VoxelResolution / 2)});
-
-        // LOD 3 - Far range (100% of view) - Quarter resolution
-        // We extend slightly beyond 1.0 to ensure chunks don't flicker at the boundary
-        LODSettings.Add({RenderDistance * 1.05f, FMath::Max(4, VoxelResolution / 4)});
-    }
-
-    // Grid spans the face - normalized from -1 to +1
-    float GridStep = 2.0f / ChunksPerFace;
-
-    // For each cube face
-    for (int faceIdx = 0; faceIdx < 6; faceIdx++)
-    {
-        FaceInfo face = Faces[faceIdx];
-
-        // For each chunk in the face grid
-        for (int gridY = 0; gridY < ChunksPerFace; gridY++)
-        {
-            for (int gridX = 0; gridX < ChunksPerFace; gridX++)
-            {
-                // Normalized position on face: -1 to +1, centered in each grid cell
-                float uCenter = -1.0f + (gridX + 0.5f) * GridStep;
-                float vCenter = -1.0f + (gridY + 0.5f) * GridStep;
-
-                // Calculate Bounds for Projection
-                float uMin = -1.0f + gridX * GridStep;
-                float uMax = uMin + GridStep;
-                float vMin = -1.0f + gridY * GridStep;
-                float vMax = vMin + GridStep;
-
-                // 1. Calculate point on a unit cube face. This point represents the center of the chunk on the cube face.
-                FVector pointOnUnitCube = face.Normal + face.Right * uCenter + face.Up * vCenter;
-
-                // 2. Apply Spherified Cube mapping to distribute chunks evenly on the sphere
-                FVector chunkUpDirection = FMathUtils::CubeToSphere(pointOnUnitCube);
-
-                // 3. Scale by radius to get the chunk's LOCAL position relative to planet center.
-                // We do NOT add PlanetCenterWorld here, keeping it local.
-                FVector chunkLocalPos = chunkUpDirection * PlanetRadius;
-
-                // 4. Determine chunk rotation to align it with the planet's curvature.
-                // We use the face's original orientation vectors to create a stable orientation.
-                FVector chunkRightDirection = FVector::CrossProduct(face.Up, chunkUpDirection).GetSafeNormal();
-                FVector chunkForwardDirection = FVector::CrossProduct(chunkUpDirection, chunkRightDirection);
-                FRotator chunkWorldRot = UKismetMathLibrary::MakeRotationFromAxes(chunkForwardDirection, chunkRightDirection, chunkUpDirection);
-
-                // Create the lightweight chunk info
-                FTransform ChunkTransform(chunkWorldRot, chunkLocalPos);
-
-                FChunkInfo NewChunk;
-                NewChunk.Transform = ChunkTransform;
-                NewChunk.LocalLocation = chunkLocalPos;
-                NewChunk.ActiveChunk = nullptr;
-                NewChunk.bPendingSpawn = false;
-                NewChunk.FaceNormal = face.Normal;
-                NewChunk.FaceRight = face.Right;
-                NewChunk.FaceUp = face.Up;
-                NewChunk.UVMin = FVector2D(uMin, vMin);
-                NewChunk.UVMax = FVector2D(uMax, vMax);
-
-                ChunkInfos.Add(NewChunk);
-            }
-        }
-    }
-
-    UE_LOG(LogTemp, Warning, TEXT("Initialized %d potential chunks for planet radius %.1f"), ChunkInfos.Num(), PlanetRadius);
 }
 
 

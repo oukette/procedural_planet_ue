@@ -67,15 +67,15 @@ void FChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
                 FVector2D UVMax((x + 1) * Step, (y + 1) * Step);
 
                 // Get Face Vectors
-                FVector Normal = FMathUtils::GetFaceNormal(Face);
-                FVector Right = FMathUtils::GetFaceRight(Face);
-                FVector Up = FMathUtils::GetFaceUp(Face);
+                FVector Normal = FMathUtils::getFaceNormal(Face);
+                FVector Right = FMathUtils::getFaceRight(Face);
+                FVector Up = FMathUtils::getFaceUp(Face);
 
                 // Calculate Center Position (LOD 0)
                 FVector2D CenterUV = (UVMin + UVMax) * 0.5f;
                 // Remap 0..1 to -1..1
                 FVector CubePos = Normal + (Right * (CenterUV.X * 2.0f - 1.0f)) + (Up * (CenterUV.Y * 2.0f - 1.0f));
-                FVector SpherePos = FMathUtils::CubeToSphere(CubePos) * Config.PlanetRadius;
+                FVector SpherePos = FMathUtils::projectCubeToSphere(CubePos) * Config.PlanetRadius;
 
                 // Store in Transform
                 Chunk->Transform.Location = SpherePos;
@@ -189,9 +189,9 @@ void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TS
     int32 GridSize = Config.ChunksPerFace;
     float Step = 1.0f / GridSize;
 
-    FVector Normal = FMathUtils::GetFaceNormal(Face);
-    FVector Right = FMathUtils::GetFaceRight(Face);
-    FVector Up = FMathUtils::GetFaceUp(Face);
+    FVector Normal = FMathUtils::getFaceNormal(Face);
+    FVector Right = FMathUtils::getFaceRight(Face);
+    FVector Up = FMathUtils::getFaceUp(Face);
 
     for (int32 x = 0; x < GridSize; ++x)
     {
@@ -204,7 +204,7 @@ void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TS
             FVector2D UVMax((x + 1) * Step, (y + 1) * Step);
             FVector2D CenterUV = (UVMin + UVMax) * 0.5f;
             FVector CubePos = Normal + (Right * (CenterUV.X * 2.0f - 1.0f)) + (Up * (CenterUV.Y * 2.0f - 1.0f));
-            FVector WorldPos = FMathUtils::CubeToSphere(CubePos) * Config.PlanetRadius;
+            FVector WorldPos = FMathUtils::projectCubeToSphere(CubePos) * Config.PlanetRadius;
             float DistSq = FVector::DistSquared(Context.ObserverLocation, WorldPos);
 
             // 2. Find current LOD for this grid cell, if any chunk exists
@@ -354,14 +354,14 @@ void FChunkManager::StartAsyncGeneration(const FChunkId &Id)
     FVector2D UVMax((Id.Coords.X + 1) * Step, (Id.Coords.Y + 1) * Step);
 
     uint8 FaceIdx = Id.FaceIndex;
-    FVector FaceNormal = FMathUtils::GetFaceNormal(FaceIdx);
-    FVector FaceRight = FMathUtils::GetFaceRight(FaceIdx);
-    FVector FaceUp = FMathUtils::GetFaceUp(FaceIdx);
+    FVector FaceNormal = FMathUtils::getFaceNormal(FaceIdx);
+    FVector FaceRight = FMathUtils::getFaceRight(FaceIdx);
+    FVector FaceUp = FMathUtils::getFaceUp(FaceIdx);
 
     // Calculate Transform (Relative to Planet Center)
     FVector2D CenterUV = (UVMin + UVMax) * 0.5f;
     FVector CubePos = FaceNormal + (FaceRight * (CenterUV.X * 2.0f - 1.0f)) + (FaceUp * (CenterUV.Y * 2.0f - 1.0f));
-    FVector SphereDir = FMathUtils::CubeToSphere(CubePos);
+    FVector SphereDir = FMathUtils::projectCubeToSphere(CubePos);
     FVector ChunkLocation = SphereDir * Config.PlanetRadius;
 
     // Calculate Rotation (Align Up with Sphere Normal)
