@@ -157,6 +157,127 @@ struct FLODInfo
 };
 
 
+// Planet generation settings.
+USTRUCT(BlueprintType)
+struct FPlanetGenSettings
+{
+        GENERATED_BODY()
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        int32 Seed = 1337;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        float PlanetRadius = 50000.f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        bool bEnableCollision = false;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        bool bCastShadows = false;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        UMaterialInterface *DebugMaterial = nullptr;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        AActor *FarPlanetModel = nullptr;
+};
+
+
+// Planet grid settings.
+USTRUCT(BlueprintType)
+struct FPlanetGridSettings
+{
+        GENERATED_BODY()
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        int32 ChunksPerFace = 16;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        int32 Resolution = 32;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        float VoxelSize = 100.f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        bool bAutoChunkSizing = true;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (EditCondition = "bAutoChunkSizing", ClampMin = "0.1", ClampMax = "10.0"))
+        float ChunkDensityFactor = 1.0f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (EditCondition = "bAutoChunkSizing", ClampMin = "1", ClampMax = "64"))
+        int32 MinChunksPerFace = 1;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (EditCondition = "bAutoChunkSizing", ClampMin = "1", ClampMax = "256"))
+        int32 MaxChunksPerFace = 64;
+};
+
+
+// Planet LOD settings.
+USTRUCT(BlueprintType)
+struct FPlanetLODSettings
+{
+        GENERATED_BODY()
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        bool bAutoLOD = true;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "1000.0"))
+        float RenderDistance = 150000.0f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        TArray<FLODInfo> LODLayers;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "100.0"))
+        float CollisionDistance = 6000.0f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "1.0", ClampMax = "2.0"))
+        float Hysteresis = 1.1f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "1.0", ClampMax = "2.0"))
+        float DespawnHysteresis = 1.1f;
+};
+
+
+// Planet perf settings.
+USTRUCT(BlueprintType)
+struct FPlanetPerformanceSettings
+{
+        GENERATED_BODY()
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "1", ClampMax = "100"))
+        int32 MeshUpdatesPerFrame = 2;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "1", ClampMax = "100"))
+        int32 ChunksToSpawnPerFrame = 8;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "1", ClampMax = "512"))
+        int32 MaxConcurrentGenerations = 32;
+};
+
+
+// Grouped Noise Settings for cleaner propagation
+USTRUCT(BlueprintType)
+struct FNoiseSettings
+{
+        GENERATED_BODY()
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (DisplayName = "Amplitude"))
+        float Amplitude = 500.f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (DisplayName = "Base Frequency"))
+        float Frequency = 0.0003f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (DisplayName = "Octaves", ClampMin = "1", ClampMax = "12"))
+        int32 Octaves = 6;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (DisplayName = "Lacunarity", ClampMin = "1.0"))
+        float Lacunarity = 2.0f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (DisplayName = "Persistence", ClampMin = "0.0", ClampMax = "1.0"))
+        float Persistence = 0.5f;
+};
+
+
 // Static configuration for the planet. Passed to the ChunkManager once at startup.
 USTRUCT(BlueprintType)
 struct FPlanetConfig
@@ -164,32 +285,46 @@ struct FPlanetConfig
         GENERATED_BODY()
 
         // Basic Dimensions
-        double PlanetRadius;
-        int32 ChunksPerFace;  // The grid size (e.g. 16 or 32)
+        float PlanetRadius;
+        int32 ChunksPerFace;  // The chunk grid size/res (e.g. 16 or 32)
 
         // Generation Settings
         int32 Seed;
+        bool bEnableCollision;
+        bool bCastShadows;
+
+        // Voxel Settings (Finalized)
+        float VoxelSize;       // true size of a voxel in the UE world
+        int32 GridResolution;  // resolution of the voxel grid in voxels
 
         // LOD Rules
-        TArray<FLODInfo> LODSettings;
+        TArray<FLODInfo> LODLayers;
+        float CollisionDistance;
         float LODHysteresis;
         float LODDespawnHysteresis;
         float FarDistanceThreshold;  // Distance to switch to Far Model
 
         // Throttling
         int32 MaxConcurrentGenerations;
-        int32 GenerationRate;  // Chunks to start generating per tick
+        int32 ChunkGenerationRate;  // Chunks to start generating per tick
+        int32 MeshUpdatesPerFrame;
 
         // Default Constructor
         FPlanetConfig() :
-            PlanetRadius(50000.0),
+            PlanetRadius(50000.f),
             ChunksPerFace(16),
             Seed(1337),
+            bEnableCollision(false),
+            bCastShadows(false),
+            VoxelSize(100.f),
+            GridResolution(32),
+            CollisionDistance(6000.f),
             LODHysteresis(1.1f),
             LODDespawnHysteresis(1.1f),
             FarDistanceThreshold(200000.0f),
             MaxConcurrentGenerations(32),
-            GenerationRate(8)
+            ChunkGenerationRate(8),
+            MeshUpdatesPerFrame(2)
         {
         }
 };
@@ -198,27 +333,16 @@ struct FPlanetConfig
 // Configuration structure to keep parameters organized
 struct DensityConfig
 {
-        float PlanetRadius;
-        float NoiseAmplitude;
-        float NoiseFrequency;
-        int32 NoiseOctaves;
-        float NoiseLacunarity;
-        float NoisePersistence;
         int32 Seed;
-        float VoxelSize;  // For normalization
+        float PlanetRadius;
+        float VoxelSize;
+        FNoiseSettings Noise;
 
         // Future expansion: biomes, caves, etc.
-        // bool bEnableCaves = false;
-        // float CaveFrequency = 0.01f;
 
         DensityConfig() :
-            PlanetRadius(50000.f),
-            NoiseAmplitude(500.f),
-            NoiseFrequency(0.0003f),
-            NoiseOctaves(6),
-            NoiseLacunarity(2.0f),
-            NoisePersistence(0.5f),
             Seed(1337),
+            PlanetRadius(50000.f),
             VoxelSize(100.f)
         {
         }

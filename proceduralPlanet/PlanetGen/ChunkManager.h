@@ -11,7 +11,7 @@
 class FChunkManager
 {
     public:
-        FChunkManager(const FPlanetConfig &InConfig, const DensityGenerator *InGenerator);
+        FChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen);
         ~FChunkManager();
 
         // Returns the total number of chunks currently tracked
@@ -20,7 +20,7 @@ class FChunkManager
         // Returns the number of chunks that currently have a valid LOD (are visible)
         int32 GetVisibleChunkCount() const;
 
-        // Replaces the loop in your PrepareGeneration()
+        // Initialize the chunk manager for the given planet.
         void Initialize(AActor *Owner, UMaterialInterface *Material);
 
         // Main update loop called by APlanet::Tick

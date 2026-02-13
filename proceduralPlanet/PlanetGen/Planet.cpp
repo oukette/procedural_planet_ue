@@ -1,10 +1,7 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
 #include "Planet.h"
-#include "Math/RandomStream.h"
-#include "Kismet/KismetMathLibrary.h"
 #include "Engine/StaticMeshActor.h"
-#include "Components/StaticMeshComponent.h"
 #include "Engine/Engine.h"
 #include "DrawDebugHelpers.h"
 
@@ -18,42 +15,18 @@ APlanet::APlanet()
     Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
     RootComponent = Root;
 
-    // Defaults
-    Seed = 1337;
-    ChunksPerFace = 1;
-    PlanetRadius = 50000.f;
-    NoiseAmplitude = 500.f;
-    NoiseFrequency = 0.0003f;
-    VoxelResolution = 32;
-    VoxelSize = 100.f;
-    bEnableCollision = false;  // Default to false for performance
-    DebugMaterial = nullptr;
-    bCastShadows = false;  // Default to false for performance
-    ChunksMeshUpdatesPerFrame = 2;
-
     // Default LOD settings. LOD 0 is highest detail, closest.
-    LODSettings.Add({5000.f, 64});   // LOD 0 (New, high detail for close-ups)
-    LODSettings.Add({15000.f, 32});  // LOD 1
-    LODSettings.Add({30000.f, 16});  // LOD 2
-    LODSettings.Add({60000.f, 8});   // LOD 3
-
-    // Far model (impostor) reference
-    FarPlanetModel = nullptr;
-
-    // Staggered generation defaults
-    bGenerateOnBeginPlay = true;
-    ChunksToSpawnPerFrame = 8;
-    MaxConcurrentChunkGenerations = 32;
-    RenderDistance = 150000.0f;
-    CollisionDistance = 8000.0f;
-    bAutoLOD = true;
+    if (LODSettings.LODLayers.Num() == 0)
+    {
+        LODSettings.LODLayers.Add({5000.f, 64});   // LOD 0
+        LODSettings.LODLayers.Add({15000.f, 32});  // LOD 1
+        LODSettings.LODLayers.Add({30000.f, 16});  // LOD 2
+        LODSettings.LODLayers.Add({60000.f, 8});   // LOD 3
+    }
 }
 
 
-void APlanet::OnConstruction(const FTransform &Transform)
-{
-    Super::OnConstruction(Transform);
-}
+void APlanet::OnConstruction(const FTransform &Transform) { Super::OnConstruction(Transform); }
 
 
 void APlanet::BeginPlay()
@@ -63,10 +36,10 @@ void APlanet::BeginPlay()
     {
         // Ensure LOD settings are sorted by distance for the update logic to work correctly.
         // Sort from closest distance (LOD 0) to furthest.
-        LODSettings.Sort([](const FLODInfo &A, const FLODInfo &B) { return A.Distance < B.Distance; });
+        LODSettings.LODLayers.Sort([](const FLODInfo &A, const FLODInfo &B) { return A.Distance < B.Distance; });
 
         // DEBUG
-        DrawDebugSphere(GetWorld(), GetActorLocation(), PlanetRadius, 32, FColor::Red, false, 60.0f, 0, 20.0f);
+        DrawDebugSphere(GetWorld(), GetActorLocation(), GenSettings.PlanetRadius, 32, FColor::Red, false, 60.0f, 0, 20.0f);
 
         initPlanet();
     }
@@ -105,7 +78,7 @@ void APlanet::Tick(float DeltaTime)
     {
         FVector ObserverPos = GetObserverPosition();
         float DistToCenter = FVector::Dist(GetActorLocation(), ObserverPos);
-        float DistToSurface = FMath::Max(0.0f, DistToCenter - PlanetRadius);
+        float DistToSurface = FMath::Max(0.0f, DistToCenter - GenSettings.PlanetRadius);
         GEngine->AddOnScreenDebugMessage(
             101, 0.0f, FColor::Cyan, FString::Printf(TEXT("Dist to Center: %.0f | Dist to Surface: %.0f"), DistToCenter, DistToSurface));
     }
@@ -126,51 +99,51 @@ void APlanet::Destroyed()
 void APlanet::initPlanet()
 {
     // --- STEP 1: Handle Visuals (Far Model) ---
-    if (!FarPlanetModel)
+    if (!GenSettings.FarPlanetModel)
     {
         CreateFarModel();
     }
     // Update Far Model scale if needed (logic from PrepareGeneration)
-    if (FarPlanetModel && bIsFarModelAutoCreated)
+    if (GenSettings.FarPlanetModel && bIsFarModelAutoCreated)
     {
-        FarPlanetModel->SetActorScale3D(FVector(PlanetRadius / 50.0f));
+        GenSettings.FarPlanetModel->SetActorScale3D(FVector(GenSettings.PlanetRadius / 50.0f));
     }
 
     // --- STEP 2: Calculate "Auto" Settings (Configuration) ---
-    int32 FinalChunksPerFace = ChunksPerFace;
-    float FinalVoxelSize = VoxelSize;
-    int32 FinalResolution = VoxelResolution;
+    int32 FinalChunksPerFace = GridSettings.ChunksPerFace;
+    float FinalVoxelSize = GridSettings.VoxelSize;
+    int32 FinalResolution = GridSettings.Resolution;
 
-    if (bAutoChunkSizing)
+    if (GridSettings.bAutoChunkSizing)
     {
         // 2a. Adapt Voxel Size
-        float TargetVoxelSize = PlanetRadius / 150.0f;
+        float TargetVoxelSize = GenSettings.PlanetRadius / 150.0f;
         FinalVoxelSize = FMath::Clamp(TargetVoxelSize, 25.0f, 400.0f);
 
         // 2b. Adapt Resolution
-        FinalResolution = (PlanetRadius < 3000.0f) ? 16 : 32;
+        FinalResolution = (GenSettings.PlanetRadius < 3000.0f) ? 16 : 32;
 
         // 2c. Adapt Chunk Count
-        float RequiredCoverage = PlanetRadius * HALF_PI;
+        float RequiredCoverage = GenSettings.PlanetRadius * HALF_PI;
         float ChunkPhysicalWidth = FinalResolution * FinalVoxelSize;
         int32 NeededChunks = FMath::CeilToInt(RequiredCoverage / ChunkPhysicalWidth);
 
-        FinalChunksPerFace = FMath::Clamp(NeededChunks, MinChunksPerFace, MaxChunksPerFace);
+        FinalChunksPerFace = FMath::Clamp(NeededChunks, GridSettings.MinChunksPerFace, GridSettings.MaxChunksPerFace);
 
         // Compensate VoxelSize if capped
-        if (NeededChunks > MaxChunksPerFace)
+        if (NeededChunks > GridSettings.MaxChunksPerFace)
         {
             FinalVoxelSize = RequiredCoverage / (FinalChunksPerFace * FinalResolution);
         }
     }
 
     // --- STEP 3: Calculate Auto LODs ---
-    TArray<FLODInfo> FinalLODs = LODSettings;
-    float FinalRenderDist = RenderDistance;
+    TArray<FLODInfo> FinalLODs = LODSettings.LODLayers;
+    float FinalRenderDist = LODSettings.RenderDistance;
 
-    if (bAutoLOD)
+    if (LODSettings.bAutoLOD)
     {
-        FinalRenderDist = FMath::Clamp(PlanetRadius * 3.0f, 30000.0f, 250000.0f);
+        FinalRenderDist = FMath::Clamp(GenSettings.PlanetRadius * 3.0f, 30000.0f, 250000.0f);
         FinalLODs.Empty();
 
         // Replicate your AutoLOD logic exactly:
@@ -180,35 +153,38 @@ void APlanet::initPlanet()
         FinalLODs.Add({FinalRenderDist * 1.05f, FMath::Max(4, FinalResolution / 4)});  // LOD 3
     }
 
-    // --- STEP 4: Initialize the Manager with FINALIZED Config ---
-    // Fill the config struct
-    FPlanetConfig ManagerConfig;
-    ManagerConfig.PlanetRadius = PlanetRadius;
-    ManagerConfig.ChunksPerFace = FinalChunksPerFace;  // The calculated value!
-    ManagerConfig.Seed = Seed;
-    ManagerConfig.LODSettings = FinalLODs;  // The calculated LODs!
-    ManagerConfig.FarDistanceThreshold = FinalRenderDist;
-    ManagerConfig.LODHysteresis = LODHysteresisFactor;
-    ManagerConfig.LODDespawnHysteresis = LODDespawnHysteresisFactor;
-    ManagerConfig.MaxConcurrentGenerations = MaxConcurrentChunkGenerations;
-    ManagerConfig.GenerationRate = ChunksToSpawnPerFrame;
+    // Initialize the planet config struct to feed the ChunkManager
+    RuntimeConfig = FPlanetConfig();
+    RuntimeConfig.PlanetRadius = GenSettings.PlanetRadius;
+    RuntimeConfig.ChunksPerFace = FinalChunksPerFace;  // The calculated value!
+    RuntimeConfig.Seed = GenSettings.Seed;
+    RuntimeConfig.bEnableCollision = GenSettings.bEnableCollision;
+    RuntimeConfig.bCastShadows = GenSettings.bCastShadows;
+    RuntimeConfig.VoxelSize = FinalVoxelSize;
+    RuntimeConfig.GridResolution = FinalResolution;
+    RuntimeConfig.LODLayers = FinalLODs;  // The calculated LODs!
+    RuntimeConfig.CollisionDistance = LODSettings.CollisionDistance;
+    RuntimeConfig.FarDistanceThreshold = FinalRenderDist;
+    RuntimeConfig.LODHysteresis = LODSettings.Hysteresis;
+    RuntimeConfig.LODDespawnHysteresis = LODSettings.DespawnHysteresis;
+    RuntimeConfig.MaxConcurrentGenerations = PerformanceSettings.MaxConcurrentGenerations;
+    RuntimeConfig.ChunkGenerationRate = PerformanceSettings.ChunksToSpawnPerFrame;
+    RuntimeConfig.MeshUpdatesPerFrame = PerformanceSettings.MeshUpdatesPerFrame;
 
     // Create Noise Provider
     NoiseProvider = MakeUnique<SimpleNoise>();
 
-    // Create Generator
-    DensityConfig DenConfig;
-    DenConfig.PlanetRadius = PlanetRadius;
-    DenConfig.Seed = Seed;
-    DenConfig.VoxelSize = FinalVoxelSize;
-    DenConfig.NoiseAmplitude = NoiseAmplitude;
-    DenConfig.NoiseFrequency = NoiseFrequency;
+    // Create density config and init the generator
+    DensityConfig densityConfig;
+    densityConfig.PlanetRadius = GenSettings.PlanetRadius;
+    densityConfig.Seed = GenSettings.Seed;
+    densityConfig.VoxelSize = FinalVoxelSize;
+    densityConfig.Noise = NoiseSettings;
+    Generator = MakeUnique<DensityGenerator>(densityConfig, NoiseProvider.Get());
 
-    Generator = MakeUnique<DensityGenerator>(DenConfig, NoiseProvider.Get());
-
-    // Finally, spawn the Manager
-    ChunkManager = MakeUnique<FChunkManager>(ManagerConfig, Generator.Get());
-    ChunkManager->Initialize(this, DebugMaterial);  // Pass context for rendering
+    // Finally, init the ChunkManager
+    ChunkManager = MakeUnique<FChunkManager>(RuntimeConfig, Generator.Get());
+    ChunkManager->Initialize(this, GenSettings.DebugMaterial);  // Pass context for rendering
 }
 
 
@@ -234,11 +210,11 @@ void APlanet::CreateFarModel()
         // 3. Configure the actor
         MeshComponent->SetMobility(EComponentMobility::Movable);
         MeshComponent->SetStaticMesh(SphereMesh);
-        MeshComponent->SetMaterial(0, DebugMaterial);
+        MeshComponent->SetMaterial(0, GenSettings.DebugMaterial);
 
         // The default sphere has a diameter of 100 units (radius 50).
         // We need to scale it to match our PlanetRadius.
-        float SphereScale = PlanetRadius / 50.0f;
+        float SphereScale = GenSettings.PlanetRadius / 50.0f;
         SphereActor->SetActorScale3D(FVector(SphereScale));
 
         // Disable performance-intensive features
@@ -252,7 +228,7 @@ void APlanet::CreateFarModel()
         SphereActor->SetActorHiddenInGame(true);
 
         // 4. Store the reference and set the flag
-        FarPlanetModel = SphereActor;
+        GenSettings.FarPlanetModel = SphereActor;
         bIsFarModelAutoCreated = true;
 
         UE_LOG(LogTemp, Log, TEXT("Automatically created FarPlanetModel for planet."));

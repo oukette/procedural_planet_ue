@@ -4,12 +4,12 @@
 #include "MeshGenerator.h"
 
 
-FChunkManager::FChunkManager(const FPlanetConfig &InConfig, const DensityGenerator *InGenerator) :
-    Config(InConfig),
-    Generator(InGenerator)
+FChunkManager::FChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen) :
+    Config(planetConfig),
+    Generator(densityGen)
 {
     MaxConcurrentGenerations = Config.MaxConcurrentGenerations;
-    GenerationRate = Config.GenerationRate;
+    GenerationRate = Config.ChunkGenerationRate;
     // DEBUG LOG
     UE_LOG(LogTemp, Warning, TEXT("FChunkManager created."));
 }
@@ -209,7 +209,7 @@ void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TS
 
             // 2. Find current LOD for this grid cell, if any chunk exists
             int32 CurrentLOD = -1;
-            for (int32 lod = 0; lod < Config.LODSettings.Num(); ++lod)
+            for (int32 lod = 0; lod < Config.LODLayers.Num(); ++lod)
             {
                 FChunkId testId(Face, lod, Coords);
                 if (Chunks.Contains(testId))
@@ -251,7 +251,7 @@ int32 FChunkManager::CalculateTargetLOD(float DistanceSq, int32 CurrentLOD) cons
         // Check for UPGRADE to a higher-detail LOD (smaller index)
         if (CurrentLOD > 0)
         {
-            const float UpgradeDistSq = FMath::Square(Config.LODSettings[CurrentLOD - 1].Distance);
+            const float UpgradeDistSq = FMath::Square(Config.LODLayers[CurrentLOD - 1].Distance);
             if (DistanceSq < UpgradeDistSq)
             {
                 return CurrentLOD - 1;
@@ -259,9 +259,9 @@ int32 FChunkManager::CalculateTargetLOD(float DistanceSq, int32 CurrentLOD) cons
         }
 
         // Check for DOWNGRADE to a lower-detail LOD (larger index)
-        if (CurrentLOD < Config.LODSettings.Num() - 1)
+        if (CurrentLOD < Config.LODLayers.Num() - 1)
         {
-            const float DowngradeDistSq = FMath::Square(Config.LODSettings[CurrentLOD].Distance * Config.LODHysteresis);
+            const float DowngradeDistSq = FMath::Square(Config.LODLayers[CurrentLOD].Distance * Config.LODHysteresis);
             if (DistanceSq > DowngradeDistSq)
             {
                 return CurrentLOD + 1;
@@ -269,7 +269,7 @@ int32 FChunkManager::CalculateTargetLOD(float DistanceSq, int32 CurrentLOD) cons
         }
 
         // Check for DESPAWN (distance is beyond the largest LOD's range)
-        const float LastLODDist = Config.LODSettings.Last().Distance;
+        const float LastLODDist = Config.LODLayers.Last().Distance;
         const float DespawnDistSq = FMath::Square(LastLODDist * Config.LODDespawnHysteresis);
         if (DistanceSq > DespawnDistSq)
         {
@@ -280,9 +280,9 @@ int32 FChunkManager::CalculateTargetLOD(float DistanceSq, int32 CurrentLOD) cons
     }
 
     // No active chunk, determine if we need to spawn one
-    for (int32 LodIndex = 0; LodIndex < Config.LODSettings.Num(); ++LodIndex)
+    for (int32 LodIndex = 0; LodIndex < Config.LODLayers.Num(); ++LodIndex)
     {
-        float Threshold = Config.LODSettings[LodIndex].Distance;
+        float Threshold = Config.LODLayers[LodIndex].Distance;
 
         // Use squared distance for performance (avoid Sqrt)
         if (DistanceSq < (Threshold * Threshold))
@@ -378,7 +378,7 @@ void FChunkManager::StartAsyncGeneration(const FChunkId &Id)
     }
 
     // LOD Config
-    int32 Resolution = Config.LODSettings[Id.LOD].VoxelResolution;
+    int32 Resolution = Config.LODLayers[Id.LOD].VoxelResolution;
     int32 LODLevel = Id.LOD;
 
     // Copy Generator Config (Thread Safety)

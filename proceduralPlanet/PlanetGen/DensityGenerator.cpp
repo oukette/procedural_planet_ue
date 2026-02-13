@@ -133,11 +133,11 @@ float DensityGenerator::SampleFBM(const FVector &Position) const
     }
 
     float Total = 0.0f;
-    float Frequency = Config.NoiseFrequency;
+    float Frequency = Config.Noise.Frequency;
     float Amplitude = 1.0f;
     float MaxValue = 0.0f;  // Used for normalizing result to [-1, 1]
 
-    for (int32 i = 0; i < Config.NoiseOctaves; i++)
+    for (int32 i = 0; i < Config.Noise.Octaves; i++)
     {
         // OLD CODE:
         // Total += FNoiseUtils::SimplexNoise(Position * Frequency, Config.Seed + i) * Amplitude;
@@ -149,8 +149,8 @@ float DensityGenerator::SampleFBM(const FVector &Position) const
         Total += Signal * Amplitude;
 
         MaxValue += Amplitude;
-        Amplitude *= Config.NoisePersistence;
-        Frequency *= Config.NoiseLacunarity;
+        Amplitude *= Config.Noise.Persistence;
+        Frequency *= Config.Noise.Lacunarity;
     }
 
     // Normalize result to ensure it stays within expected range [-1, 1]
@@ -171,5 +171,5 @@ float DensityGenerator::SampleNoise(const FVector &Position) const
     // 2. The noise value represents a displacement in world units. We scale it by the desired amplitude.
     // 3. We then divide by VoxelSize to convert this world-space displacement into a "density unit"
     //    displacement, which is what Marching Cubes expects to see.
-    return FbmValue * Config.NoiseAmplitude / Config.VoxelSize;
+    return FbmValue * Config.Noise.Amplitude / Config.VoxelSize;
 }
