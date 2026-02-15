@@ -19,6 +19,8 @@ class ChunkRenderer
         // Returns the component to the pool and hides it
         void HideChunk(FChunk *Chunk);
 
+        AActor* GetOwner() const { return OwnerActor; }
+
     private:
         AActor *OwnerActor;
         UMaterialInterface *Material;

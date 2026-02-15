@@ -2,6 +2,7 @@
 #include "Async/Async.h"
 #include "SimpleNoise.h"
 #include "MeshGenerator.h"
+#include "DrawDebugHelpers.h"
 
 
 FChunkManager::FChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen) :
@@ -118,6 +119,12 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 {
     // 1. Check Far Model Condition
     // If we are very far away, we don't want ANY chunks.
+    FVector ObserverLocal = Context.ObserverLocation;
+    if (Renderer && Renderer->GetOwner())
+    {
+        ObserverLocal = Renderer->GetOwner()->GetActorTransform().InverseTransformPosition(Context.ObserverLocation);
+    }
+
     float DistToPlanetSq = Context.ObserverLocation.SizeSquared();
     float FarThresholdSq = FMath::Square(Config.FarDistanceThreshold);
 
@@ -134,12 +141,17 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
     // We use a Set to keep track of what SHOULD exist this frame.
     TSet<FChunkId> RequiredChunks;
 
+    // Pass the LOCAL observer position to UpdateFace
+    FPlanetViewContext LocalContext = Context;
+    LocalContext.ObserverLocation = ObserverLocal;
+
     for (uint8 Face = 0; Face < 6; ++Face)
     {
-        UpdateFace(Face, Context, RequiredChunks);
+        UpdateFace(Face, LocalContext, RequiredChunks);
     }
 
     // 3. Process State Changes
+    TArray<FChunkId> ChunksToRemove;
 
     // A. Remove/Unload chunks that are no longer required
     for (auto &Pair : Chunks)
@@ -156,7 +168,21 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
                 Chunk->State = EChunkState::Unloading;
                 // In Phase 5, this will trigger the Actor to destroy the mesh
             }
+
+            // Garbage Collection: If it's unloaded and not required, we can remove it to save memory
+            // and fix the "Total Chunks" count growing indefinitely.
+            // Only remove if not currently generating (safety)
+            if (Chunk->State == EChunkState::Unloaded && !CurrentlyGenerating.Contains(Id))
+            {
+                ChunksToRemove.Add(Id);
+            }
         }
+    }
+
+    // Execute removal
+    for (const FChunkId &Id : ChunksToRemove)
+    {
+        Chunks.Remove(Id);
     }
 
     // B. Request Generation for new required chunks
@@ -176,8 +202,6 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
             Renderer->RenderChunk(Chunk);
             Chunk->State = EChunkState::Visible;
         }
-
-        // (LOD switching logic will go here in Phase 6)
     }
 
     ProcessQueues();
@@ -187,11 +211,6 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired)
 {
     int32 GridSize = Config.ChunksPerFace;
-    float Step = 1.0f / GridSize;
-
-    FVector Normal = FMathUtils::getFaceNormal(Face);
-    FVector Right = FMathUtils::getFaceRight(Face);
-    FVector Up = FMathUtils::getFaceUp(Face);
 
     for (int32 x = 0; x < GridSize; ++x)
     {
@@ -199,13 +218,11 @@ void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TS
         {
             FIntVector Coords(x, y, 0);
 
-            // 1. Calculate World Position
-            FVector2D UVMin(x * Step, y * Step);
-            FVector2D UVMax((x + 1) * Step, (y + 1) * Step);
-            FVector2D CenterUV = (UVMin + UVMax) * 0.5f;
-            FVector CubePos = Normal + (Right * (CenterUV.X * 2.0f - 1.0f)) + (Up * (CenterUV.Y * 2.0f - 1.0f));
-            FVector WorldPos = FMathUtils::projectCubeToSphere(CubePos) * Config.PlanetRadius;
-            float DistSq = FVector::DistSquared(Context.ObserverLocation, WorldPos);
+            // WorldPos here is actually Planet-Relative Position (0,0,0 is center)
+            FVector PlanetLocalPos = GetChunkCenter(Face, x, y);
+
+            // Context.ObserverLocation is now Local Space (passed from Update)
+            float DistSq = FVector::DistSquared(Context.ObserverLocation, PlanetLocalPos);
 
             // 2. Find current LOD for this grid cell, if any chunk exists
             int32 CurrentLOD = -1;
@@ -233,13 +250,106 @@ void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TS
                 FChunk *Chunk = GetChunk(RequiredId);
                 if (Chunk)
                 {
-                    Chunk->Transform.Location = WorldPos;
-                    Chunk->Transform.FaceNormal = Normal;
+                    Chunk->Transform.Location = PlanetLocalPos;
+                    Chunk->Transform.FaceNormal = FMathUtils::getFaceNormal(Face);
                     Chunk->Transform.Scale = 1.0f;
                 }
             }
         }
     }
+}
+
+
+void FChunkManager::DrawDebugGrid(const UWorld *World) const
+{
+    if (!World)
+        return;
+
+    // Fix: Get Planet Transform to draw grid in correct World Space
+    FTransform PlanetTransform = FTransform::Identity;
+    if (Renderer && Renderer->GetOwner())
+    {
+        PlanetTransform = Renderer->GetOwner()->GetActorTransform();
+    }
+
+    int32 GridSize = Config.ChunksPerFace;
+    float Step = 1.0f / GridSize;
+    // Draw slightly offset to avoid z-fighting with the mesh
+    float Radius = Config.PlanetRadius * 1.002f;
+
+    for (uint8 Face = 0; Face < 6; ++Face)
+    {
+        FVector Normal = FMathUtils::getFaceNormal(Face);
+        FVector Right = FMathUtils::getFaceRight(Face);
+        FVector Up = FMathUtils::getFaceUp(Face);
+
+        for (int32 x = 0; x < GridSize; ++x)
+        {
+            for (int32 y = 0; y < GridSize; ++y)
+            {
+                float UMin = x * Step;
+                float UMax = (x + 1) * Step;
+                float VMin = y * Step;
+                float VMax = (y + 1) * Step;
+
+                auto ToWorld = [&](float U, float V)
+                {
+                    FVector CubePos = Normal + (Right * (U * 2.0f - 1.0f)) + (Up * (V * 2.0f - 1.0f));
+                    FVector SpherePos = FMathUtils::projectCubeToSphere(CubePos) * Radius;
+                    // Apply Planet Transform
+                    return PlanetTransform.TransformPosition(SpherePos);
+                };
+
+                FVector P0 = ToWorld(UMin, VMin);
+                FVector P1 = ToWorld(UMax, VMin);
+                FVector P2 = ToWorld(UMax, VMax);
+                FVector P3 = ToWorld(UMin, VMax);
+
+                DrawDebugLine(World, P0, P1, FColor::Cyan, false, -1.0f, 0, 30.0f);
+                DrawDebugLine(World, P1, P2, FColor::Cyan, false, -1.0f, 0, 30.0f);
+                DrawDebugLine(World, P2, P3, FColor::Cyan, false, -1.0f, 0, 30.0f);
+                DrawDebugLine(World, P3, P0, FColor::Cyan, false, -1.0f, 0, 30.0f);
+            }
+        }
+    }
+}
+
+
+void FChunkManager::DrawDebugChunkBounds(const UWorld *World) const
+{
+    if (!World)
+        return;
+
+    for (const auto &Pair : Chunks)
+    {
+        const FChunk *Chunk = Pair.Value.Get();
+        // Only draw bounds for chunks that have a visible mesh component
+        if (Chunk && Chunk->State == EChunkState::Visible && Chunk->RenderProxy.IsValid())
+        {
+            if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
+            {
+                FBox Box = Comp->Bounds.GetBox();
+                DrawDebugBox(World, Box.GetCenter(), Box.GetExtent(), FColor::Orange, false, -1.0f, 0, 20.0f);
+            }
+        }
+    }
+}
+
+
+FVector FChunkManager::GetChunkCenter(uint8 Face, int32 X, int32 Y) const
+{
+    float Step = 1.0f / Config.ChunksPerFace;
+    FVector2D UVMin(X * Step, Y * Step);
+    FVector2D UVMax((X + 1) * Step, (Y + 1) * Step);
+    FVector2D CenterUV = (UVMin + UVMax) * 0.5f;
+
+    FVector Normal = FMathUtils::getFaceNormal(Face);
+    FVector Right = FMathUtils::getFaceRight(Face);
+    FVector Up = FMathUtils::getFaceUp(Face);
+
+    FVector CubePos = Normal + (Right * (CenterUV.X * 2.0f - 1.0f)) + (Up * (CenterUV.Y * 2.0f - 1.0f));
+
+    return FMathUtils::projectCubeToSphere(CubePos) * Config.PlanetRadius;
 }
 
 
@@ -353,6 +463,10 @@ void FChunkManager::StartAsyncGeneration(const FChunkId &Id)
     FVector2D UVMin(Id.Coords.X * Step, Id.Coords.Y * Step);
     FVector2D UVMax((Id.Coords.X + 1) * Step, (Id.Coords.Y + 1) * Step);
 
+    // Remap UVs (0..1) to Cube Coordinates (-1..1)
+    FVector2D CubeMin = UVMin * 2.0f - 1.0f;
+    FVector2D CubeMax = UVMax * 2.0f - 1.0f;
+
     uint8 FaceIdx = Id.FaceIndex;
     FVector FaceNormal = FMathUtils::getFaceNormal(FaceIdx);
     FVector FaceRight = FMathUtils::getFaceRight(FaceIdx);
@@ -386,10 +500,10 @@ void FChunkManager::StartAsyncGeneration(const FChunkId &Id)
 
     // 3. Launch Async Task
     Async(EAsyncExecution::ThreadPool,
-          [this, Id, GenId, Resolution, FaceNormal, FaceRight, FaceUp, UVMin, UVMax, ChunkTransform, LODLevel, ThreadGen]()
+          [this, Id, GenId, Resolution, FaceNormal, FaceRight, FaceUp, CubeMin, CubeMax, ChunkTransform, LODLevel, ThreadGen]()
           {
               // A. Generate Density
-              GenData GeneratedData = ThreadGen.GenerateDensityField(Resolution, FaceNormal, FaceRight, FaceUp, UVMin, UVMax);
+              GenData GeneratedData = ThreadGen.GenerateDensityField(Resolution, FaceNormal, FaceRight, FaceUp, CubeMin, CubeMax);
 
               // B. Generate Mesh
               // PlanetTransform is Identity because we want vertices relative to Planet Center (0,0,0)

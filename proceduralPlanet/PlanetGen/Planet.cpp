@@ -34,10 +34,6 @@ void APlanet::BeginPlay()
     Super::BeginPlay();
     if (bGenerateOnBeginPlay)
     {
-        // Ensure LOD settings are sorted by distance for the update logic to work correctly.
-        // Sort from closest distance (LOD 0) to furthest.
-        LODSettings.LODLayers.Sort([](const FLODInfo &A, const FLODInfo &B) { return A.Distance < B.Distance; });
-
         // DEBUG
         DrawDebugSphere(GetWorld(), GetActorLocation(), GenSettings.PlanetRadius, 32, FColor::Red, false, 60.0f, 0, 20.0f);
 
@@ -55,11 +51,23 @@ void APlanet::Tick(float DeltaTime)
     Context.ObserverLocation = GetObserverPosition();
     // We don't need to pass static config (LODs, Radius) here anymore,
     // because the Manager already has FPlanetConfig!
+    Context.ViewDistance = LODSettings.RenderDistance;
+    Context.MaxAllowedLOD = LODSettings.LODLayers.Num() - 1;
 
     // 2. Update Manager
     if (ChunkManager.IsValid())
     {
         ChunkManager->Update(Context);
+
+        if (GenSettings.bShowDebugChunkGrid)
+        {
+            ChunkManager->DrawDebugGrid(GetWorld());
+        }
+
+        if (GenSettings.bShowDebugChunkBounds)
+        {
+            ChunkManager->DrawDebugChunkBounds(GetWorld());
+        }
 
         // 3. Debug Output
         if (GEngine)
@@ -69,7 +77,11 @@ void APlanet::Tick(float DeltaTime)
 
             FColor TextColor = (Visible == 0) ? FColor::Red : FColor::Green;
 
-            GEngine->AddOnScreenDebugMessage(10, 0.f, TextColor, FString::Printf(TEXT("Manager: %d Active / %d Total"), Visible, Total));
+            GEngine->AddOnScreenDebugMessage(
+                10,
+                0.f,
+                TextColor,
+                FString::Printf(TEXT("Manager: %d Active / %d Total | Grid: %dx%d"), Visible, Total, RuntimeConfig.ChunksPerFace, RuntimeConfig.ChunksPerFace));
         }
     }
 
@@ -110,48 +122,18 @@ void APlanet::initPlanet()
     }
 
     // --- STEP 2: Calculate "Auto" Settings (Configuration) ---
-    int32 FinalChunksPerFace = GridSettings.ChunksPerFace;
-    float FinalVoxelSize = GridSettings.VoxelSize;
-    int32 FinalResolution = GridSettings.Resolution;
+    int32 FinalChunksPerFace;
+    float FinalVoxelSize;
+    int32 FinalResolution;
 
-    if (GridSettings.bAutoChunkSizing)
-    {
-        // 2a. Adapt Voxel Size
-        float TargetVoxelSize = GenSettings.PlanetRadius / 150.0f;
-        FinalVoxelSize = FMath::Clamp(TargetVoxelSize, 25.0f, 400.0f);
-
-        // 2b. Adapt Resolution
-        FinalResolution = (GenSettings.PlanetRadius < 3000.0f) ? 16 : 32;
-
-        // 2c. Adapt Chunk Count
-        float RequiredCoverage = GenSettings.PlanetRadius * HALF_PI;
-        float ChunkPhysicalWidth = FinalResolution * FinalVoxelSize;
-        int32 NeededChunks = FMath::CeilToInt(RequiredCoverage / ChunkPhysicalWidth);
-
-        FinalChunksPerFace = FMath::Clamp(NeededChunks, GridSettings.MinChunksPerFace, GridSettings.MaxChunksPerFace);
-
-        // Compensate VoxelSize if capped
-        if (NeededChunks > GridSettings.MaxChunksPerFace)
-        {
-            FinalVoxelSize = RequiredCoverage / (FinalChunksPerFace * FinalResolution);
-        }
-    }
+    CalculateAutoGrid(FinalChunksPerFace, FinalVoxelSize, FinalResolution);
 
     // --- STEP 3: Calculate Auto LODs ---
-    TArray<FLODInfo> FinalLODs = LODSettings.LODLayers;
-    float FinalRenderDist = LODSettings.RenderDistance;
+    TArray<FLODInfo> FinalLODs;
+    // Calculate the physical arc length of a single chunk (Face Arc / Count)
+    float ChunkArcLength = (GenSettings.PlanetRadius * HALF_PI) / FinalChunksPerFace;
 
-    if (LODSettings.bAutoLOD)
-    {
-        FinalRenderDist = FMath::Clamp(GenSettings.PlanetRadius * 3.0f, 30000.0f, 250000.0f);
-        FinalLODs.Empty();
-
-        // Replicate your AutoLOD logic exactly:
-        FinalLODs.Add({5000.0f, FinalResolution * 2});                                 // LOD 0
-        FinalLODs.Add({FinalRenderDist * 0.15f, FinalResolution});                     // LOD 1
-        FinalLODs.Add({FinalRenderDist * 0.40f, FMath::Max(8, FinalResolution / 2)});  // LOD 2
-        FinalLODs.Add({FinalRenderDist * 1.05f, FMath::Max(4, FinalResolution / 4)});  // LOD 3
-    }
+    CalculateAutoLODs(FinalLODs, ChunkArcLength);
 
     // Initialize the planet config struct to feed the ChunkManager
     RuntimeConfig = FPlanetConfig();
@@ -164,7 +146,7 @@ void APlanet::initPlanet()
     RuntimeConfig.GridResolution = FinalResolution;
     RuntimeConfig.LODLayers = FinalLODs;  // The calculated LODs!
     RuntimeConfig.CollisionDistance = LODSettings.CollisionDistance;
-    RuntimeConfig.FarDistanceThreshold = FinalRenderDist;
+    RuntimeConfig.FarDistanceThreshold = LODSettings.RenderDistance;
     RuntimeConfig.LODHysteresis = LODSettings.Hysteresis;
     RuntimeConfig.LODDespawnHysteresis = LODSettings.DespawnHysteresis;
     RuntimeConfig.MaxConcurrentGenerations = PerformanceSettings.MaxConcurrentGenerations;
@@ -185,6 +167,68 @@ void APlanet::initPlanet()
     // Finally, init the ChunkManager
     ChunkManager = MakeUnique<FChunkManager>(RuntimeConfig, Generator.Get());
     ChunkManager->Initialize(this, GenSettings.DebugMaterial);  // Pass context for rendering
+}
+
+
+void APlanet::CalculateAutoGrid(int32 &OutChunksPerFace, float &OutVoxelSize, int32 &OutResolution) const
+{
+    // Default to settings
+    OutResolution = FMath::Max(4, GridSettings.Resolution);
+
+    // 1. Calculate the arc length of a face (90 degrees)
+    const float FaceArcLength = GenSettings.PlanetRadius * HALF_PI;
+
+    if (GridSettings.bAutoChunkSizing)
+    {
+        // 2. Determine chunk count based on a target physical size.
+        // We aim for chunks to be roughly 4000 units wide to balance draw calls vs culling.
+        // This ensures we don't have too many chunks on small planets, and chunks aren't too small.
+        const float TargetChunkSize = 4000.0f;
+
+        int32 RawCount = FMath::RoundToInt(FaceArcLength / TargetChunkSize);
+
+        // 3. Clamp count to user settings
+        OutChunksPerFace = FMath::Clamp(RawCount, GridSettings.MinChunksPerFace, GridSettings.MaxChunksPerFace);
+    }
+    else
+    {
+        OutChunksPerFace = GridSettings.ChunksPerFace;
+    }
+
+    // 4. CRITICAL: Recalculate VoxelSize to ensure the grid perfectly covers the face arc.
+    // FaceArcLength = Chunks * (Resolution * VoxelSize)
+    OutVoxelSize = FaceArcLength / (OutChunksPerFace * OutResolution);
+}
+
+
+void APlanet::CalculateAutoLODs(TArray<FLODInfo> &OutLODs, float ChunkArcLength) const
+{
+    OutLODs.Empty();
+
+    if (LODSettings.bAutoLOD)
+    {
+        int32 BaseRes = GridSettings.Resolution;
+
+        // Define distance thresholds relative to chunk size.
+        // This ensures that as chunks get bigger (bigger planet), the LOD transitions push out.
+        float D0 = ChunkArcLength * 1.25f;
+        float D1 = ChunkArcLength * 2.5f;
+        float D2 = ChunkArcLength * 5.0f;
+
+        // The last LOD should extend to the render distance
+        float D3 = FMath::Max(ChunkArcLength * 10.0f, LODSettings.RenderDistance);
+
+        OutLODs.Add({D0, BaseRes});
+        OutLODs.Add({D1, FMath::Max(4, BaseRes / 2)});
+        OutLODs.Add({D2, FMath::Max(4, BaseRes / 4)});
+        OutLODs.Add({D3, FMath::Max(4, BaseRes / 8)});
+    }
+    else
+    {
+        OutLODs = LODSettings.LODLayers;
+        // Ensure sorted
+        OutLODs.Sort([](const FLODInfo &A, const FLODInfo &B) { return A.Distance < B.Distance; });
+    }
 }
 
 

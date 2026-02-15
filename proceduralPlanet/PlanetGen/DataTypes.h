@@ -167,7 +167,7 @@ struct FPlanetGenSettings
         int32 Seed = 1337;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-        float PlanetRadius = 50000.f;
+        float PlanetRadius = 10000.f;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         bool bEnableCollision = false;
@@ -180,6 +180,12 @@ struct FPlanetGenSettings
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         AActor *FarPlanetModel = nullptr;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        bool bShowDebugChunkGrid = false;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        bool bShowDebugChunkBounds = false;
 };
 
 
@@ -311,7 +317,7 @@ struct FPlanetConfig
 
         // Default Constructor
         FPlanetConfig() :
-            PlanetRadius(50000.f),
+            PlanetRadius(10000.f),
             ChunksPerFace(16),
             Seed(1337),
             bEnableCollision(false),
@@ -342,7 +348,7 @@ struct DensityConfig
 
         DensityConfig() :
             Seed(1337),
-            PlanetRadius(50000.f),
+            PlanetRadius(10000.f),
             VoxelSize(100.f)
         {
         }

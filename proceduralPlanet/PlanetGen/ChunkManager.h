@@ -26,6 +26,12 @@ class FChunkManager
         // Main update loop called by APlanet::Tick
         void Update(const FPlanetViewContext &Context);
 
+        // Debug: Draws the logical grid boundaries on the sphere
+        void DrawDebugGrid(const UWorld *World) const;
+
+        // Debug: Draws the bounding box of the actual generated meshes
+        void DrawDebugChunkBounds(const UWorld *World) const;
+
 
     private:
         FPlanetConfig Config;
@@ -46,6 +52,9 @@ class FChunkManager
 
         // Loop (Replaces UpdateAllChunksLOD)
         void UpdateFace(uint8 Face, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired);
+
+        // Helper to calculate the world position of a chunk center
+        FVector GetChunkCenter(uint8 Face, int32 X, int32 Y) const;
 
         // Math (Replaces DetermineTargetLOD)
         int32 CalculateTargetLOD(float DistanceSq, int32 CurrentLOD) const;

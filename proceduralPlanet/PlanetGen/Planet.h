@@ -38,6 +38,12 @@ class PROCEDURALPLANET_API APlanet : public AActor
         // Creates the planet far model for optimized rendering in far distance.
         void CreateFarModel();
 
+        // Calculates the optimal grid size (ChunksPerFace) and VoxelSize based on Planet Radius.
+        void CalculateAutoGrid(int32& OutChunksPerFace, float& OutVoxelSize, int32& OutResolution) const;
+
+        // Calculates LOD distances based on the physical size of a chunk.
+        void CalculateAutoLODs(TArray<FLODInfo>& OutLODs, float ChunkArcLength) const;
+
     public:
         APlanet();
         virtual void BeginPlay() override;
