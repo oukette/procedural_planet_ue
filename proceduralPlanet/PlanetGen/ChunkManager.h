@@ -56,6 +56,9 @@ class FChunkManager
         // Helper to calculate the world position of a chunk center
         FVector GetChunkCenter(uint8 Face, int32 X, int32 Y) const;
 
+        // Helper to find which chunk contains a specific local position
+        FChunkId GetChunkIdAt(const FVector& LocalPosition) const;
+
         // Math (Replaces DetermineTargetLOD)
         int32 CalculateTargetLOD(float DistanceSq, int32 CurrentLOD) const;
 

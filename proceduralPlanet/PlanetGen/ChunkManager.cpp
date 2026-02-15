@@ -28,9 +28,7 @@ int32 FChunkManager::GetVisibleChunkCount() const
     int32 Count = 0;
     for (const auto &Pair : Chunks)
     {
-        // A chunk is "Visible" if the Update loop gave it a valid LOD
-        // OR if its state implies it's currently doing something.
-        // For the current Step 4.2 logic, checking the ID's LOD is the best indicator.
+        // A chunk is "Visible" if the Update loop gave it a valid LOD OR if its state implies it's currently doing something.
         if (Pair.Key.LOD != -1 && Pair.Value->State != EChunkState::Unloaded)
         {
             Count++;
@@ -44,7 +42,6 @@ void FChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
 {
     Renderer = MakeUnique<ChunkRenderer>(Owner, Material);
 
-    // Replicates the nested loops from APlanet::PrepareGeneration
     int32 ChunksPerFace = Config.ChunksPerFace;
 
     for (uint8 Face = 0; Face < 6; Face++)
@@ -120,35 +117,56 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
     // 1. Check Far Model Condition
     // If we are very far away, we don't want ANY chunks.
     FVector ObserverLocal = Context.ObserverLocation;
+    FVector ObserverForwardLocal = Context.ObserverForward;
+
     if (Renderer && Renderer->GetOwner())
     {
-        ObserverLocal = Renderer->GetOwner()->GetActorTransform().InverseTransformPosition(Context.ObserverLocation);
+        FTransform OwnerTM = Renderer->GetOwner()->GetActorTransform();
+        ObserverLocal = OwnerTM.InverseTransformPosition(Context.ObserverLocation);
+        ObserverForwardLocal = OwnerTM.InverseTransformVector(Context.ObserverForward);
     }
 
-    float DistToPlanetSq = Context.ObserverLocation.SizeSquared();
-    float FarThresholdSq = FMath::Square(Config.FarDistanceThreshold);
+    float DistToCenter = ObserverLocal.Size();
+    float DistToSurface = DistToCenter - Config.PlanetRadius;
 
-    if (DistToPlanetSq > FarThresholdSq)
-    {
-        // We are too far!
-        // We should signal the Actor to show the Far Model (we'll do this via a return value or flag later).
-        // For now, let's just ensure no chunks are marked as 'Required'.
-        // (The cleanup loop below will handle unloading them).
-        return;
-    }
+    // Use RenderDistance as the threshold for switching to Far Model
+    bool bUseFarModel = DistToSurface > Config.FarDistanceThreshold;
 
-    // 2. Iterate Faces to find Required Chunks
     // We use a Set to keep track of what SHOULD exist this frame.
     TSet<FChunkId> RequiredChunks;
 
-    // Pass the LOCAL observer position to UpdateFace
-    FPlanetViewContext LocalContext = Context;
-    LocalContext.ObserverLocation = ObserverLocal;
-
-    for (uint8 Face = 0; Face < 6; ++Face)
+    // 2. Determine Required Chunks
+    if (!bUseFarModel)
     {
-        UpdateFace(Face, LocalContext, RequiredChunks);
+        // UNDERGROUND CHECK
+        // If we are significantly below the surface, standard LOD distance logic fails (distance to surface chunks becomes large).
+        // We switch to "Cave Mode": Only load the chunk we are inside.
+        const float UndergroundThreshold = -100.0f;  // 1 meter below "sea level"
+
+        if (DistToSurface < UndergroundThreshold)
+        {
+            // Find the chunk we are currently inside
+            FChunkId CurrentChunk = GetChunkIdAt(ObserverLocal);
+            // Force it to be required at LOD 0
+            RequiredChunks.Add(CurrentChunk);
+
+            // Optional: Add neighbors if we want to see slightly further underground
+        }
+        else
+        {
+            // SURFACE LOGIC
+            // Pass the LOCAL observer position to UpdateFace
+            FPlanetViewContext LocalContext = Context;
+            LocalContext.ObserverLocation = ObserverLocal;
+            LocalContext.ObserverForward = ObserverForwardLocal;
+
+            for (uint8 Face = 0; Face < 6; ++Face)
+            {
+                UpdateFace(Face, LocalContext, RequiredChunks);
+            }
+        }
     }
+    // If bUseFarModel is true, RequiredChunks remains empty, causing the loop below to unload everything.
 
     // 3. Process State Changes
     TArray<FChunkId> ChunksToRemove;
@@ -161,16 +179,14 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 
         if (!RequiredChunks.Contains(Id))
         {
-            // If it was active, mark it for unloading
-            if (Chunk->State != EChunkState::Unloaded)
+            // Immediately mark as Unloaded if we are hiding it.
+            if (Chunk->State == EChunkState::Visible || Chunk->State == EChunkState::Ready)
             {
                 Renderer->HideChunk(Chunk);  // Return component to pool
-                Chunk->State = EChunkState::Unloading;
-                // In Phase 5, this will trigger the Actor to destroy the mesh
+                Chunk->State = EChunkState::Unloaded;
             }
 
-            // Garbage Collection: If it's unloaded and not required, we can remove it to save memory
-            // and fix the "Total Chunks" count growing indefinitely.
+            // Garbage Collection: If it's unloaded and not required, we can remove it to save memory.
             // Only remove if not currently generating (safety)
             if (Chunk->State == EChunkState::Unloaded && !CurrentlyGenerating.Contains(Id))
             {
@@ -220,19 +236,40 @@ void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TS
 
             // WorldPos here is actually Planet-Relative Position (0,0,0 is center)
             FVector PlanetLocalPos = GetChunkCenter(Face, x, y);
+            FVector ToChunk = PlanetLocalPos - Context.ObserverLocation;
+            float DistSq = ToChunk.SizeSquared();
 
-            // Context.ObserverLocation is now Local Space (passed from Update)
-            float DistSq = FVector::DistSquared(Context.ObserverLocation, PlanetLocalPos);
+            // 1. Horizon Culling (Backface)
+            // Simple approximation: Dot product of Chunk Normal (Pos normalized) and Vector to Observer
+            // If the chunk is facing away from the observer, cull it.
+            // We use a small tolerance because chunks have height.
+            FVector ChunkNormal = PlanetLocalPos.GetSafeNormal();
+            FVector ToObserverDir = -ToChunk.GetSafeNormal();
+
+            // If Dot < -0.2, it's well over the horizon.
+            if ((ChunkNormal | ToObserverDir) < -0.2f)
+                continue;
+
+            // 2. Frustum Culling
+            // Is the chunk roughly in front of the camera?
+            // Allow 90+ degrees FOV (Dot > 0.0) or even wider to prevent popping at edges.
+            if ((ToChunk.GetSafeNormal() | Context.ObserverForward) < -0.2f)
+                continue;
 
             // 2. Find current LOD for this grid cell, if any chunk exists
             int32 CurrentLOD = -1;
             for (int32 lod = 0; lod < Config.LODLayers.Num(); ++lod)
             {
                 FChunkId testId(Face, lod, Coords);
-                if (Chunks.Contains(testId))
+                // Only consider chunks that are actually valid/visible as the "Current" LOD.
+                // This prevents the system from thinking an "Unloading" chunk is still active, which was blocking the target LOD calculation.
+                if (TUniquePtr<FChunk> *FoundChunk = Chunks.Find(testId))
                 {
-                    CurrentLOD = lod;
-                    break;
+                    if (FoundChunk->Get()->State == EChunkState::Visible || FoundChunk->Get()->State == EChunkState::Ready)
+                    {
+                        CurrentLOD = lod;
+                        break;
+                    }
                 }
             }
 
@@ -245,8 +282,7 @@ void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TS
                 FChunkId RequiredId(Face, TargetLOD, Coords);
                 OutRequired.Add(RequiredId);
 
-                // Ensure the chunk data container exists and has its transform info updated.
-                // This is important for new chunks.
+                // Ensure the chunk data container exists and has its transform info updated. This is important for new chunks.
                 FChunk *Chunk = GetChunk(RequiredId);
                 if (Chunk)
                 {
@@ -265,7 +301,7 @@ void FChunkManager::DrawDebugGrid(const UWorld *World) const
     if (!World)
         return;
 
-    // Fix: Get Planet Transform to draw grid in correct World Space
+    // Get Planet Transform to draw grid in correct World Space
     FTransform PlanetTransform = FTransform::Identity;
     if (Renderer && Renderer->GetOwner())
     {
@@ -353,6 +389,47 @@ FVector FChunkManager::GetChunkCenter(uint8 Face, int32 X, int32 Y) const
 }
 
 
+FChunkId FChunkManager::GetChunkIdAt(const FVector &LocalPosition) const
+{
+    // Inverse of GetChunkCenter logic
+    FVector AbsPos = LocalPosition.GetAbs();
+    float MaxVal = AbsPos.GetMax();
+    uint8 Face = 0;
+
+    // Determine Face
+    if (AbsPos.X == MaxVal)
+        Face = (LocalPosition.X > 0) ? 0 : 1;
+    else if (AbsPos.Y == MaxVal)
+        Face = (LocalPosition.Y > 0) ? 2 : 3;
+    else
+        Face = (LocalPosition.Z > 0) ? 4 : 5;
+
+    // Project to Cube (-1..1)
+    FVector CubePos = LocalPosition / MaxVal;
+
+    // Get Basis Vectors
+    FVector Right = FMathUtils::getFaceRight(Face);
+    FVector Up = FMathUtils::getFaceUp(Face);
+
+    // Project to UV (0..1)
+    // CubePos = Normal + Right*(2u-1) + Up*(2v-1)
+    // Dot(CubePos, Right) = 2u - 1  =>  u = (Dot + 1) / 2
+    float U = (FVector::DotProduct(CubePos, Right) + 1.0f) * 0.5f;
+    float V = (FVector::DotProduct(CubePos, Up) + 1.0f) * 0.5f;
+
+    // Map to Grid Coords
+    int32 X = FMath::FloorToInt(U * Config.ChunksPerFace);
+    int32 Y = FMath::FloorToInt(V * Config.ChunksPerFace);
+
+    // Clamp
+    X = FMath::Clamp(X, 0, Config.ChunksPerFace - 1);
+    Y = FMath::Clamp(Y, 0, Config.ChunksPerFace - 1);
+
+    // Return ID at LOD 0
+    return FChunkId(Face, 0, FIntVector(X, Y, 0));
+}
+
+
 int32 FChunkManager::CalculateTargetLOD(float DistanceSq, int32 CurrentLOD) const
 {
     // If a chunk is already active, use hysteresis to prevent rapid switching
@@ -408,10 +485,8 @@ int32 FChunkManager::CalculateTargetLOD(float DistanceSq, int32 CurrentLOD) cons
 
 void FChunkManager::ProcessQueues()
 {
-    // Phase 5: Handling the Data/Density generation
     ProcessGenerationQueue();
 
-    // Phase 6: (Future) Handling the Mesh/Actor spawning
     // ProcessMeshQueue();
 }
 
@@ -526,6 +601,14 @@ void FChunkManager::OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniq
 
     if (Chunk->GenerationId != GenId)
         return;  // Stale task (Chunk was reset/regenerated)
+
+    // Apply Debug Colors based on LOD
+    if (MeshData && MeshData->Vertices.Num() > 0)
+    {
+        FColor DebugColor = (Id.LOD < LODColorsDebug.Num()) ? LODColorsDebug[Id.LOD] : FColor::White;
+        // Ensure Colors array is sized correctly
+        MeshData->Colors.Init(DebugColor, MeshData->Vertices.Num());
+    }
 
     // Store Data
     Chunk->MeshData = MoveTemp(MeshData);

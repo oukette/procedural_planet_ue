@@ -4,6 +4,7 @@
 #include "Engine/StaticMeshActor.h"
 #include "Engine/Engine.h"
 #include "DrawDebugHelpers.h"
+#include "Kismet/GameplayStatics.h"
 
 
 // Sets default values
@@ -18,10 +19,7 @@ APlanet::APlanet()
     // Default LOD settings. LOD 0 is highest detail, closest.
     if (LODSettings.LODLayers.Num() == 0)
     {
-        LODSettings.LODLayers.Add({5000.f, 64});   // LOD 0
-        LODSettings.LODLayers.Add({15000.f, 32});  // LOD 1
-        LODSettings.LODLayers.Add({30000.f, 16});  // LOD 2
-        LODSettings.LODLayers.Add({60000.f, 8});   // LOD 3
+        LODSettings.LODLayers = FPlanetStatics::GetDefaultLODs();
     }
 }
 
@@ -35,7 +33,8 @@ void APlanet::BeginPlay()
     if (bGenerateOnBeginPlay)
     {
         // DEBUG
-        DrawDebugSphere(GetWorld(), GetActorLocation(), GenSettings.PlanetRadius, 32, FColor::Red, false, 60.0f, 0, 20.0f);
+        if (GenSettings.bShowDebugTrueSphere)
+            DrawDebugSphere(GetWorld(), GetActorLocation(), GenSettings.PlanetRadius, 32, FColor::Red, false, 60.0f, 0, 20.0f);
 
         initPlanet();
     }
@@ -49,8 +48,21 @@ void APlanet::Tick(float DeltaTime)
     // 1. Build View Context
     FPlanetViewContext Context;
     Context.ObserverLocation = GetObserverPosition();
-    // We don't need to pass static config (LODs, Radius) here anymore,
-    // because the Manager already has FPlanetConfig!
+
+    // Get Camera Forward for Frustum Culling
+    Context.ObserverForward = GetActorForwardVector();  // Default fallback
+    if (UWorld *World = GetWorld())
+    {
+        if (APlayerCameraManager *PCM = UGameplayStatics::GetPlayerCameraManager(World, 0))
+        {
+            Context.ObserverForward = PCM->GetCameraRotation().Vector();
+        }
+        else if (World->ViewLocationsRenderedLastFrame.Num() > 0)
+        {
+            // In Editor viewport, we might not have a PCM, but we can assume the camera looks at the planet or disable culling
+        }
+    }
+
     Context.ViewDistance = LODSettings.RenderDistance;
     Context.MaxAllowedLOD = LODSettings.LODLayers.Num() - 1;
 
@@ -85,14 +97,49 @@ void APlanet::Tick(float DeltaTime)
         }
     }
 
-    // Debug : Distance to Center and Surface
+    // 4. Handle Far Model Visibility
+    // We do this here because the Actor owns the FarModel component/actor.
+    if (GenSettings.FarPlanetModel)
+    {
+        float DistToCenter = FVector::Dist(GetActorLocation(), Context.ObserverLocation);
+        float DistToSurface = DistToCenter - GenSettings.PlanetRadius;
+
+        // Hysteresis logic for Far Model
+        // ShowThreshold: Distance to SHOW the far model (getting farther)
+        float ShowThreshold = LODSettings.RenderDistance * FPlanetStatics::FarModelDistanceRatio;
+
+        // HideThreshold: Distance to HIDE the far model (getting closer)
+        // We keep it visible a bit longer to ensure chunks have fully spawned underneath.
+        float HideThreshold = LODSettings.RenderDistance * FPlanetStatics::FarModelHideRatio;
+
+        bool bIsVisible = !GenSettings.FarPlanetModel->IsHidden();
+
+        if (bIsVisible)
+        {
+            // We are in Far Mode. Switch to Near only if we get close enough.
+            if (DistToSurface < HideThreshold)
+            {
+                GenSettings.FarPlanetModel->SetActorHiddenInGame(true);
+            }
+        }
+        else
+        {
+            // We are in Near Mode. Switch to Far only if we get far enough.
+            if (DistToSurface > ShowThreshold)
+            {
+                GenSettings.FarPlanetModel->SetActorHiddenInGame(false);
+            }
+        }
+    }
+
+    // Debug : Distance info
     if (GEngine)
     {
         FVector ObserverPos = GetObserverPosition();
         float DistToCenter = FVector::Dist(GetActorLocation(), ObserverPos);
-        float DistToSurface = FMath::Max(0.0f, DistToCenter - GenSettings.PlanetRadius);
-        GEngine->AddOnScreenDebugMessage(
-            101, 0.0f, FColor::Cyan, FString::Printf(TEXT("Dist to Center: %.0f | Dist to Surface: %.0f"), DistToCenter, DistToSurface));
+        float DistToSurface = DistToCenter - GenSettings.PlanetRadius;
+        FString Status = (DistToSurface < 0) ? TEXT("UNDERGROUND") : TEXT("SURFACE");
+        GEngine->AddOnScreenDebugMessage(101, 0.0f, FColor::Cyan, FString::Printf(TEXT("%s | Alt: %.0f"), *Status, DistToSurface));
     }
 }
 
@@ -110,7 +157,7 @@ void APlanet::Destroyed()
 
 void APlanet::initPlanet()
 {
-    // --- STEP 1: Handle Visuals (Far Model) ---
+    // 1. Handle Visuals (Far Model)
     if (!GenSettings.FarPlanetModel)
     {
         CreateFarModel();
@@ -121,14 +168,14 @@ void APlanet::initPlanet()
         GenSettings.FarPlanetModel->SetActorScale3D(FVector(GenSettings.PlanetRadius / 50.0f));
     }
 
-    // --- STEP 2: Calculate "Auto" Settings (Configuration) ---
+    // 2. Calculate "Auto" Settings (Configuration)
     int32 FinalChunksPerFace;
     float FinalVoxelSize;
     int32 FinalResolution;
 
     CalculateAutoGrid(FinalChunksPerFace, FinalVoxelSize, FinalResolution);
 
-    // --- STEP 3: Calculate Auto LODs ---
+    // 3. Calculate Auto LODs
     TArray<FLODInfo> FinalLODs;
     // Calculate the physical arc length of a single chunk (Face Arc / Count)
     float ChunkArcLength = (GenSettings.PlanetRadius * HALF_PI) / FinalChunksPerFace;
@@ -146,7 +193,13 @@ void APlanet::initPlanet()
     RuntimeConfig.GridResolution = FinalResolution;
     RuntimeConfig.LODLayers = FinalLODs;  // The calculated LODs!
     RuntimeConfig.CollisionDistance = LODSettings.CollisionDistance;
-    RuntimeConfig.FarDistanceThreshold = LODSettings.RenderDistance;
+
+    // Calculate the hard cutoff for the ChunkManager.
+    // We want the manager to keep running until chunks have naturally despawned via LOD hysteresis.
+    // So we set this threshold slightly beyond the max LOD distance * despawn hysteresis.
+    float MaxLODDist = (FinalLODs.Num() > 0) ? FinalLODs.Last().Distance : LODSettings.RenderDistance;
+    RuntimeConfig.FarDistanceThreshold = MaxLODDist * LODSettings.DespawnHysteresis * 1.1f;
+
     RuntimeConfig.LODHysteresis = LODSettings.Hysteresis;
     RuntimeConfig.LODDespawnHysteresis = LODSettings.DespawnHysteresis;
     RuntimeConfig.MaxConcurrentGenerations = PerformanceSettings.MaxConcurrentGenerations;
@@ -196,7 +249,6 @@ void APlanet::CalculateAutoGrid(int32 &OutChunksPerFace, float &OutVoxelSize, in
     }
 
     // 4. CRITICAL: Recalculate VoxelSize to ensure the grid perfectly covers the face arc.
-    // FaceArcLength = Chunks * (Resolution * VoxelSize)
     OutVoxelSize = FaceArcLength / (OutChunksPerFace * OutResolution);
 }
 
@@ -213,7 +265,7 @@ void APlanet::CalculateAutoLODs(TArray<FLODInfo> &OutLODs, float ChunkArcLength)
         // This ensures that as chunks get bigger (bigger planet), the LOD transitions push out.
         float D0 = ChunkArcLength * 1.25f;
         float D1 = ChunkArcLength * 2.5f;
-        float D2 = ChunkArcLength * 5.0f;
+        float D2 = ChunkArcLength * 6.0f;
 
         // The last LOD should extend to the render distance
         float D3 = FMath::Max(ChunkArcLength * 10.0f, LODSettings.RenderDistance);
@@ -226,8 +278,7 @@ void APlanet::CalculateAutoLODs(TArray<FLODInfo> &OutLODs, float ChunkArcLength)
     else
     {
         OutLODs = LODSettings.LODLayers;
-        // Ensure sorted
-        OutLODs.Sort([](const FLODInfo &A, const FLODInfo &B) { return A.Distance < B.Distance; });
+        OutLODs.Sort([](const FLODInfo &A, const FLODInfo &B) { return A.Distance < B.Distance; });  // Sort levels
     }
 }
 
@@ -285,7 +336,7 @@ FVector APlanet::GetObserverPosition() const
     FVector Pos = FVector::ZeroVector;
     if (GetWorld())
     {
-        // This works for both Editor Viewports and Runtime Cameras!
+        // This works for both Editor Viewports and Runtime Cameras
         if (GetWorld()->ViewLocationsRenderedLastFrame.Num() > 0)
         {
             Pos = GetWorld()->ViewLocationsRenderedLastFrame[0];

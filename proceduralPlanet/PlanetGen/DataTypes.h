@@ -134,6 +134,9 @@ struct FPlanetViewContext
         FVector ObserverLocation;
 
         UPROPERTY()
+        FVector ObserverForward;
+
+        UPROPERTY()
         float ViewDistance;
 
         UPROPERTY()
@@ -154,6 +157,31 @@ struct FLODInfo
         // Voxel resolution for chunks at this LOD.
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LOD")
         int32 VoxelResolution = 32;
+};
+
+
+// Global constants for easy tuning and static access
+struct FPlanetStatics
+{
+    // Ratio of RenderDistance where the Far Model takes over.
+    // 1.0 = Exactly at RenderDistance.
+    // 0.9 = Far model appears slightly before chunks disappear (smoother overlap).
+    static constexpr float FarModelDistanceRatio = 1.0f;
+
+    // Ratio of RenderDistance where the Far Model disappears (Getting Closer).
+    // 0.8 = Far model stays visible until we are at 80% of render distance.
+    static constexpr float FarModelHideRatio = 0.8f;
+
+    // Default LOD definitions
+    static TArray<FLODInfo> GetDefaultLODs()
+    {
+        return {
+            {5000.f, 64},   // LOD 0
+            {15000.f, 32},  // LOD 1
+            {30000.f, 16},  // LOD 2
+            {60000.f, 8}    // LOD 3
+        };
+    }
 };
 
 
@@ -180,6 +208,9 @@ struct FPlanetGenSettings
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         AActor *FarPlanetModel = nullptr;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        bool bShowDebugTrueSphere = false;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         bool bShowDebugChunkGrid = false;
@@ -375,3 +406,4 @@ const static TArray<FColor> LODColorsDebug = {
     FColor(0, 255, 128),  // LOD 6 (Spring Green)
     FColor(128, 0, 255)   // LOD 7 (Purple)
 };
+
