@@ -57,6 +57,13 @@ class PROCEDURALPLANET_API APlanet : public AActor
         virtual void Tick(float DeltaTime) override;
         virtual bool ShouldTickIfViewportsOnly() const override;
 
+        // --- Editor Tools ---
+        UFUNCTION(CallInEditor, Category = "Planet|Generation")
+        void GeneratePlanet();
+
+        UFUNCTION(CallInEditor, Category = "Planet|Generation")
+        void ClearPlanet();
+
         // --- Generation Control ---
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Generation")
         bool bGenerateOnBeginPlay = true;

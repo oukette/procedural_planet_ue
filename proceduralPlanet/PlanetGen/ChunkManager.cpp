@@ -220,7 +220,8 @@ void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TS
             // 2. Frustum Culling
             // Is the chunk roughly in front of the camera?
             // Allow 90+ degrees FOV (Dot > 0.0) or even wider to prevent popping at edges.
-            if ((ToChunk.GetSafeNormal() | Context.ObserverForward) < FPlanetStatics::FrustumCullingDot)
+            // If ObserverForward is Zero (Editor Mode), skip this check.
+            if (!Context.ObserverForward.IsZero() && (ToChunk.GetSafeNormal() | Context.ObserverForward) < FPlanetStatics::FrustumCullingDot)
                 continue;
 
             // 2. Find current LOD for this grid cell, if any chunk exists

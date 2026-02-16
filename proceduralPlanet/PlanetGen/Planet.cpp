@@ -5,6 +5,7 @@
 #include "Engine/Engine.h"
 #include "DrawDebugHelpers.h"
 #include "Kismet/GameplayStatics.h"
+#include "ProceduralMeshComponent.h"
 
 
 // Sets default values
@@ -75,6 +76,43 @@ void APlanet::Destroyed()
     Super::Destroyed();
 
     // Chunk manager shall handle chunk clearing.
+}
+
+
+void APlanet::GeneratePlanet()
+{
+    ClearPlanet();
+    initPlanet();
+}
+
+
+void APlanet::ClearPlanet()
+{
+    // 1. Reset Managers (Destroys ChunkManager, Renderer, and Chunks)
+    ChunkManager.Reset();
+    Generator.Reset();
+    NoiseProvider.Reset();
+
+    // 2. Destroy Far Model if we created it
+    if (bIsFarModelAutoCreated && GenSettings.FarPlanetModel)
+    {
+        if (IsValid(GenSettings.FarPlanetModel))
+        {
+            GenSettings.FarPlanetModel->Destroy();
+        }
+        GenSettings.FarPlanetModel = nullptr;
+    }
+    bIsFarModelAutoCreated = false;
+
+    // 3. Clean up any lingering Procedural Mesh Components
+    // (ChunkRenderer might have left them attached to the actor)
+    TArray<UProceduralMeshComponent *> ProcMeshes;
+    GetComponents<UProceduralMeshComponent>(ProcMeshes);
+    for (UProceduralMeshComponent *Comp : ProcMeshes)
+    {
+        if (Comp)
+            Comp->DestroyComponent();
+    }
 }
 
 
@@ -275,16 +313,15 @@ FPlanetViewContext APlanet::BuildViewContext() const
     Context.ObserverLocation = GetObserverPosition();
 
     // Get Camera Forward for Frustum Culling
-    Context.ObserverForward = GetActorForwardVector();  // Default fallback
+    // Default to Zero. If we can't find a camera (e.g. Editor Viewport),
+    // we want to disable frustum culling to avoid "blind spots" caused by using Actor Forward.
+    Context.ObserverForward = FVector::ZeroVector;
+
     if (UWorld *World = GetWorld())
     {
         if (APlayerCameraManager *PCM = UGameplayStatics::GetPlayerCameraManager(World, 0))
         {
             Context.ObserverForward = PCM->GetCameraRotation().Vector();
-        }
-        else if (World->ViewLocationsRenderedLastFrame.Num() > 0)
-        {
-            // In Editor viewport, we might not have a PCM, but we can assume the camera looks at the planet or disable culling
         }
     }
 
