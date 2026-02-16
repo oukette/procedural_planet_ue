@@ -34,7 +34,15 @@ void APlanet::BeginPlay()
     {
         // DEBUG
         if (GenSettings.bShowDebugTrueSphere)
-            DrawDebugSphere(GetWorld(), GetActorLocation(), GenSettings.PlanetRadius, 32, FColor::Red, false, 60.0f, 0, 20.0f);
+            DrawDebugSphere(GetWorld(),
+                            GetActorLocation(),
+                            GenSettings.PlanetRadius,
+                            FPlanetStatics::DebugSphereSegments,
+                            FColor::Red,
+                            false,
+                            FPlanetStatics::DebugSphereLifetime,
+                            0,
+                            FPlanetStatics::DebugSphereThickness);
 
         initPlanet();
     }
@@ -46,101 +54,16 @@ void APlanet::Tick(float DeltaTime)
     Super::Tick(DeltaTime);
 
     // 1. Build View Context
-    FPlanetViewContext Context;
-    Context.ObserverLocation = GetObserverPosition();
-
-    // Get Camera Forward for Frustum Culling
-    Context.ObserverForward = GetActorForwardVector();  // Default fallback
-    if (UWorld *World = GetWorld())
-    {
-        if (APlayerCameraManager *PCM = UGameplayStatics::GetPlayerCameraManager(World, 0))
-        {
-            Context.ObserverForward = PCM->GetCameraRotation().Vector();
-        }
-        else if (World->ViewLocationsRenderedLastFrame.Num() > 0)
-        {
-            // In Editor viewport, we might not have a PCM, but we can assume the camera looks at the planet or disable culling
-        }
-    }
-
-    Context.ViewDistance = LODSettings.RenderDistance;
-    Context.MaxAllowedLOD = LODSettings.LODLayers.Num() - 1;
+    FPlanetViewContext Context = BuildViewContext();
 
     // 2. Update Manager
-    if (ChunkManager.IsValid())
-    {
-        ChunkManager->Update(Context);
+    UpdateChunkManager(Context);
 
-        if (GenSettings.bShowDebugChunkGrid)
-        {
-            ChunkManager->DrawDebugGrid(GetWorld());
-        }
+    // 3. Handle Far Model Visibility
+    UpdateFarModelVisibility(Context);
 
-        if (GenSettings.bShowDebugChunkBounds)
-        {
-            ChunkManager->DrawDebugChunkBounds(GetWorld());
-        }
-
-        // 3. Debug Output
-        if (GEngine)
-        {
-            int32 Total = ChunkManager->GetChunkCount();
-            int32 Visible = ChunkManager->GetVisibleChunkCount();
-
-            FColor TextColor = (Visible == 0) ? FColor::Red : FColor::Green;
-
-            GEngine->AddOnScreenDebugMessage(
-                10,
-                0.f,
-                TextColor,
-                FString::Printf(TEXT("Manager: %d Active / %d Total | Grid: %dx%d"), Visible, Total, RuntimeConfig.ChunksPerFace, RuntimeConfig.ChunksPerFace));
-        }
-    }
-
-    // 4. Handle Far Model Visibility
-    // We do this here because the Actor owns the FarModel component/actor.
-    if (GenSettings.FarPlanetModel)
-    {
-        float DistToCenter = FVector::Dist(GetActorLocation(), Context.ObserverLocation);
-        float DistToSurface = DistToCenter - GenSettings.PlanetRadius;
-
-        // Hysteresis logic for Far Model
-        // ShowThreshold: Distance to SHOW the far model (getting farther)
-        float ShowThreshold = LODSettings.RenderDistance * FPlanetStatics::FarModelDistanceRatio;
-
-        // HideThreshold: Distance to HIDE the far model (getting closer)
-        // We keep it visible a bit longer to ensure chunks have fully spawned underneath.
-        float HideThreshold = LODSettings.RenderDistance * FPlanetStatics::FarModelHideRatio;
-
-        bool bIsVisible = !GenSettings.FarPlanetModel->IsHidden();
-
-        if (bIsVisible)
-        {
-            // We are in Far Mode. Switch to Near only if we get close enough.
-            if (DistToSurface < HideThreshold)
-            {
-                GenSettings.FarPlanetModel->SetActorHiddenInGame(true);
-            }
-        }
-        else
-        {
-            // We are in Near Mode. Switch to Far only if we get far enough.
-            if (DistToSurface > ShowThreshold)
-            {
-                GenSettings.FarPlanetModel->SetActorHiddenInGame(false);
-            }
-        }
-    }
-
-    // Debug : Distance info
-    if (GEngine)
-    {
-        FVector ObserverPos = GetObserverPosition();
-        float DistToCenter = FVector::Dist(GetActorLocation(), ObserverPos);
-        float DistToSurface = DistToCenter - GenSettings.PlanetRadius;
-        FString Status = (DistToSurface < 0) ? TEXT("UNDERGROUND") : TEXT("SURFACE");
-        GEngine->AddOnScreenDebugMessage(101, 0.0f, FColor::Cyan, FString::Printf(TEXT("%s | Alt: %.0f"), *Status, DistToSurface));
-    }
+    // 4. Debug Output
+    DrawDebugInfo(Context);
 }
 
 
@@ -165,7 +88,7 @@ void APlanet::initPlanet()
     // Update Far Model scale if needed (logic from PrepareGeneration)
     if (GenSettings.FarPlanetModel && bIsFarModelAutoCreated)
     {
-        GenSettings.FarPlanetModel->SetActorScale3D(FVector(GenSettings.PlanetRadius / 50.0f));
+        GenSettings.FarPlanetModel->SetActorScale3D(FVector(GenSettings.PlanetRadius / FPlanetStatics::DefaultEngineSphereRadius));
     }
 
     // 2. Calculate "Auto" Settings (Configuration)
@@ -198,7 +121,7 @@ void APlanet::initPlanet()
     // We want the manager to keep running until chunks have naturally despawned via LOD hysteresis.
     // So we set this threshold slightly beyond the max LOD distance * despawn hysteresis.
     float MaxLODDist = (FinalLODs.Num() > 0) ? FinalLODs.Last().Distance : LODSettings.RenderDistance;
-    RuntimeConfig.FarDistanceThreshold = MaxLODDist * LODSettings.DespawnHysteresis * 1.1f;
+    RuntimeConfig.FarDistanceThreshold = MaxLODDist * LODSettings.DespawnHysteresis * FPlanetStatics::FarDistanceSafetyMargin;
 
     RuntimeConfig.LODHysteresis = LODSettings.Hysteresis;
     RuntimeConfig.LODDespawnHysteresis = LODSettings.DespawnHysteresis;
@@ -236,7 +159,7 @@ void APlanet::CalculateAutoGrid(int32 &OutChunksPerFace, float &OutVoxelSize, in
         // 2. Determine chunk count based on a target physical size.
         // We aim for chunks to be roughly 4000 units wide to balance draw calls vs culling.
         // This ensures we don't have too many chunks on small planets, and chunks aren't too small.
-        const float TargetChunkSize = 4000.0f;
+        const float TargetChunkSize = FPlanetStatics::TargetAutoChunkSize;
 
         int32 RawCount = FMath::RoundToInt(FaceArcLength / TargetChunkSize);
 
@@ -263,12 +186,12 @@ void APlanet::CalculateAutoLODs(TArray<FLODInfo> &OutLODs, float ChunkArcLength)
 
         // Define distance thresholds relative to chunk size.
         // This ensures that as chunks get bigger (bigger planet), the LOD transitions push out.
-        float D0 = ChunkArcLength * 1.25f;
-        float D1 = ChunkArcLength * 2.5f;
-        float D2 = ChunkArcLength * 6.0f;
+        float D0 = ChunkArcLength * FPlanetStatics::AutoLOD_Ratio0;
+        float D1 = ChunkArcLength * FPlanetStatics::AutoLOD_Ratio1;
+        float D2 = ChunkArcLength * FPlanetStatics::AutoLOD_Ratio2;
 
         // The last LOD should extend to the render distance
-        float D3 = FMath::Max(ChunkArcLength * 10.0f, LODSettings.RenderDistance);
+        float D3 = FMath::Max(ChunkArcLength * FPlanetStatics::AutoLOD_Ratio3, LODSettings.RenderDistance);
 
         OutLODs.Add({D0, BaseRes});
         OutLODs.Add({D1, FMath::Max(4, BaseRes / 2)});
@@ -309,7 +232,7 @@ void APlanet::CreateFarModel()
 
         // The default sphere has a diameter of 100 units (radius 50).
         // We need to scale it to match our PlanetRadius.
-        float SphereScale = GenSettings.PlanetRadius / 50.0f;
+        float SphereScale = GenSettings.PlanetRadius / FPlanetStatics::DefaultEngineSphereRadius;
         SphereActor->SetActorScale3D(FVector(SphereScale));
 
         // Disable performance-intensive features
@@ -343,4 +266,116 @@ FVector APlanet::GetObserverPosition() const
         }
     }
     return Pos;
+}
+
+
+FPlanetViewContext APlanet::BuildViewContext() const
+{
+    FPlanetViewContext Context;
+    Context.ObserverLocation = GetObserverPosition();
+
+    // Get Camera Forward for Frustum Culling
+    Context.ObserverForward = GetActorForwardVector();  // Default fallback
+    if (UWorld *World = GetWorld())
+    {
+        if (APlayerCameraManager *PCM = UGameplayStatics::GetPlayerCameraManager(World, 0))
+        {
+            Context.ObserverForward = PCM->GetCameraRotation().Vector();
+        }
+        else if (World->ViewLocationsRenderedLastFrame.Num() > 0)
+        {
+            // In Editor viewport, we might not have a PCM, but we can assume the camera looks at the planet or disable culling
+        }
+    }
+
+    Context.ViewDistance = LODSettings.RenderDistance;
+    Context.MaxAllowedLOD = LODSettings.LODLayers.Num() - 1;
+
+    return Context;
+}
+
+
+void APlanet::UpdateChunkManager(const FPlanetViewContext &Context)
+{
+    if (ChunkManager.IsValid())
+    {
+        ChunkManager->Update(Context);
+
+        if (GenSettings.bShowDebugChunkGrid)
+        {
+            ChunkManager->DrawDebugGrid(GetWorld());
+        }
+
+        if (GenSettings.bShowDebugChunkBounds)
+        {
+            ChunkManager->DrawDebugChunkBounds(GetWorld());
+        }
+    }
+}
+
+
+void APlanet::UpdateFarModelVisibility(const FPlanetViewContext &Context)
+{
+    // We do this here because the Actor owns the FarModel component/actor.
+    if (GenSettings.FarPlanetModel)
+    {
+        float DistToCenter = FVector::Dist(GetActorLocation(), Context.ObserverLocation);
+        float DistToSurface = DistToCenter - GenSettings.PlanetRadius;
+
+        // Hysteresis logic for Far Model
+        // ShowThreshold: Distance to SHOW the far model (getting farther)
+        float ShowThreshold = LODSettings.RenderDistance * FPlanetStatics::FarModelDistanceRatio;
+
+        // HideThreshold: Distance to HIDE the far model (getting closer)
+        // We keep it visible a bit longer to ensure chunks have fully spawned underneath.
+        float HideThreshold = LODSettings.RenderDistance * FPlanetStatics::FarModelHideRatio;
+
+        bool bIsVisible = !GenSettings.FarPlanetModel->IsHidden();
+
+        if (bIsVisible)
+        {
+            // We are in Far Mode. Switch to Near only if we get close enough.
+            if (DistToSurface < HideThreshold)
+            {
+                GenSettings.FarPlanetModel->SetActorHiddenInGame(true);
+            }
+        }
+        else
+        {
+            // We are in Near Mode. Switch to Far only if we get far enough.
+            if (DistToSurface > ShowThreshold)
+            {
+                GenSettings.FarPlanetModel->SetActorHiddenInGame(false);
+            }
+        }
+    }
+}
+
+
+void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
+{
+    if (!GEngine)
+        return;
+
+    // Manager Stats
+    if (ChunkManager.IsValid())
+    {
+        int32 Total = ChunkManager->GetChunkCount();
+        int32 Loaded = ChunkManager->GetLoadedChunkCount();
+
+        FColor TextColor = (Loaded == 0) ? FColor::Red : FColor::Green;
+
+        GEngine->AddOnScreenDebugMessage(
+            FPlanetStatics::DebugKey_ManagerStats,
+            0.f,
+            TextColor,
+            FString::Printf(TEXT("Chunks: %d Loaded / %d Total | PerFace: %dx%d"), Loaded, Total, RuntimeConfig.ChunksPerFace, RuntimeConfig.ChunksPerFace));
+    }
+
+    // Distance Info
+    float DistToCenter = FVector::Dist(GetActorLocation(), Context.ObserverLocation);
+    float DistToSurface = DistToCenter - GenSettings.PlanetRadius;
+    FString Status = (DistToSurface < 0) ? TEXT("UNDERGROUND") : TEXT("SURFACE");
+    GEngine->AddOnScreenDebugMessage(
+        FPlanetStatics::DebugKey_DistanceInfo, 0.0f, FColor::Cyan, FString::Printf(TEXT("%s | Alt: %.0f"), *Status, DistToSurface));
 }

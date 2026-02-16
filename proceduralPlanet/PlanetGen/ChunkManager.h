@@ -14,11 +14,11 @@ class FChunkManager
         FChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen);
         ~FChunkManager();
 
-        // Returns the total number of chunks currently tracked
-        int32 GetChunkCount() const { return Chunks.Num(); }
+        // Returns the total number of chunks in the grid (6 * N * N)
+        int32 GetChunkCount() const;
 
         // Returns the number of chunks that currently have a valid LOD (are visible)
-        int32 GetVisibleChunkCount() const;
+        int32 GetLoadedChunkCount() const;
 
         // Initialize the chunk manager for the given planet.
         void Initialize(AActor *Owner, UMaterialInterface *Material);
@@ -57,7 +57,7 @@ class FChunkManager
         FVector GetChunkCenter(uint8 Face, int32 X, int32 Y) const;
 
         // Helper to find which chunk contains a specific local position
-        FChunkId GetChunkIdAt(const FVector& LocalPosition) const;
+        FChunkId GetChunkIdAt(const FVector &LocalPosition) const;
 
         // Math (Replaces DetermineTargetLOD)
         int32 CalculateTargetLOD(float DistanceSq, int32 CurrentLOD) const;

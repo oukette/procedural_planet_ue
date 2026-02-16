@@ -44,6 +44,12 @@ class PROCEDURALPLANET_API APlanet : public AActor
         // Calculates LOD distances based on the physical size of a chunk.
         void CalculateAutoLODs(TArray<FLODInfo>& OutLODs, float ChunkArcLength) const;
 
+        // Tick Helpers
+        FPlanetViewContext BuildViewContext() const;
+        void UpdateChunkManager(const FPlanetViewContext& Context);
+        void UpdateFarModelVisibility(const FPlanetViewContext& Context);
+        void DrawDebugInfo(const FPlanetViewContext& Context) const;
+
     public:
         APlanet();
         virtual void BeginPlay() override;

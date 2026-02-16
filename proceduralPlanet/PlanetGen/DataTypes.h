@@ -163,25 +163,51 @@ struct FLODInfo
 // Global constants for easy tuning and static access
 struct FPlanetStatics
 {
-    // Ratio of RenderDistance where the Far Model takes over.
-    // 1.0 = Exactly at RenderDistance.
-    // 0.9 = Far model appears slightly before chunks disappear (smoother overlap).
-    static constexpr float FarModelDistanceRatio = 1.0f;
+        // Ratio of RenderDistance where the Far Model takes over.
+        // 1.0 = Exactly at RenderDistance.
+        // 0.9 = Far model appears slightly before chunks disappear (smoother overlap).
+        static constexpr float FarModelDistanceRatio = 1.0f;
 
-    // Ratio of RenderDistance where the Far Model disappears (Getting Closer).
-    // 0.8 = Far model stays visible until we are at 80% of render distance.
-    static constexpr float FarModelHideRatio = 0.8f;
+        // Ratio of RenderDistance where the Far Model disappears (Getting Closer).
+        // 0.8 = Far model stays visible until we are at 80% of render distance.
+        static constexpr float FarModelHideRatio = 0.8f;
 
-    // Default LOD definitions
-    static TArray<FLODInfo> GetDefaultLODs()
-    {
-        return {
-            {5000.f, 64},   // LOD 0
-            {15000.f, 32},  // LOD 1
-            {30000.f, 16},  // LOD 2
-            {60000.f, 8}    // LOD 3
-        };
-    }
+        // Generation / Grid
+        static constexpr float DefaultEngineSphereRadius = 50.0f;
+        static constexpr float TargetAutoChunkSize = 4000.0f;
+        static constexpr float FarDistanceSafetyMargin = 1.1f;
+
+        // Debug
+        static constexpr int32 DebugSphereSegments = 32;
+        static constexpr float DebugSphereLifetime = 60.0f;
+        static constexpr float DebugSphereThickness = 20.0f;
+        static constexpr float DebugLineLifetime = 30.0f;
+        static constexpr float DebugBoxLifetime = 20.0f;
+        static constexpr int32 DebugKey_ManagerStats = 10;
+        static constexpr int32 DebugKey_DistanceInfo = 101;
+
+        // Culling & Visibility
+        static constexpr float UndergroundThreshold = -100.0f;
+        static constexpr float HorizonCullingDot = -0.2f;
+        static constexpr float FrustumCullingDot = -0.2f;
+        static constexpr float GridDebugRadiusScale = 1.002f;
+
+        // Auto LOD Ratios
+        static constexpr float AutoLOD_Ratio0 = 1.25f;
+        static constexpr float AutoLOD_Ratio1 = 2.5f;
+        static constexpr float AutoLOD_Ratio2 = 6.0f;
+        static constexpr float AutoLOD_Ratio3 = 10.0f;
+
+        // Default LOD definitions
+        static TArray<FLODInfo> GetDefaultLODs()
+        {
+            return {
+                {5000.f, 64},   // LOD 0
+                {15000.f, 32},  // LOD 1
+                {30000.f, 16},  // LOD 2
+                {60000.f, 8}    // LOD 3
+            };
+        }
 };
 
 
@@ -406,4 +432,3 @@ const static TArray<FColor> LODColorsDebug = {
     FColor(0, 255, 128),  // LOD 6 (Spring Green)
     FColor(128, 0, 255)   // LOD 7 (Purple)
 };
-

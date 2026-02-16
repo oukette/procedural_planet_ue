@@ -23,13 +23,18 @@ FChunkManager::~FChunkManager()
 }
 
 
-int32 FChunkManager::GetVisibleChunkCount() const
+int32 FChunkManager::GetChunkCount() const { return 6 * Config.ChunksPerFace * Config.ChunksPerFace; }
+
+
+int32 FChunkManager::GetLoadedChunkCount() const
 {
     int32 Count = 0;
     for (const auto &Pair : Chunks)
     {
-        // A chunk is "Visible" if the Update loop gave it a valid LOD OR if its state implies it's currently doing something.
-        if (Pair.Key.LOD != -1 && Pair.Value->State != EChunkState::Unloaded)
+        // A chunk is considered "Loaded" if its mesh data is generated and ready (Ready)
+        // or if it's already being rendered (Visible).
+        const EChunkState State = Pair.Value->State;
+        if (State == EChunkState::Visible || State == EChunkState::Ready)
         {
             Count++;
         }
@@ -42,49 +47,11 @@ void FChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
 {
     Renderer = MakeUnique<ChunkRenderer>(Owner, Material);
 
-    int32 ChunksPerFace = Config.ChunksPerFace;
-
-    for (uint8 Face = 0; Face < 6; Face++)
-    {
-        for (int32 x = 0; x < ChunksPerFace; x++)
-        {
-            for (int32 y = 0; y < ChunksPerFace; y++)
-            {
-                // 1. Create Identity
-                FChunkId Id(Face, 0, FIntVector(x, y, 0));  // Start at LOD 0
-
-                // 2. Create Data Entry
-                FChunk *Chunk = CreateChunk(Id);
-
-                // 3. Pre-calculate Spatial Info (Optimization)
-                // We do this once here so we don't recalculate it every frame in Tick
-
-                // Calculate UVs
-                float Step = 1.0f / ChunksPerFace;
-                FVector2D UVMin(x * Step, y * Step);
-                FVector2D UVMax((x + 1) * Step, (y + 1) * Step);
-
-                // Get Face Vectors
-                FVector Normal = FMathUtils::getFaceNormal(Face);
-                FVector Right = FMathUtils::getFaceRight(Face);
-                FVector Up = FMathUtils::getFaceUp(Face);
-
-                // Calculate Center Position (LOD 0)
-                FVector2D CenterUV = (UVMin + UVMax) * 0.5f;
-                // Remap 0..1 to -1..1
-                FVector CubePos = Normal + (Right * (CenterUV.X * 2.0f - 1.0f)) + (Up * (CenterUV.Y * 2.0f - 1.0f));
-                FVector SpherePos = FMathUtils::projectCubeToSphere(CubePos) * Config.PlanetRadius;
-
-                // Store in Transform
-                Chunk->Transform.Location = SpherePos;
-                Chunk->Transform.FaceNormal = Normal;
-                Chunk->Transform.Scale = 1.0f;  // Base scale
-            }
-        }
-    }
+    // Chunks are now created on-demand in the Update loop via GetChunk().
+    // Pre-allocating them here is wasteful as most would be immediately garbage collected on the first frame.
 
     // DEBUG LOG
-    UE_LOG(LogTemp, Warning, TEXT("FChunkManager initialized with %d chunks."), Chunks.Num());
+    UE_LOG(LogTemp, Log, TEXT("FChunkManager initialized. Total grid capacity is %d chunks."), GetChunkCount());
 }
 
 
@@ -141,7 +108,7 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
         // UNDERGROUND CHECK
         // If we are significantly below the surface, standard LOD distance logic fails (distance to surface chunks becomes large).
         // We switch to "Cave Mode": Only load the chunk we are inside.
-        const float UndergroundThreshold = -100.0f;  // 1 meter below "sea level"
+        const float UndergroundThreshold = FPlanetStatics::UndergroundThreshold;  // 1 meter below "sea level"
 
         if (DistToSurface < UndergroundThreshold)
         {
@@ -247,13 +214,13 @@ void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TS
             FVector ToObserverDir = -ToChunk.GetSafeNormal();
 
             // If Dot < -0.2, it's well over the horizon.
-            if ((ChunkNormal | ToObserverDir) < -0.2f)
+            if ((ChunkNormal | ToObserverDir) < FPlanetStatics::HorizonCullingDot)
                 continue;
 
             // 2. Frustum Culling
             // Is the chunk roughly in front of the camera?
             // Allow 90+ degrees FOV (Dot > 0.0) or even wider to prevent popping at edges.
-            if ((ToChunk.GetSafeNormal() | Context.ObserverForward) < -0.2f)
+            if ((ToChunk.GetSafeNormal() | Context.ObserverForward) < FPlanetStatics::FrustumCullingDot)
                 continue;
 
             // 2. Find current LOD for this grid cell, if any chunk exists
@@ -311,7 +278,7 @@ void FChunkManager::DrawDebugGrid(const UWorld *World) const
     int32 GridSize = Config.ChunksPerFace;
     float Step = 1.0f / GridSize;
     // Draw slightly offset to avoid z-fighting with the mesh
-    float Radius = Config.PlanetRadius * 1.002f;
+    float Radius = Config.PlanetRadius * FPlanetStatics::GridDebugRadiusScale;
 
     for (uint8 Face = 0; Face < 6; ++Face)
     {
@@ -341,10 +308,10 @@ void FChunkManager::DrawDebugGrid(const UWorld *World) const
                 FVector P2 = ToWorld(UMax, VMax);
                 FVector P3 = ToWorld(UMin, VMax);
 
-                DrawDebugLine(World, P0, P1, FColor::Cyan, false, -1.0f, 0, 30.0f);
-                DrawDebugLine(World, P1, P2, FColor::Cyan, false, -1.0f, 0, 30.0f);
-                DrawDebugLine(World, P2, P3, FColor::Cyan, false, -1.0f, 0, 30.0f);
-                DrawDebugLine(World, P3, P0, FColor::Cyan, false, -1.0f, 0, 30.0f);
+                DrawDebugLine(World, P0, P1, FColor::Cyan, false, -1.0f, 0, FPlanetStatics::DebugLineLifetime);
+                DrawDebugLine(World, P1, P2, FColor::Cyan, false, -1.0f, 0, FPlanetStatics::DebugLineLifetime);
+                DrawDebugLine(World, P2, P3, FColor::Cyan, false, -1.0f, 0, FPlanetStatics::DebugLineLifetime);
+                DrawDebugLine(World, P3, P0, FColor::Cyan, false, -1.0f, 0, FPlanetStatics::DebugLineLifetime);
             }
         }
     }
@@ -365,7 +332,7 @@ void FChunkManager::DrawDebugChunkBounds(const UWorld *World) const
             if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
             {
                 FBox Box = Comp->Bounds.GetBox();
-                DrawDebugBox(World, Box.GetCenter(), Box.GetExtent(), FColor::Orange, false, -1.0f, 0, 20.0f);
+                DrawDebugBox(World, Box.GetCenter(), Box.GetExtent(), FColor::Orange, false, -1.0f, 0, FPlanetStatics::DebugBoxLifetime);
             }
         }
     }
