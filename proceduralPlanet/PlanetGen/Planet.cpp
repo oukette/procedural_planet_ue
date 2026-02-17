@@ -142,7 +142,8 @@ void APlanet::initPlanet()
     RuntimeConfig.MaxConcurrentGenerations = PerformanceSettings.MaxConcurrentGenerations;
     RuntimeConfig.ChunkGenerationRate = PerformanceSettings.ChunksToSpawnPerFrame;
     RuntimeConfig.MeshUpdatesPerFrame = PerformanceSettings.MeshUpdatesPerFrame;
-    RuntimeConfig.FarDistanceThreshold = GenSettings.RenderDistance;
+    RuntimeConfig.FarDistanceThreshold = GenSettings.PlanetRadius * GenSettings.RenderDistanceMultiplier;
+    RuntimeConfig.LODSplitDistanceMultiplier = GridSettings.LODSplitMultiplier;
 
     // Create Noise Provider
     NoiseProvider = MakeUnique<SimpleNoise>();
@@ -242,17 +243,19 @@ FPlanetViewContext APlanet::BuildViewContext() const
 {
     FPlanetViewContext Context;
     Context.ObserverLocation = GetObserverPosition();
-
-    // Get Camera Forward for Frustum Culling
-    // Default to Zero. If we can't find a camera (e.g. Editor Viewport),
-    // we want to disable frustum culling to avoid "blind spots" caused by using Actor Forward.
-    Context.ObserverForward = FVector::ZeroVector;
+    Context.ObserverForward = FVector::ZeroVector;  // If we can't find a camera (e.g. Editor Viewport), disable frustum culling to avoid "blind spots".
+    Context.ObserverVelocity = FVector::ZeroVector;
 
     if (UWorld *World = GetWorld())
     {
         if (APlayerCameraManager *PCM = UGameplayStatics::GetPlayerCameraManager(World, 0))
         {
             Context.ObserverForward = PCM->GetCameraRotation().Vector();
+        }
+
+        if (APawn *PlayerPawn = UGameplayStatics::GetPlayerPawn(World, 0))
+        {
+            Context.ObserverVelocity = PlayerPawn->GetVelocity();
         }
     }
 
@@ -290,11 +293,11 @@ void APlanet::UpdateFarModelVisibility(const FPlanetViewContext &Context)
 
         // Hysteresis logic for Far Model
         // ShowThreshold: Distance to SHOW the far model (getting farther)
-        float ShowThreshold = GenSettings.RenderDistance * FPlanetStatics::FarModelDistanceRatio;
+        float ShowThreshold = RuntimeConfig.FarDistanceThreshold * FPlanetStatics::FarModelDistanceRatio;
 
         // HideThreshold: Distance to HIDE the far model (getting closer)
         // We keep it visible a bit longer to ensure chunks have fully spawned underneath.
-        float HideThreshold = GenSettings.RenderDistance * FPlanetStatics::FarModelHideRatio;
+        float HideThreshold = RuntimeConfig.FarDistanceThreshold * FPlanetStatics::FarModelHideRatio;
 
         bool bIsVisible = !GenSettings.FarPlanetModel->IsHidden();
 
@@ -326,13 +329,14 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
     // Manager Stats
     if (ChunkManager.IsValid())
     {
-        int32 Visible = ChunkManager->GetVisibleChunkCount();
+        int32 Vis = ChunkManager->GetVisibleChunkCount();
+        int32 Mem = ChunkManager->GetChunkCount();
         int32 Pending = ChunkManager->GetPendingCount();
 
-        FColor TextColor = (Visible == 0) ? FColor::Red : FColor::Green;
+        FColor TextColor = (Vis == 0) ? FColor::Red : FColor::Green;
 
         GEngine->AddOnScreenDebugMessage(
-            FPlanetStatics::DebugKey_ManagerStats, 0.f, TextColor, FString::Printf(TEXT("Chunks: %d Visible | Pending: %d"), Visible, Pending));
+            FPlanetStatics::DebugKey_ManagerStats, 0.f, TextColor, FString::Printf(TEXT("Chunks: %d Vis / %d Mem | Pending: %d"), Vis, Mem, Pending));
     }
 
     // Distance Info

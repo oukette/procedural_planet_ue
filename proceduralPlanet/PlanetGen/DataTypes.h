@@ -137,6 +137,9 @@ struct FPlanetViewContext
         FVector ObserverForward;
 
         UPROPERTY()
+        FVector ObserverVelocity;
+
+        UPROPERTY()
         float ViewDistance;
 };
 
@@ -155,7 +158,7 @@ struct FPlanetStatics
 
         // Generation / Grid
         static constexpr float DefaultEngineSphereRadius = 50.0f;
-        static constexpr float TargetAutoChunkSize = 4000.0f;
+        static constexpr float TargetAutoChunkSize = 5000.0f;
         static constexpr float FarDistanceSafetyMargin = 1.1f;
 
         // Debug
@@ -188,7 +191,7 @@ struct FPlanetGenSettings
         float PlanetRadius = 10000.f;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-        float RenderDistance = 100000.0f;
+        float RenderDistanceMultiplier = 8.0f;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         bool bEnableCollision = false;
@@ -228,17 +231,8 @@ struct FPlanetGridSettings
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         float VoxelSize = 100.f;
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-        bool bAutoChunkSizing = true;
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (EditCondition = "bAutoChunkSizing", ClampMin = "0.1", ClampMax = "10.0"))
-        float ChunkDensityFactor = 1.0f;
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (EditCondition = "bAutoChunkSizing", ClampMin = "1", ClampMax = "64"))
-        int32 MinChunksPerFace = 1;
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, meta = (EditCondition = "bAutoChunkSizing", ClampMin = "1", ClampMax = "256"))
-        int32 MaxChunksPerFace = 64;
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (DisplayName = "LOD Split Multiplier", ClampMin = "1.0", ClampMax = "8.0"))
+        float LODSplitMultiplier = 2.0f;
 };
 
 
@@ -325,7 +319,7 @@ struct FPlanetConfig
             ChunkGenerationRate(8),
             MeshUpdatesPerFrame(2),
             MaxLOD(8),
-            LODSplitDistanceMultiplier(2.0f),
+            LODSplitDistanceMultiplier(2.0f),  // This will be overridden from GridSettings
             FarDistanceThreshold(100000.0f)
         {
         }
