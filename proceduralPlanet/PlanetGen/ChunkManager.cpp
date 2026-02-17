@@ -23,24 +23,24 @@ FChunkManager::~FChunkManager()
 }
 
 
-int32 FChunkManager::GetChunkCount() const { return 6 * Config.ChunksPerFace * Config.ChunksPerFace; }
+int32 FChunkManager::GetChunkCount() const { return Chunks.Num(); }
 
 
-int32 FChunkManager::GetLoadedChunkCount() const
+int32 FChunkManager::GetVisibleChunkCount() const
 {
     int32 Count = 0;
     for (const auto &Pair : Chunks)
     {
-        // A chunk is considered "Loaded" if its mesh data is generated and ready (Ready)
-        // or if it's already being rendered (Visible).
-        const EChunkState State = Pair.Value->State;
-        if (State == EChunkState::Visible || State == EChunkState::Ready)
+        if (Pair.Value->State == EChunkState::Visible)
         {
             Count++;
         }
     }
     return Count;
 }
+
+
+int32 FChunkManager::GetPendingCount() const { return PendingGenerationQueue.Num() + CurrentlyGenerating.Num(); }
 
 
 void FChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
@@ -189,16 +189,31 @@ void FChunkManager::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Co
 {
     FVector Center = GetChunkCenter(Node->Id);
     FVector ToChunk = Center - Context.ObserverLocation;
+    float DistSq = ToChunk.SizeSquared();
 
-    // 1. Horizon Culling (Backface)
     FVector ChunkNormal = Center.GetSafeNormal();
     FVector ToObserverDir = -ToChunk.GetSafeNormal();
 
-    if ((ChunkNormal | ToObserverDir) < FPlanetStatics::HorizonCullingDot)
+    // Special handling for Root Nodes (LOD 0)
+    // They are too large to cull accurately with a single center point.
+    // We use a very permissive threshold for them.
+    float HorizonThreshold = (Node->Id.LODLevel == 0) ? -0.9f : FPlanetStatics::HorizonCullingDot;
+    float FrustumThreshold = (Node->Id.LODLevel == 0) ? -0.9f : FPlanetStatics::FrustumCullingDot;
+
+    // 1. Horizon Culling (Backface)
+    if ((ChunkNormal | ToObserverDir) < HorizonThreshold)
         return;
 
+    // Calculate Node Size (Arc Length) for culling safety check
+    float NodeSize = (Config.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
+
     // 2. Frustum Culling
-    if (!Context.ObserverForward.IsZero() && (ToChunk.GetSafeNormal() | Context.ObserverForward) < FPlanetStatics::FrustumCullingDot)
+    // We skip culling if we are very close to the chunk (e.g. standing on it).
+    // This prevents the ground directly below/behind the camera from disappearing when looking at the horizon.
+    // We use a generous factor (1.5x node size) to ensure we are well "outside" before culling takes over.
+    bool bIsClose = DistSq < (NodeSize * NodeSize * 2.25f);  // 1.5^2 = 2.25
+
+    if (!bIsClose && !Context.ObserverForward.IsZero() && (ToChunk.GetSafeNormal() | Context.ObserverForward) < FrustumThreshold)
         return;
 
     // 3. Split Check

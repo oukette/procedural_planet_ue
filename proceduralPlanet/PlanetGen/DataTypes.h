@@ -169,8 +169,8 @@ struct FPlanetStatics
 
         // Culling & Visibility
         static constexpr float UndergroundThreshold = -100.0f;
-        static constexpr float HorizonCullingDot = -0.2f;
-        static constexpr float FrustumCullingDot = -0.2f;
+        static constexpr float HorizonCullingDot = -0.5f;
+        static constexpr float FrustumCullingDot = -0.5f;
         static constexpr float GridDebugRadiusScale = 1.002f;
 };
 
@@ -363,11 +363,12 @@ struct GenData
 // Automatic Debug Colors for multiple LODs.
 const static TArray<FColor> LODColorsDebug = {
     FColor::Green,        // LOD 0
-    FColor::Yellow,       // LOD 1
-    FColor(255, 165, 0),  // LOD 2 (Orange)
-    FColor::Red,          // LOD 3
-    FColor::Magenta,      // LOD 4
-    FColor::Cyan,         // LOD 5
-    FColor(0, 255, 128),  // LOD 6 (Spring Green)
-    FColor(128, 0, 255)   // LOD 7 (Purple)
+    FColor(128, 255, 0),  // LOD 1 (smooth green)
+    FColor::Yellow,       // LOD 2
+    FColor(0xF75B00),     // LOD 3 (Orange)
+    FColor::Red,          // LOD 4
+    FColor::Magenta,      // LOD 5
+    FColor(128, 0, 255),  // LOD 6 (Purple)
+    FColor(0, 255, 128),  // LOD 7 (Spring Green)
+    FColor::Cyan          // LOD 8
 };

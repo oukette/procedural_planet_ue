@@ -32,11 +32,14 @@ class FChunkManager
         FChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen);
         ~FChunkManager();
 
-        // Returns the total number of chunks in the grid (6 * N * N)
+        // Returns the total number of chunks in memory.
         int32 GetChunkCount() const;
 
-        // Returns the number of chunks that currently have a valid LOD (are visible)
-        int32 GetLoadedChunkCount() const;
+        // Returns the number of chunks currently being rendered.
+        int32 GetVisibleChunkCount() const;
+
+        // Returns the number of chunks waiting for generation.
+        int32 GetPendingCount() const;
 
         // Initialize the chunk manager for the given planet.
         void Initialize(AActor *Owner, UMaterialInterface *Material);
@@ -44,10 +47,10 @@ class FChunkManager
         // Main update loop called by APlanet::Tick
         void Update(const FPlanetViewContext &Context);
 
-        // Debug: Draws the logical grid boundaries on the sphere
+        // Debug: Draws the logical grid boundaries on the sphere.
         void DrawDebugGrid(const UWorld *World) const;
 
-        // Debug: Draws the bounding box of the actual generated meshes
+        // Debug: Draws the bounding box of the actual generated meshes.
         void DrawDebugChunkBounds(const UWorld *World) const;
 
 
@@ -59,8 +62,7 @@ class FChunkManager
         TArray<FChunkId> PendingGenerationQueue;    // Chunks waiting to be processed
         TSet<FChunkId> CurrentlyGenerating;         // Chunks currently in a background thread
 
-        // The 6 root nodes of the planet (one per face)
-        TArray<TUniquePtr<FQuadtreeNode>> RootNodes;
+        TArray<TUniquePtr<FQuadtreeNode>> RootNodes; // The 6 root nodes of the planet (one per face)
 
         int32 MaxConcurrentGenerations;  // Limit total background threads
         int32 GenerationRate;            // Limit how many start per tick

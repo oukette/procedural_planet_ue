@@ -326,16 +326,13 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
     // Manager Stats
     if (ChunkManager.IsValid())
     {
-        int32 Total = ChunkManager->GetChunkCount();
-        int32 Loaded = ChunkManager->GetLoadedChunkCount();
+        int32 Visible = ChunkManager->GetVisibleChunkCount();
+        int32 Pending = ChunkManager->GetPendingCount();
 
-        FColor TextColor = (Loaded == 0) ? FColor::Red : FColor::Green;
+        FColor TextColor = (Visible == 0) ? FColor::Red : FColor::Green;
 
         GEngine->AddOnScreenDebugMessage(
-            FPlanetStatics::DebugKey_ManagerStats,
-            0.f,
-            TextColor,
-            FString::Printf(TEXT("Chunks: %d Loaded / %d Total | PerFace: %dx%d"), Loaded, Total, RuntimeConfig.ChunksPerFace, RuntimeConfig.ChunksPerFace));
+            FPlanetStatics::DebugKey_ManagerStats, 0.f, TextColor, FString::Printf(TEXT("Chunks: %d Visible | Pending: %d"), Visible, Pending));
     }
 
     // Distance Info
