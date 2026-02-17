@@ -54,6 +54,9 @@ void APlanet::Tick(float DeltaTime)
     // 2. Update Manager
     UpdateChunkManager(Context);
 
+    // 3. Update Far Model
+    UpdateFarModelVisibility(Context);
+
     // 4. Debug Output
     DrawDebugInfo(Context);
 }
@@ -139,6 +142,7 @@ void APlanet::initPlanet()
     RuntimeConfig.MaxConcurrentGenerations = PerformanceSettings.MaxConcurrentGenerations;
     RuntimeConfig.ChunkGenerationRate = PerformanceSettings.ChunksToSpawnPerFrame;
     RuntimeConfig.MeshUpdatesPerFrame = PerformanceSettings.MeshUpdatesPerFrame;
+    RuntimeConfig.FarDistanceThreshold = GenSettings.RenderDistance;
 
     // Create Noise Provider
     NoiseProvider = MakeUnique<SimpleNoise>();
@@ -271,6 +275,44 @@ void APlanet::UpdateChunkManager(const FPlanetViewContext &Context)
         if (GenSettings.bShowDebugChunkBounds)
         {
             ChunkManager->DrawDebugChunkBounds(GetWorld());
+        }
+    }
+}
+
+
+void APlanet::UpdateFarModelVisibility(const FPlanetViewContext &Context)
+{
+    // We do this here because the Actor owns the FarModel component/actor.
+    if (GenSettings.FarPlanetModel)
+    {
+        float DistToCenter = FVector::Dist(GetActorLocation(), Context.ObserverLocation);
+        float DistToSurface = DistToCenter - GenSettings.PlanetRadius;
+
+        // Hysteresis logic for Far Model
+        // ShowThreshold: Distance to SHOW the far model (getting farther)
+        float ShowThreshold = GenSettings.RenderDistance * FPlanetStatics::FarModelDistanceRatio;
+
+        // HideThreshold: Distance to HIDE the far model (getting closer)
+        // We keep it visible a bit longer to ensure chunks have fully spawned underneath.
+        float HideThreshold = GenSettings.RenderDistance * FPlanetStatics::FarModelHideRatio;
+
+        bool bIsVisible = !GenSettings.FarPlanetModel->IsHidden();
+
+        if (bIsVisible)
+        {
+            // We are in Far Mode. Switch to Near only if we get close enough.
+            if (DistToSurface < HideThreshold)
+            {
+                GenSettings.FarPlanetModel->SetActorHiddenInGame(true);
+            }
+        }
+        else
+        {
+            // We are in Near Mode. Switch to Far only if we get far enough.
+            if (DistToSurface > ShowThreshold)
+            {
+                GenSettings.FarPlanetModel->SetActorHiddenInGame(false);
+            }
         }
     }
 }

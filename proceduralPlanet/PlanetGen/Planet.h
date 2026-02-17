@@ -44,6 +44,7 @@ class PROCEDURALPLANET_API APlanet : public AActor
         // Tick Helpers
         FPlanetViewContext BuildViewContext() const;
         void UpdateChunkManager(const FPlanetViewContext &Context);
+        void UpdateFarModelVisibility(const FPlanetViewContext &Context);
         void DrawDebugInfo(const FPlanetViewContext &Context) const;
 
     public:

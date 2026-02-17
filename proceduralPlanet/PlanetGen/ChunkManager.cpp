@@ -99,17 +99,27 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
         ObserverForwardLocal = OwnerTM.InverseTransformVector(Context.ObserverForward);
     }
 
+    // Check distance for chunk generation
+    float DistToCenter = ObserverLocal.Size();
+    float DistToSurface = DistToCenter - Config.PlanetRadius;
+
+    // We want chunks to exist slightly beyond the render distance so they are ready when we get closer.
+    bool bShouldGenerateChunks = DistToSurface < (Config.FarDistanceThreshold * FPlanetStatics::FarDistanceSafetyMargin);
+
     // We use a Set to keep track of what SHOULD exist this frame.
     TSet<FChunkId> RequiredChunks;
 
-    // Pass the LOCAL observer position to UpdateFace
-    FPlanetViewContext LocalContext = Context;
-    LocalContext.ObserverLocation = ObserverLocal;
-    LocalContext.ObserverForward = ObserverForwardLocal;
-
-    for (uint8 Face = 0; Face < 6; ++Face)
+    if (bShouldGenerateChunks)
     {
-        UpdateFace(Face, LocalContext, RequiredChunks);
+        // Pass the LOCAL observer position to UpdateFace
+        FPlanetViewContext LocalContext = Context;
+        LocalContext.ObserverLocation = ObserverLocal;
+        LocalContext.ObserverForward = ObserverForwardLocal;
+
+        for (uint8 Face = 0; Face < 6; ++Face)
+        {
+            UpdateFace(Face, LocalContext, RequiredChunks);
+        }
     }
 
     // 3. Process State Changes

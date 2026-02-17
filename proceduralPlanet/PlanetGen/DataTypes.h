@@ -188,6 +188,9 @@ struct FPlanetGenSettings
         float PlanetRadius = 10000.f;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        float RenderDistance = 100000.0f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         bool bEnableCollision = false;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
@@ -307,6 +310,7 @@ struct FPlanetConfig
         // LOD Rules
         int32 MaxLOD;
         float LODSplitDistanceMultiplier;
+        float FarDistanceThreshold;
 
         // Default Constructor
         FPlanetConfig() :
@@ -321,7 +325,8 @@ struct FPlanetConfig
             ChunkGenerationRate(8),
             MeshUpdatesPerFrame(2),
             MaxLOD(8),
-            LODSplitDistanceMultiplier(2.0f)
+            LODSplitDistanceMultiplier(2.0f),
+            FarDistanceThreshold(100000.0f)
         {
         }
 };
