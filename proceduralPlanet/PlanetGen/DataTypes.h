@@ -30,20 +30,28 @@ struct FChunkId
         UPROPERTY(EditAnywhere, BlueprintReadWrite)
         FIntVector Coords;  // Face-local grid coordinates (X, Y)
 
+        UPROPERTY(EditAnywhere, BlueprintReadWrite)
+        int32 LODLevel;  // 0 = Root, Higher = Smaller/More Detailed
+
         FChunkId() :
             FaceIndex(0),
-            Coords(FIntVector::ZeroValue)
+            Coords(FIntVector::ZeroValue),
+            LODLevel(0)
         {
         }
-        FChunkId(uint8 InFace, FIntVector InCoords) :
+        FChunkId(uint8 InFace, FIntVector InCoords, int32 InLOD) :
             FaceIndex(InFace),
-            Coords(InCoords)
+            Coords(InCoords),
+            LODLevel(InLOD)
         {
         }
 
-        bool operator==(const FChunkId &Other) const { return FaceIndex == Other.FaceIndex && Coords == Other.Coords; }
+        bool operator==(const FChunkId &Other) const { return FaceIndex == Other.FaceIndex && Coords == Other.Coords && LODLevel == Other.LODLevel; }
 
-        friend uint32 GetTypeHash(const FChunkId &Other) { return HashCombine(GetTypeHash(Other.FaceIndex), GetTypeHash(Other.Coords)); }
+        friend uint32 GetTypeHash(const FChunkId &Other)
+        {
+            return HashCombine(HashCombine(GetTypeHash(Other.FaceIndex), GetTypeHash(Other.Coords)), GetTypeHash(Other.LODLevel));
+        }
 };
 
 

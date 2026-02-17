@@ -6,6 +6,24 @@
 #include "ChunkRenderer.h"
 
 
+// A logical node in the Quadtree.
+// Does NOT hold mesh data directly (that is in FChunk).
+// Used for traversing the hierarchy and deciding what to spawn.
+struct FQuadtreeNode
+{
+        FChunkId Id;
+        FQuadtreeNode *Parent = nullptr;
+        TArray<TUniquePtr<FQuadtreeNode>> Children;
+
+        FQuadtreeNode(const FChunkId &InId, FQuadtreeNode *InParent) :
+            Id(InId),
+            Parent(InParent)
+        {
+        }
+
+        bool IsLeaf() const { return Children.Num() == 0; }
+};
+
 // Manages the lifecycle of all chunks (Quadtree logic, LOD selection, Async requests).
 // Owned strictly by the APlanet actor.
 class FChunkManager
@@ -41,6 +59,9 @@ class FChunkManager
         TArray<FChunkId> PendingGenerationQueue;    // Chunks waiting to be processed
         TSet<FChunkId> CurrentlyGenerating;         // Chunks currently in a background thread
 
+        // The 6 root nodes of the planet (one per face)
+        TArray<TUniquePtr<FQuadtreeNode>> RootNodes;
+
         int32 MaxConcurrentGenerations;  // Limit total background threads
         int32 GenerationRate;            // Limit how many start per tick
 
@@ -54,7 +75,10 @@ class FChunkManager
         void UpdateFace(uint8 Face, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired);
 
         // Helper to calculate the world position of a chunk center
-        FVector GetChunkCenter(uint8 Face, int32 X, int32 Y) const;
+        FVector GetChunkCenter(const FChunkId &Id) const;
+
+        // Helper to get UV bounds (0..1) for a specific chunk ID
+        void GetUVBounds(const FChunkId &Id, FVector2D &OutMin, FVector2D &OutMax) const;
 
         // Helper to find which chunk contains a specific local position
         FChunkId GetChunkIdAt(const FVector &LocalPosition) const;

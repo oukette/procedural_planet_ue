@@ -50,6 +50,14 @@ void FChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
     // Chunks are now created on-demand in the Update loop via GetChunk().
     // Pre-allocating them here is wasteful as most would be immediately garbage collected on the first frame.
 
+    // Initialize Quadtree Roots (LOD 0)
+    RootNodes.Empty();
+    for (uint8 i = 0; i < 6; ++i)
+    {
+        FChunkId RootId(i, FIntVector(0, 0, 0), 0);
+        RootNodes.Add(MakeUnique<FQuadtreeNode>(RootId, nullptr));
+    }
+
     // DEBUG LOG
     UE_LOG(LogTemp, Log, TEXT("FChunkManager initialized. Total grid capacity is %d chunks."), GetChunkCount());
 }
@@ -162,50 +170,47 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 
 void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired)
 {
-    int32 GridSize = Config.ChunksPerFace;
+    // PHASE 1: Just iterate the root nodes (LOD 0)
+    // In Phase 2, this will become a recursive function traversing the tree.
 
-    for (int32 x = 0; x < GridSize; ++x)
+    // We know RootNodes[Face] corresponds to this face.
+    const FQuadtreeNode *Node = RootNodes[Face].Get();
+    FChunkId Id = Node->Id;
+
+    // WorldPos here is actually Planet-Relative Position (0,0,0 is center)
+    FVector PlanetLocalPos = GetChunkCenter(Id);
+
+    FVector ToChunk = PlanetLocalPos - Context.ObserverLocation;
+    float DistSq = ToChunk.SizeSquared();
+
+    // 1. Horizon Culling (Backface)
+    // Simple approximation: Dot product of Chunk Normal (Pos normalized) and Vector to Observer
+    // If the chunk is facing away from the observer, cull it.
+    // We use a small tolerance because chunks have height.
+    FVector ChunkNormal = PlanetLocalPos.GetSafeNormal();
+    FVector ToObserverDir = -ToChunk.GetSafeNormal();
+
+    // If Dot < -0.2, it's well over the horizon.
+    if ((ChunkNormal | ToObserverDir) < FPlanetStatics::HorizonCullingDot)
+        return;
+
+    // 2. Frustum Culling
+    // Is the chunk roughly in front of the camera?
+    // Allow 90+ degrees FOV (Dot > 0.0) or even wider to prevent popping at edges.
+    // If ObserverForward is Zero (Editor Mode), skip this check.
+    if (!Context.ObserverForward.IsZero() && (ToChunk.GetSafeNormal() | Context.ObserverForward) < FPlanetStatics::FrustumCullingDot)
+        return;
+
+    // No LOD calculation. Always add the chunk if it passes culling.
+    OutRequired.Add(Id);
+
+    // Ensure the chunk data container exists and has its transform info updated.
+    FChunk *Chunk = GetChunk(Id);
+    if (Chunk)
     {
-        for (int32 y = 0; y < GridSize; ++y)
-        {
-            FIntVector Coords(x, y, 0);
-
-            // WorldPos here is actually Planet-Relative Position (0,0,0 is center)
-            FVector PlanetLocalPos = GetChunkCenter(Face, x, y);
-            FVector ToChunk = PlanetLocalPos - Context.ObserverLocation;
-            float DistSq = ToChunk.SizeSquared();
-
-            // 1. Horizon Culling (Backface)
-            // Simple approximation: Dot product of Chunk Normal (Pos normalized) and Vector to Observer
-            // If the chunk is facing away from the observer, cull it.
-            // We use a small tolerance because chunks have height.
-            FVector ChunkNormal = PlanetLocalPos.GetSafeNormal();
-            FVector ToObserverDir = -ToChunk.GetSafeNormal();
-
-            // If Dot < -0.2, it's well over the horizon.
-            if ((ChunkNormal | ToObserverDir) < FPlanetStatics::HorizonCullingDot)
-                continue;
-
-            // 2. Frustum Culling
-            // Is the chunk roughly in front of the camera?
-            // Allow 90+ degrees FOV (Dot > 0.0) or even wider to prevent popping at edges.
-            // If ObserverForward is Zero (Editor Mode), skip this check.
-            if (!Context.ObserverForward.IsZero() && (ToChunk.GetSafeNormal() | Context.ObserverForward) < FPlanetStatics::FrustumCullingDot)
-                continue;
-
-            // No LOD calculation. Always add the chunk if it passes culling.
-            FChunkId RequiredId(Face, Coords);
-            OutRequired.Add(RequiredId);
-
-            // Ensure the chunk data container exists and has its transform info updated.
-            FChunk *Chunk = GetChunk(RequiredId);
-            if (Chunk)
-            {
-                Chunk->Transform.Location = PlanetLocalPos;
-                Chunk->Transform.FaceNormal = FMathUtils::getFaceNormal(Face);
-                Chunk->Transform.Scale = 1.0f;
-            }
-        }
+        Chunk->Transform.Location = PlanetLocalPos;
+        Chunk->Transform.FaceNormal = FMathUtils::getFaceNormal(Face);
+        Chunk->Transform.Scale = 1.0f;  // Scale is relative to planet radius, usually 1.0 unless we scale the actor
     }
 }
 
@@ -286,16 +291,26 @@ void FChunkManager::DrawDebugChunkBounds(const UWorld *World) const
 }
 
 
-FVector FChunkManager::GetChunkCenter(uint8 Face, int32 X, int32 Y) const
+void FChunkManager::GetUVBounds(const FChunkId &Id, FVector2D &OutMin, FVector2D &OutMax) const
 {
-    float Step = 1.0f / Config.ChunksPerFace;
-    FVector2D UVMin(X * Step, Y * Step);
-    FVector2D UVMax((X + 1) * Step, (Y + 1) * Step);
+    // Step size depends on LOD Level.
+    // LOD 0 = 1.0, LOD 1 = 0.5, LOD 2 = 0.25, etc.
+    float Step = 1.0f / (float)(1 << Id.LODLevel);
+
+    OutMin = FVector2D(Id.Coords.X * Step, Id.Coords.Y * Step);
+    OutMax = FVector2D((Id.Coords.X + 1) * Step, (Id.Coords.Y + 1) * Step);
+}
+
+
+FVector FChunkManager::GetChunkCenter(const FChunkId &Id) const
+{
+    FVector2D UVMin, UVMax;
+    GetUVBounds(Id, UVMin, UVMax);
     FVector2D CenterUV = (UVMin + UVMax) * 0.5f;
 
-    FVector Normal = FMathUtils::getFaceNormal(Face);
-    FVector Right = FMathUtils::getFaceRight(Face);
-    FVector Up = FMathUtils::getFaceUp(Face);
+    FVector Normal = FMathUtils::getFaceNormal(Id.FaceIndex);
+    FVector Right = FMathUtils::getFaceRight(Id.FaceIndex);
+    FVector Up = FMathUtils::getFaceUp(Id.FaceIndex);
 
     FVector CubePos = Normal + (Right * (CenterUV.X * 2.0f - 1.0f)) + (Up * (CenterUV.Y * 2.0f - 1.0f));
 
@@ -331,15 +346,15 @@ FChunkId FChunkManager::GetChunkIdAt(const FVector &LocalPosition) const
     float U = (FVector::DotProduct(CubePos, Right) + 1.0f) * 0.5f;
     float V = (FVector::DotProduct(CubePos, Up) + 1.0f) * 0.5f;
 
-    // Map to Grid Coords
-    int32 X = FMath::FloorToInt(U * Config.ChunksPerFace);
-    int32 Y = FMath::FloorToInt(V * Config.ChunksPerFace);
+    // Map to Grid Coords (Assuming LOD 0 for now)
+    int32 X = FMath::FloorToInt(U);  // At LOD 0, range is 0..1, so index is 0
+    int32 Y = FMath::FloorToInt(V);
 
     // Clamp
-    X = FMath::Clamp(X, 0, Config.ChunksPerFace - 1);
-    Y = FMath::Clamp(Y, 0, Config.ChunksPerFace - 1);
+    X = 0;
+    Y = 0;
 
-    return FChunkId(Face, FIntVector(X, Y, 0));
+    return FChunkId(Face, FIntVector(X, Y, 0), 0);
 }
 
 
@@ -393,10 +408,8 @@ void FChunkManager::StartAsyncGeneration(const FChunkId &Id)
     uint32 GenId = Chunk->GenerationId;
 
     // Reconstruct Spatial Data
-    int32 ChunksPerFace = Config.ChunksPerFace;
-    float Step = 1.0f / ChunksPerFace;
-    FVector2D UVMin(Id.Coords.X * Step, Id.Coords.Y * Step);
-    FVector2D UVMax((Id.Coords.X + 1) * Step, (Id.Coords.Y + 1) * Step);
+    FVector2D UVMin, UVMax;
+    GetUVBounds(Id, UVMin, UVMax);
 
     // Remap UVs (0..1) to Cube Coordinates (-1..1)
     FVector2D CubeMin = UVMin * 2.0f - 1.0f;
@@ -428,7 +441,7 @@ void FChunkManager::StartAsyncGeneration(const FChunkId &Id)
 
     // LOD Config
     int32 Resolution = Config.GridResolution;
-    int32 LODLevel = 0;  // No LODs anymore
+    int32 LODLevel = Id.LODLevel;
 
     // Copy Generator Config (Thread Safety)
     DensityGenerator ThreadGen = *Generator;
