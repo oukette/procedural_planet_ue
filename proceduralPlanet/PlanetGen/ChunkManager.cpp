@@ -170,48 +170,85 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 
 void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired)
 {
-    // PHASE 1: Just iterate the root nodes (LOD 0)
-    // In Phase 2, this will become a recursive function traversing the tree.
+    // Start recursion from root
+    UpdateNode(RootNodes[Face].Get(), Context, OutRequired);
+}
 
-    // We know RootNodes[Face] corresponds to this face.
-    const FQuadtreeNode *Node = RootNodes[Face].Get();
-    FChunkId Id = Node->Id;
 
-    // WorldPos here is actually Planet-Relative Position (0,0,0 is center)
-    FVector PlanetLocalPos = GetChunkCenter(Id);
-
-    FVector ToChunk = PlanetLocalPos - Context.ObserverLocation;
-    float DistSq = ToChunk.SizeSquared();
+void FChunkManager::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired)
+{
+    FVector Center = GetChunkCenter(Node->Id);
+    FVector ToChunk = Center - Context.ObserverLocation;
 
     // 1. Horizon Culling (Backface)
-    // Simple approximation: Dot product of Chunk Normal (Pos normalized) and Vector to Observer
-    // If the chunk is facing away from the observer, cull it.
-    // We use a small tolerance because chunks have height.
-    FVector ChunkNormal = PlanetLocalPos.GetSafeNormal();
+    FVector ChunkNormal = Center.GetSafeNormal();
     FVector ToObserverDir = -ToChunk.GetSafeNormal();
 
-    // If Dot < -0.2, it's well over the horizon.
     if ((ChunkNormal | ToObserverDir) < FPlanetStatics::HorizonCullingDot)
         return;
 
     // 2. Frustum Culling
-    // Is the chunk roughly in front of the camera?
-    // Allow 90+ degrees FOV (Dot > 0.0) or even wider to prevent popping at edges.
-    // If ObserverForward is Zero (Editor Mode), skip this check.
     if (!Context.ObserverForward.IsZero() && (ToChunk.GetSafeNormal() | Context.ObserverForward) < FPlanetStatics::FrustumCullingDot)
         return;
 
-    // No LOD calculation. Always add the chunk if it passes culling.
-    OutRequired.Add(Id);
-
-    // Ensure the chunk data container exists and has its transform info updated.
-    FChunk *Chunk = GetChunk(Id);
-    if (Chunk)
+    // 3. Split Check
+    if (ShouldSplit(Node, Context.ObserverLocation))
     {
-        Chunk->Transform.Location = PlanetLocalPos;
-        Chunk->Transform.FaceNormal = FMathUtils::getFaceNormal(Face);
-        Chunk->Transform.Scale = 1.0f;  // Scale is relative to planet radius, usually 1.0 unless we scale the actor
+        if (Node->IsLeaf())
+        {
+            // Create Children
+            int32 NextLOD = Node->Id.LODLevel + 1;
+            int32 X = Node->Id.Coords.X;
+            int32 Y = Node->Id.Coords.Y;
+            uint8 Face = Node->Id.FaceIndex;
+
+            Node->Children.Add(MakeUnique<FQuadtreeNode>(FChunkId(Face, FIntVector(X * 2, Y * 2, 0), NextLOD), Node));
+            Node->Children.Add(MakeUnique<FQuadtreeNode>(FChunkId(Face, FIntVector(X * 2 + 1, Y * 2, 0), NextLOD), Node));
+            Node->Children.Add(MakeUnique<FQuadtreeNode>(FChunkId(Face, FIntVector(X * 2, Y * 2 + 1, 0), NextLOD), Node));
+            Node->Children.Add(MakeUnique<FQuadtreeNode>(FChunkId(Face, FIntVector(X * 2 + 1, Y * 2 + 1, 0), NextLOD), Node));
+        }
+
+        for (auto &Child : Node->Children)
+        {
+            UpdateNode(Child.Get(), Context, OutRequired);
+        }
     }
+    else
+    {
+        // Merge (if it has children, remove them)
+        if (!Node->IsLeaf())
+        {
+            Node->Children.Empty();
+        }
+
+        // Add this node as a required chunk
+        OutRequired.Add(Node->Id);
+
+        // Update Transform info for the chunk (needed for rendering)
+        FChunk *Chunk = GetChunk(Node->Id);
+        if (Chunk)
+        {
+            Chunk->Transform.Location = Center;
+            Chunk->Transform.FaceNormal = FMathUtils::getFaceNormal(Node->Id.FaceIndex);
+            Chunk->Transform.Scale = 1.0f;
+        }
+    }
+}
+
+
+bool FChunkManager::ShouldSplit(const FQuadtreeNode *Node, const FVector &ObserverLocal) const
+{
+    if (Node->Id.LODLevel >= Config.MaxLOD)
+        return false;
+
+    FVector Center = GetChunkCenter(Node->Id);
+    float Dist = FVector::Dist(Center, ObserverLocal);
+
+    // Calculate physical size of this node (arc length)
+    // Base Arc Length (LOD 0) is (PI * R) / 2
+    float NodeSize = (Config.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
+
+    return Dist < (NodeSize * Config.LODSplitDistanceMultiplier);
 }
 
 

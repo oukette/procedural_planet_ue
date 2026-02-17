@@ -74,6 +74,12 @@ class FChunkManager
         // Loop (Replaces UpdateAllChunksLOD)
         void UpdateFace(uint8 Face, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired);
 
+        // Recursive traversal to determine visible chunks
+        void UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired);
+
+        // Helper to determine if a node should split
+        bool ShouldSplit(const FQuadtreeNode *Node, const FVector &ObserverLocal) const;
+
         // Helper to calculate the world position of a chunk center
         FVector GetChunkCenter(const FChunkId &Id) const;
 

@@ -304,6 +304,10 @@ struct FPlanetConfig
         int32 ChunkGenerationRate;  // Chunks to start generating per tick
         int32 MeshUpdatesPerFrame;
 
+        // LOD Rules
+        int32 MaxLOD;
+        float LODSplitDistanceMultiplier;
+
         // Default Constructor
         FPlanetConfig() :
             PlanetRadius(10000.f),
@@ -315,7 +319,9 @@ struct FPlanetConfig
             GridResolution(32),
             MaxConcurrentGenerations(32),
             ChunkGenerationRate(8),
-            MeshUpdatesPerFrame(2)
+            MeshUpdatesPerFrame(2),
+            MaxLOD(8),
+            LODSplitDistanceMultiplier(2.0f)
         {
         }
 };
