@@ -16,12 +16,6 @@ APlanet::APlanet()
 
     Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
     RootComponent = Root;
-
-    // Default LOD settings. LOD 0 is highest detail, closest.
-    if (LODSettings.LODLayers.Num() == 0)
-    {
-        LODSettings.LODLayers = FPlanetStatics::GetDefaultLODs();
-    }
 }
 
 
@@ -59,9 +53,6 @@ void APlanet::Tick(float DeltaTime)
 
     // 2. Update Manager
     UpdateChunkManager(Context);
-
-    // 3. Handle Far Model Visibility
-    UpdateFarModelVisibility(Context);
 
     // 4. Debug Output
     DrawDebugInfo(Context);
@@ -136,13 +127,6 @@ void APlanet::initPlanet()
 
     CalculateAutoGrid(FinalChunksPerFace, FinalVoxelSize, FinalResolution);
 
-    // 3. Calculate Auto LODs
-    TArray<FLODInfo> FinalLODs;
-    // Calculate the physical arc length of a single chunk (Face Arc / Count)
-    float ChunkArcLength = (GenSettings.PlanetRadius * HALF_PI) / FinalChunksPerFace;
-
-    CalculateAutoLODs(FinalLODs, ChunkArcLength);
-
     // Initialize the planet config struct to feed the ChunkManager
     RuntimeConfig = FPlanetConfig();
     RuntimeConfig.PlanetRadius = GenSettings.PlanetRadius;
@@ -152,17 +136,6 @@ void APlanet::initPlanet()
     RuntimeConfig.bCastShadows = GenSettings.bCastShadows;
     RuntimeConfig.VoxelSize = FinalVoxelSize;
     RuntimeConfig.GridResolution = FinalResolution;
-    RuntimeConfig.LODLayers = FinalLODs;  // The calculated LODs!
-    RuntimeConfig.CollisionDistance = LODSettings.CollisionDistance;
-
-    // Calculate the hard cutoff for the ChunkManager.
-    // We want the manager to keep running until chunks have naturally despawned via LOD hysteresis.
-    // So we set this threshold slightly beyond the max LOD distance * despawn hysteresis.
-    float MaxLODDist = (FinalLODs.Num() > 0) ? FinalLODs.Last().Distance : LODSettings.RenderDistance;
-    RuntimeConfig.FarDistanceThreshold = MaxLODDist * LODSettings.DespawnHysteresis * FPlanetStatics::FarDistanceSafetyMargin;
-
-    RuntimeConfig.LODHysteresis = LODSettings.Hysteresis;
-    RuntimeConfig.LODDespawnHysteresis = LODSettings.DespawnHysteresis;
     RuntimeConfig.MaxConcurrentGenerations = PerformanceSettings.MaxConcurrentGenerations;
     RuntimeConfig.ChunkGenerationRate = PerformanceSettings.ChunksToSpawnPerFrame;
     RuntimeConfig.MeshUpdatesPerFrame = PerformanceSettings.MeshUpdatesPerFrame;
@@ -189,58 +162,12 @@ void APlanet::CalculateAutoGrid(int32 &OutChunksPerFace, float &OutVoxelSize, in
     // Default to settings
     OutResolution = FMath::Max(4, GridSettings.Resolution);
 
-    // 1. Calculate the arc length of a face (90 degrees)
+    // FORCE 1 Chunk per face for the "Clean State"
+    OutChunksPerFace = 1;
+
+    // Recalculate VoxelSize to ensure the grid perfectly covers the face arc.
     const float FaceArcLength = GenSettings.PlanetRadius * HALF_PI;
-
-    if (GridSettings.bAutoChunkSizing)
-    {
-        // 2. Determine chunk count based on a target physical size.
-        // We aim for chunks to be roughly 4000 units wide to balance draw calls vs culling.
-        // This ensures we don't have too many chunks on small planets, and chunks aren't too small.
-        const float TargetChunkSize = FPlanetStatics::TargetAutoChunkSize;
-
-        int32 RawCount = FMath::RoundToInt(FaceArcLength / TargetChunkSize);
-
-        // 3. Clamp count to user settings
-        OutChunksPerFace = FMath::Clamp(RawCount, GridSettings.MinChunksPerFace, GridSettings.MaxChunksPerFace);
-    }
-    else
-    {
-        OutChunksPerFace = GridSettings.ChunksPerFace;
-    }
-
-    // 4. CRITICAL: Recalculate VoxelSize to ensure the grid perfectly covers the face arc.
     OutVoxelSize = FaceArcLength / (OutChunksPerFace * OutResolution);
-}
-
-
-void APlanet::CalculateAutoLODs(TArray<FLODInfo> &OutLODs, float ChunkArcLength) const
-{
-    OutLODs.Empty();
-
-    if (LODSettings.bAutoLOD)
-    {
-        int32 BaseRes = GridSettings.Resolution;
-
-        // Define distance thresholds relative to chunk size.
-        // This ensures that as chunks get bigger (bigger planet), the LOD transitions push out.
-        float D0 = ChunkArcLength * FPlanetStatics::AutoLOD_Ratio0;
-        float D1 = ChunkArcLength * FPlanetStatics::AutoLOD_Ratio1;
-        float D2 = ChunkArcLength * FPlanetStatics::AutoLOD_Ratio2;
-
-        // The last LOD should extend to the render distance
-        float D3 = FMath::Max(ChunkArcLength * FPlanetStatics::AutoLOD_Ratio3, LODSettings.RenderDistance);
-
-        OutLODs.Add({D0, BaseRes});
-        OutLODs.Add({D1, FMath::Max(4, BaseRes / 2)});
-        OutLODs.Add({D2, FMath::Max(4, BaseRes / 4)});
-        OutLODs.Add({D3, FMath::Max(4, BaseRes / 8)});
-    }
-    else
-    {
-        OutLODs = LODSettings.LODLayers;
-        OutLODs.Sort([](const FLODInfo &A, const FLODInfo &B) { return A.Distance < B.Distance; });  // Sort levels
-    }
 }
 
 
@@ -325,8 +252,6 @@ FPlanetViewContext APlanet::BuildViewContext() const
         }
     }
 
-    Context.ViewDistance = LODSettings.RenderDistance;
-    Context.MaxAllowedLOD = LODSettings.LODLayers.Num() - 1;
 
     return Context;
 }
@@ -346,44 +271,6 @@ void APlanet::UpdateChunkManager(const FPlanetViewContext &Context)
         if (GenSettings.bShowDebugChunkBounds)
         {
             ChunkManager->DrawDebugChunkBounds(GetWorld());
-        }
-    }
-}
-
-
-void APlanet::UpdateFarModelVisibility(const FPlanetViewContext &Context)
-{
-    // We do this here because the Actor owns the FarModel component/actor.
-    if (GenSettings.FarPlanetModel)
-    {
-        float DistToCenter = FVector::Dist(GetActorLocation(), Context.ObserverLocation);
-        float DistToSurface = DistToCenter - GenSettings.PlanetRadius;
-
-        // Hysteresis logic for Far Model
-        // ShowThreshold: Distance to SHOW the far model (getting farther)
-        float ShowThreshold = LODSettings.RenderDistance * FPlanetStatics::FarModelDistanceRatio;
-
-        // HideThreshold: Distance to HIDE the far model (getting closer)
-        // We keep it visible a bit longer to ensure chunks have fully spawned underneath.
-        float HideThreshold = LODSettings.RenderDistance * FPlanetStatics::FarModelHideRatio;
-
-        bool bIsVisible = !GenSettings.FarPlanetModel->IsHidden();
-
-        if (bIsVisible)
-        {
-            // We are in Far Mode. Switch to Near only if we get close enough.
-            if (DistToSurface < HideThreshold)
-            {
-                GenSettings.FarPlanetModel->SetActorHiddenInGame(true);
-            }
-        }
-        else
-        {
-            // We are in Near Mode. Switch to Far only if we get far enough.
-            if (DistToSurface > ShowThreshold)
-            {
-                GenSettings.FarPlanetModel->SetActorHiddenInGame(false);
-            }
         }
     }
 }

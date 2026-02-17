@@ -81,8 +81,6 @@ FChunk *FChunkManager::GetChunk(const FChunkId &Id)
 
 void FChunkManager::Update(const FPlanetViewContext &Context)
 {
-    // 1. Check Far Model Condition
-    // If we are very far away, we don't want ANY chunks.
     FVector ObserverLocal = Context.ObserverLocation;
     FVector ObserverForwardLocal = Context.ObserverForward;
 
@@ -93,47 +91,18 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
         ObserverForwardLocal = OwnerTM.InverseTransformVector(Context.ObserverForward);
     }
 
-    float DistToCenter = ObserverLocal.Size();
-    float DistToSurface = DistToCenter - Config.PlanetRadius;
-
-    // Use RenderDistance as the threshold for switching to Far Model
-    bool bUseFarModel = DistToSurface > Config.FarDistanceThreshold;
-
     // We use a Set to keep track of what SHOULD exist this frame.
     TSet<FChunkId> RequiredChunks;
 
-    // 2. Determine Required Chunks
-    if (!bUseFarModel)
+    // Pass the LOCAL observer position to UpdateFace
+    FPlanetViewContext LocalContext = Context;
+    LocalContext.ObserverLocation = ObserverLocal;
+    LocalContext.ObserverForward = ObserverForwardLocal;
+
+    for (uint8 Face = 0; Face < 6; ++Face)
     {
-        // UNDERGROUND CHECK
-        // If we are significantly below the surface, standard LOD distance logic fails (distance to surface chunks becomes large).
-        // We switch to "Cave Mode": Only load the chunk we are inside.
-        const float UndergroundThreshold = FPlanetStatics::UndergroundThreshold;  // 1 meter below "sea level"
-
-        if (DistToSurface < UndergroundThreshold)
-        {
-            // Find the chunk we are currently inside
-            FChunkId CurrentChunk = GetChunkIdAt(ObserverLocal);
-            // Force it to be required at LOD 0
-            RequiredChunks.Add(CurrentChunk);
-
-            // Optional: Add neighbors if we want to see slightly further underground
-        }
-        else
-        {
-            // SURFACE LOGIC
-            // Pass the LOCAL observer position to UpdateFace
-            FPlanetViewContext LocalContext = Context;
-            LocalContext.ObserverLocation = ObserverLocal;
-            LocalContext.ObserverForward = ObserverForwardLocal;
-
-            for (uint8 Face = 0; Face < 6; ++Face)
-            {
-                UpdateFace(Face, LocalContext, RequiredChunks);
-            }
-        }
+        UpdateFace(Face, LocalContext, RequiredChunks);
     }
-    // If bUseFarModel is true, RequiredChunks remains empty, causing the loop below to unload everything.
 
     // 3. Process State Changes
     TArray<FChunkId> ChunksToRemove;
@@ -224,40 +193,17 @@ void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TS
             if (!Context.ObserverForward.IsZero() && (ToChunk.GetSafeNormal() | Context.ObserverForward) < FPlanetStatics::FrustumCullingDot)
                 continue;
 
-            // 2. Find current LOD for this grid cell, if any chunk exists
-            int32 CurrentLOD = -1;
-            for (int32 lod = 0; lod < Config.LODLayers.Num(); ++lod)
+            // No LOD calculation. Always add the chunk if it passes culling.
+            FChunkId RequiredId(Face, Coords);
+            OutRequired.Add(RequiredId);
+
+            // Ensure the chunk data container exists and has its transform info updated.
+            FChunk *Chunk = GetChunk(RequiredId);
+            if (Chunk)
             {
-                FChunkId testId(Face, lod, Coords);
-                // Only consider chunks that are actually valid/visible as the "Current" LOD.
-                // This prevents the system from thinking an "Unloading" chunk is still active, which was blocking the target LOD calculation.
-                if (TUniquePtr<FChunk> *FoundChunk = Chunks.Find(testId))
-                {
-                    if (FoundChunk->Get()->State == EChunkState::Visible || FoundChunk->Get()->State == EChunkState::Ready)
-                    {
-                        CurrentLOD = lod;
-                        break;
-                    }
-                }
-            }
-
-            // 3. Calculate Target LOD using hysteresis
-            int32 TargetLOD = CalculateTargetLOD(DistSq, CurrentLOD);
-
-            // 4. If a chunk is required (TargetLOD is valid), add its ID to the set.
-            if (TargetLOD != -1)
-            {
-                FChunkId RequiredId(Face, TargetLOD, Coords);
-                OutRequired.Add(RequiredId);
-
-                // Ensure the chunk data container exists and has its transform info updated. This is important for new chunks.
-                FChunk *Chunk = GetChunk(RequiredId);
-                if (Chunk)
-                {
-                    Chunk->Transform.Location = PlanetLocalPos;
-                    Chunk->Transform.FaceNormal = FMathUtils::getFaceNormal(Face);
-                    Chunk->Transform.Scale = 1.0f;
-                }
+                Chunk->Transform.Location = PlanetLocalPos;
+                Chunk->Transform.FaceNormal = FMathUtils::getFaceNormal(Face);
+                Chunk->Transform.Scale = 1.0f;
             }
         }
     }
@@ -393,61 +339,7 @@ FChunkId FChunkManager::GetChunkIdAt(const FVector &LocalPosition) const
     X = FMath::Clamp(X, 0, Config.ChunksPerFace - 1);
     Y = FMath::Clamp(Y, 0, Config.ChunksPerFace - 1);
 
-    // Return ID at LOD 0
-    return FChunkId(Face, 0, FIntVector(X, Y, 0));
-}
-
-
-int32 FChunkManager::CalculateTargetLOD(float DistanceSq, int32 CurrentLOD) const
-{
-    // If a chunk is already active, use hysteresis to prevent rapid switching
-    if (CurrentLOD != -1)
-    {
-        // Check for UPGRADE to a higher-detail LOD (smaller index)
-        if (CurrentLOD > 0)
-        {
-            const float UpgradeDistSq = FMath::Square(Config.LODLayers[CurrentLOD - 1].Distance);
-            if (DistanceSq < UpgradeDistSq)
-            {
-                return CurrentLOD - 1;
-            }
-        }
-
-        // Check for DOWNGRADE to a lower-detail LOD (larger index)
-        if (CurrentLOD < Config.LODLayers.Num() - 1)
-        {
-            const float DowngradeDistSq = FMath::Square(Config.LODLayers[CurrentLOD].Distance * Config.LODHysteresis);
-            if (DistanceSq > DowngradeDistSq)
-            {
-                return CurrentLOD + 1;
-            }
-        }
-
-        // Check for DESPAWN (distance is beyond the largest LOD's range)
-        const float LastLODDist = Config.LODLayers.Last().Distance;
-        const float DespawnDistSq = FMath::Square(LastLODDist * Config.LODDespawnHysteresis);
-        if (DistanceSq > DespawnDistSq)
-        {
-            return -1;  // Despawn
-        }
-
-        return CurrentLOD;  // No change
-    }
-
-    // No active chunk, determine if we need to spawn one
-    for (int32 LodIndex = 0; LodIndex < Config.LODLayers.Num(); ++LodIndex)
-    {
-        float Threshold = Config.LODLayers[LodIndex].Distance;
-
-        // Use squared distance for performance (avoid Sqrt)
-        if (DistanceSq < (Threshold * Threshold))
-        {
-            return LodIndex;  // Spawn at this LOD
-        }
-    }
-
-    // If further than the last LOD setting, it's too far.
-    return -1;
+    return FChunkId(Face, FIntVector(X, Y, 0));
 }
 
 
@@ -535,8 +427,8 @@ void FChunkManager::StartAsyncGeneration(const FChunkId &Id)
     }
 
     // LOD Config
-    int32 Resolution = Config.LODLayers[Id.LOD].VoxelResolution;
-    int32 LODLevel = Id.LOD;
+    int32 Resolution = Config.GridResolution;
+    int32 LODLevel = 0;  // No LODs anymore
 
     // Copy Generator Config (Thread Safety)
     DensityGenerator ThreadGen = *Generator;
@@ -570,13 +462,6 @@ void FChunkManager::OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniq
     if (Chunk->GenerationId != GenId)
         return;  // Stale task (Chunk was reset/regenerated)
 
-    // Apply Debug Colors based on LOD
-    if (MeshData && MeshData->Vertices.Num() > 0)
-    {
-        FColor DebugColor = (Id.LOD < LODColorsDebug.Num()) ? LODColorsDebug[Id.LOD] : FColor::White;
-        // Ensure Colors array is sized correctly
-        MeshData->Colors.Init(DebugColor, MeshData->Vertices.Num());
-    }
 
     // Store Data
     Chunk->MeshData = MoveTemp(MeshData);

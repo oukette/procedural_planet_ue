@@ -39,16 +39,12 @@ class PROCEDURALPLANET_API APlanet : public AActor
         void CreateFarModel();
 
         // Calculates the optimal grid size (ChunksPerFace) and VoxelSize based on Planet Radius.
-        void CalculateAutoGrid(int32& OutChunksPerFace, float& OutVoxelSize, int32& OutResolution) const;
-
-        // Calculates LOD distances based on the physical size of a chunk.
-        void CalculateAutoLODs(TArray<FLODInfo>& OutLODs, float ChunkArcLength) const;
+        void CalculateAutoGrid(int32 &OutChunksPerFace, float &OutVoxelSize, int32 &OutResolution) const;
 
         // Tick Helpers
         FPlanetViewContext BuildViewContext() const;
-        void UpdateChunkManager(const FPlanetViewContext& Context);
-        void UpdateFarModelVisibility(const FPlanetViewContext& Context);
-        void DrawDebugInfo(const FPlanetViewContext& Context) const;
+        void UpdateChunkManager(const FPlanetViewContext &Context);
+        void DrawDebugInfo(const FPlanetViewContext &Context) const;
 
     public:
         APlanet();
@@ -79,10 +75,6 @@ class PROCEDURALPLANET_API APlanet : public AActor
         // --- Noise ---
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         FNoiseSettings NoiseSettings;
-
-        // --- LOD Settings ---
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-        FPlanetLODSettings LODSettings;
 
         // --- Performance ---
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")

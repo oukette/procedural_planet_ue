@@ -59,9 +59,6 @@ class FChunkManager
         // Helper to find which chunk contains a specific local position
         FChunkId GetChunkIdAt(const FVector &LocalPosition) const;
 
-        // Math (Replaces DetermineTargetLOD)
-        int32 CalculateTargetLOD(float DistanceSq, int32 CurrentLOD) const;
-
         // State Machine (Replaces ApplyChunkStateChange)
         void HandleChunkState(FChunk *Chunk, int32 TargetLOD);
 

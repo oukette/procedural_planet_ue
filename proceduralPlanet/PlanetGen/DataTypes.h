@@ -30,28 +30,20 @@ struct FChunkId
         UPROPERTY(EditAnywhere, BlueprintReadWrite)
         FIntVector Coords;  // Face-local grid coordinates (X, Y)
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite)
-        int32 LOD;
-
         FChunkId() :
             FaceIndex(0),
-            Coords(FIntVector::ZeroValue),
-            LOD(0)
+            Coords(FIntVector::ZeroValue)
         {
         }
-        FChunkId(uint8 InFace, int32 InLOD, FIntVector InCoords) :
+        FChunkId(uint8 InFace, FIntVector InCoords) :
             FaceIndex(InFace),
-            Coords(InCoords),
-            LOD(InLOD)
+            Coords(InCoords)
         {
         }
 
-        bool operator==(const FChunkId &Other) const { return FaceIndex == Other.FaceIndex && LOD == Other.LOD && Coords == Other.Coords; }
+        bool operator==(const FChunkId &Other) const { return FaceIndex == Other.FaceIndex && Coords == Other.Coords; }
 
-        friend uint32 GetTypeHash(const FChunkId &Other)
-        {
-            return HashCombine(HashCombine(GetTypeHash(Other.FaceIndex), GetTypeHash(Other.LOD)), GetTypeHash(Other.Coords));
-        }
+        friend uint32 GetTypeHash(const FChunkId &Other) { return HashCombine(GetTypeHash(Other.FaceIndex), GetTypeHash(Other.Coords)); }
 };
 
 
@@ -138,25 +130,6 @@ struct FPlanetViewContext
 
         UPROPERTY()
         float ViewDistance;
-
-        UPROPERTY()
-        int32 MaxAllowedLOD;
-};
-
-
-// A struct to define settings for a single Level of Detail.
-USTRUCT(BlueprintType)
-struct FLODInfo
-{
-        GENERATED_BODY()
-
-        // Distance at which this LOD (and higher detail ones) becomes active.
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LOD")
-        float Distance = 10000.f;
-
-        // Voxel resolution for chunks at this LOD.
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "LOD")
-        int32 VoxelResolution = 32;
 };
 
 
@@ -191,23 +164,6 @@ struct FPlanetStatics
         static constexpr float HorizonCullingDot = -0.2f;
         static constexpr float FrustumCullingDot = -0.2f;
         static constexpr float GridDebugRadiusScale = 1.002f;
-
-        // Auto LOD Ratios
-        static constexpr float AutoLOD_Ratio0 = 1.25f;
-        static constexpr float AutoLOD_Ratio1 = 2.5f;
-        static constexpr float AutoLOD_Ratio2 = 6.0f;
-        static constexpr float AutoLOD_Ratio3 = 10.0f;
-
-        // Default LOD definitions
-        static TArray<FLODInfo> GetDefaultLODs()
-        {
-            return {
-                {5000.f, 64},   // LOD 0
-                {15000.f, 32},  // LOD 1
-                {30000.f, 16},  // LOD 2
-                {60000.f, 8}    // LOD 3
-            };
-        }
 };
 
 
@@ -275,32 +231,6 @@ struct FPlanetGridSettings
 };
 
 
-// Planet LOD settings.
-USTRUCT(BlueprintType)
-struct FPlanetLODSettings
-{
-        GENERATED_BODY()
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-        bool bAutoLOD = true;
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "1000.0"))
-        float RenderDistance = 150000.0f;
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-        TArray<FLODInfo> LODLayers;
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "100.0"))
-        float CollisionDistance = 6000.0f;
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "1.0", ClampMax = "2.0"))
-        float Hysteresis = 1.1f;
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "1.0", ClampMax = "2.0"))
-        float DespawnHysteresis = 1.1f;
-};
-
-
 // Planet perf settings.
 USTRUCT(BlueprintType)
 struct FPlanetPerformanceSettings
@@ -360,12 +290,6 @@ struct FPlanetConfig
         float VoxelSize;       // true size of a voxel in the UE world
         int32 GridResolution;  // resolution of the voxel grid in voxels
 
-        // LOD Rules
-        TArray<FLODInfo> LODLayers;
-        float CollisionDistance;
-        float LODHysteresis;
-        float LODDespawnHysteresis;
-        float FarDistanceThreshold;  // Distance to switch to Far Model
 
         // Throttling
         int32 MaxConcurrentGenerations;
@@ -375,16 +299,12 @@ struct FPlanetConfig
         // Default Constructor
         FPlanetConfig() :
             PlanetRadius(10000.f),
-            ChunksPerFace(16),
+            ChunksPerFace(1),
             Seed(1337),
             bEnableCollision(false),
             bCastShadows(false),
             VoxelSize(100.f),
             GridResolution(32),
-            CollisionDistance(6000.f),
-            LODHysteresis(1.1f),
-            LODDespawnHysteresis(1.1f),
-            FarDistanceThreshold(200000.0f),
             MaxConcurrentGenerations(32),
             ChunkGenerationRate(8),
             MeshUpdatesPerFrame(2)
