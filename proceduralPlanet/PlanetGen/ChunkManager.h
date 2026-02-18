@@ -73,7 +73,7 @@ class FChunkManager
         // Helper to get a chunk from the map if it exists, otherwise create it
         FChunk *GetChunk(const FChunkId &Id);
 
-        // Loop (Replaces UpdateAllChunksLOD)
+        // Loop
         void UpdateFace(uint8 Face, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired);
 
         // Recursive traversal to determine visible chunks
@@ -91,10 +91,10 @@ class FChunkManager
         // Helper to find which chunk contains a specific local position
         FChunkId GetChunkIdAt(const FVector &LocalPosition) const;
 
-        // State Machine (Replaces ApplyChunkStateChange)
+        // State Machine
         void HandleChunkState(FChunk *Chunk, int32 TargetLOD);
 
-        // Throttling (Replaces ProcessSpawnQueue)
+        // Throttling
         void ProcessQueues();
         void ProcessGenerationQueue();
 

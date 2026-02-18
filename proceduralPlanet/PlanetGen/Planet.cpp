@@ -110,6 +110,13 @@ void APlanet::ClearPlanet()
 }
 
 
+FVector APlanet::GetGravityDirection(const FVector &WorldLocation) const
+{
+    // Gravity pulls towards the actor location (Planet Center)
+    return (GetActorLocation() - WorldLocation).GetSafeNormal();
+}
+
+
 void APlanet::initPlanet()
 {
     // 1. Handle Visuals (Far Model)
@@ -144,6 +151,9 @@ void APlanet::initPlanet()
     RuntimeConfig.MeshUpdatesPerFrame = PerformanceSettings.MeshUpdatesPerFrame;
     RuntimeConfig.FarDistanceThreshold = GenSettings.PlanetRadius * GenSettings.RenderDistanceMultiplier;
     RuntimeConfig.LODSplitDistanceMultiplier = GridSettings.LODSplitMultiplier;
+    RuntimeConfig.MaxLookAheadTime = PerformanceSettings.MaxLookAheadTime;
+    RuntimeConfig.MinLookAheadTime = PerformanceSettings.MinLookAheadTime;
+    RuntimeConfig.LookAheadAltitudeScale = PerformanceSettings.LookAheadAltitudeRadiusFactor * GenSettings.PlanetRadius;
 
     // Create Noise Provider
     NoiseProvider = MakeUnique<SimpleNoise>();
@@ -344,5 +354,29 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
     float DistToSurface = DistToCenter - GenSettings.PlanetRadius;
     FString Status = (DistToSurface < 0) ? TEXT("UNDERGROUND") : TEXT("SURFACE");
     GEngine->AddOnScreenDebugMessage(
-        FPlanetStatics::DebugKey_DistanceInfo, 0.0f, FColor::Cyan, FString::Printf(TEXT("%s | Alt: %.0f"), *Status, DistToSurface));
+        FPlanetStatics::DebugKey_DistanceInfo, 0.0f, FColor::Cyan, FString::Printf(TEXT("%s | Alt: %.0f m"), *Status, DistToSurface / 100.f));
+
+    // Prediction Info
+    if (GenSettings.bShowDebugPrediction && ChunkManager.IsValid())
+    {
+        // Re-calculate prediction logic here for visualization in world space
+        const float Altitude = FMath::Max(0.f, DistToSurface);
+        const float AltitudeAlpha = FMath::Clamp(Altitude / RuntimeConfig.LookAheadAltitudeScale, 0.f, 1.f);
+        const float CurrentLookAheadTime = FMath::Lerp(RuntimeConfig.MaxLookAheadTime, RuntimeConfig.MinLookAheadTime, AltitudeAlpha);
+        const FVector PredictedOffset = Context.ObserverVelocity * CurrentLookAheadTime;
+        const FVector PredictedObserverWorld = Context.ObserverLocation + PredictedOffset;
+
+        // Draw a line from current to predicted position
+        DrawDebugLine(GetWorld(), Context.ObserverLocation, PredictedObserverWorld, FColor::Yellow, false, 0.f, 0, 20.f);
+
+        // Draw a sphere at the predicted position
+        DrawDebugSphere(GetWorld(), PredictedObserverWorld, 500.f, 12, FColor::Yellow, false, 0.f, 0, 20.f);
+
+        // Display the look-ahead time value and observer speed
+        GEngine->AddOnScreenDebugMessage(
+            FPlanetStatics::DebugKey_PredictionInfo,
+            0.f,
+            FColor::Yellow,
+            FString::Printf(TEXT("Prediction Time: %.2fs | Speed: %.0f km/h"), CurrentLookAheadTime, Context.ObserverVelocity.Size() * 0.036f));
+    }
 }

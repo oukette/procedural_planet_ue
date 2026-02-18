@@ -54,30 +54,34 @@ class PROCEDURALPLANET_API APlanet : public AActor
         virtual void Tick(float DeltaTime) override;
         virtual bool ShouldTickIfViewportsOnly() const override;
 
-        // --- Editor Tools ---
+        // Editor Tools
         UFUNCTION(CallInEditor, Category = "Planet|Generation")
         void GeneratePlanet();
 
         UFUNCTION(CallInEditor, Category = "Planet|Generation")
         void ClearPlanet();
 
-        // --- Generation Control ---
+        // Returns the normalized direction of gravity (pointing towards planet center) at a specific location.
+        UFUNCTION(BlueprintCallable, Category = "Planet|Physics")
+        FVector GetGravityDirection(const FVector &WorldLocation) const;
+
+        // Generation Control
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Generation")
         bool bGenerateOnBeginPlay = true;
 
-        // --- General Settings ---
+        // General Settings
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         FPlanetGenSettings GenSettings;
 
-        // --- Grid & Voxel Settings ---
+        // Grid & Voxel Settings
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         FPlanetGridSettings GridSettings;
 
-        // --- Noise ---
+        // Noise
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         FNoiseSettings NoiseSettings;
 
-        // --- Performance ---
+        // Performance
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         FPlanetPerformanceSettings PerformanceSettings;
 

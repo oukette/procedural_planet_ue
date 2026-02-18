@@ -134,6 +134,9 @@ struct FPlanetViewContext
         FVector ObserverLocation;
 
         UPROPERTY()
+        FVector PredictedObserverLocation;  // for LOD splitting
+
+        UPROPERTY()
         FVector ObserverForward;
 
         UPROPERTY()
@@ -158,7 +161,7 @@ struct FPlanetStatics
 
         // Generation / Grid
         static constexpr float DefaultEngineSphereRadius = 50.0f;
-        static constexpr float TargetAutoChunkSize = 5000.0f;
+        static constexpr float TargetAutoChunkSize = 8000.0f;
         static constexpr float FarDistanceSafetyMargin = 1.1f;
 
         // Debug
@@ -169,6 +172,7 @@ struct FPlanetStatics
         static constexpr float DebugBoxLifetime = 20.0f;
         static constexpr int32 DebugKey_ManagerStats = 10;
         static constexpr int32 DebugKey_DistanceInfo = 101;
+        static constexpr int32 DebugKey_PredictionInfo = 102;
 
         // Culling & Visibility
         static constexpr float UndergroundThreshold = -100.0f;
@@ -213,6 +217,9 @@ struct FPlanetGenSettings
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         bool bShowDebugChunkBounds = false;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (DisplayName = "Show Debug Prediction"))
+        bool bShowDebugPrediction = false;
 };
 
 
@@ -221,9 +228,6 @@ USTRUCT(BlueprintType)
 struct FPlanetGridSettings
 {
         GENERATED_BODY()
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-        int32 ChunksPerFace = 16;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         int32 Resolution = 32;
@@ -242,14 +246,23 @@ struct FPlanetPerformanceSettings
 {
         GENERATED_BODY()
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "1", ClampMax = "100"))
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Performance", meta = (ClampMin = "1", ClampMax = "100"))
         int32 MeshUpdatesPerFrame = 2;
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "1", ClampMax = "100"))
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Performance", meta = (ClampMin = "1", ClampMax = "100"))
         int32 ChunksToSpawnPerFrame = 8;
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (ClampMin = "1", ClampMax = "512"))
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Performance", meta = (ClampMin = "1", ClampMax = "512"))
         int32 MaxConcurrentGenerations = 32;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD Look-Ahead", meta = (ClampMin = "0.0", ClampMax = "10.0"))
+        float MaxLookAheadTime = 2.5f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD Look-Ahead", meta = (ClampMin = "0.0", ClampMax = "10.0"))
+        float MinLookAheadTime = 0.5f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD Look-Ahead", meta = (ClampMin = "0.01", ClampMax = "20.0"))
+        float LookAheadAltitudeRadiusFactor = 4.0f;
 };
 
 
@@ -303,8 +316,12 @@ struct FPlanetConfig
 
         // LOD Rules
         int32 MaxLOD;
-        float LODSplitDistanceMultiplier;
         float FarDistanceThreshold;
+        float LODSplitDistanceMultiplier;
+
+        float MaxLookAheadTime;
+        float MinLookAheadTime;
+        float LookAheadAltitudeScale;
 
         // Default Constructor
         FPlanetConfig() :
@@ -319,8 +336,11 @@ struct FPlanetConfig
             ChunkGenerationRate(8),
             MeshUpdatesPerFrame(2),
             MaxLOD(8),
+            FarDistanceThreshold(100000.0f),
             LODSplitDistanceMultiplier(2.0f),  // This will be overridden from GridSettings
-            FarDistanceThreshold(100000.0f)
+            MaxLookAheadTime(2.5f),
+            MinLookAheadTime(0.5f),
+            LookAheadAltitudeScale(50000.0f)  // This will be overridden by PlanetRadius * Factor
         {
         }
 };

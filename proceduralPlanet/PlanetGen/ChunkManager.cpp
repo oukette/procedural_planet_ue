@@ -90,12 +90,14 @@ FChunk *FChunkManager::GetChunk(const FChunkId &Id)
 void FChunkManager::Update(const FPlanetViewContext &Context)
 {
     FVector ObserverLocal = Context.ObserverLocation;
+    FVector ObserverVelocityLocal = Context.ObserverVelocity;
     FVector ObserverForwardLocal = Context.ObserverForward;
 
     if (Renderer && Renderer->GetOwner())
     {
         FTransform OwnerTM = Renderer->GetOwner()->GetActorTransform();
         ObserverLocal = OwnerTM.InverseTransformPosition(Context.ObserverLocation);
+        ObserverVelocityLocal = OwnerTM.InverseTransformVector(Context.ObserverVelocity);
         ObserverForwardLocal = OwnerTM.InverseTransformVector(Context.ObserverForward);
     }
 
@@ -111,10 +113,19 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 
     if (bShouldGenerateChunks)
     {
-        // Pass the LOCAL observer position to UpdateFace
+        // --- Predictive LOD ---
+        // Calculate a look-ahead time based on altitude. More time at low altitude, less at high altitude.
+        const float Altitude = FMath::Max(0.f, DistToSurface);
+        const float AltitudeAlpha = FMath::Clamp(Altitude / Config.LookAheadAltitudeScale, 0.f, 1.f);
+        const float CurrentLookAheadTime = FMath::Lerp(Config.MaxLookAheadTime, Config.MinLookAheadTime, AltitudeAlpha);
+        const FVector PredictedOffset = ObserverVelocityLocal * CurrentLookAheadTime;
+        const FVector LODObserverLocal = ObserverLocal + PredictedOffset;
+
+        // Build a new context with local-space and predicted data for the quadtree update.
         FPlanetViewContext LocalContext = Context;
-        LocalContext.ObserverLocation = ObserverLocal;
+        LocalContext.ObserverLocation = ObserverLocal;  // Current position for culling
         LocalContext.ObserverForward = ObserverForwardLocal;
+        LocalContext.PredictedObserverLocation = LODObserverLocal;  // Predicted position for LOD splitting
 
         for (uint8 Face = 0; Face < 6; ++Face)
         {
@@ -188,7 +199,7 @@ void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TS
 void FChunkManager::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired)
 {
     FVector Center = GetChunkCenter(Node->Id);
-    FVector ToChunk = Center - Context.ObserverLocation;
+    FVector ToChunk = Center - Context.ObserverLocation;  // Use current position for culling
     float DistSq = ToChunk.SizeSquared();
 
     FVector ChunkNormal = Center.GetSafeNormal();
@@ -217,7 +228,8 @@ void FChunkManager::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Co
         return;
 
     // 3. Split Check
-    if (ShouldSplit(Node, Context.ObserverLocation))
+    // Use the predicted observer location to decide if we need to split for higher detail.
+    if (ShouldSplit(Node, Context.PredictedObserverLocation))
     {
         if (Node->IsLeaf())
         {
@@ -345,8 +357,11 @@ void FChunkManager::DrawDebugChunkBounds(const UWorld *World) const
         {
             if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
             {
-                FBox Box = Comp->Bounds.GetBox();
-                DrawDebugBox(World, Box.GetCenter(), Box.GetExtent(), FColor::Orange, false, -1.0f, 0, FPlanetStatics::DebugBoxLifetime);
+                const int32 LOD = Chunk->Id.LODLevel;
+                // Use LOD color if available, otherwise fallback to white
+                const FColor BoxColor = (LOD >= 0 && LOD < LODColorsDebug.Num()) ? LODColorsDebug[LOD] : FColor::White;
+                const FBox Box = Comp->Bounds.GetBox();
+                DrawDebugBox(World, Box.GetCenter(), Box.GetExtent(), BoxColor, false, 0.f, 0, FPlanetStatics::DebugBoxLifetime);
             }
         }
     }
@@ -448,7 +463,7 @@ void FChunkManager::ProcessGenerationQueue()
         // Final safety check before threading
         if (!CurrentlyGenerating.Contains(Id))
         {
-            StartAsyncGeneration(Id);  // This is where the magic happens
+            StartAsyncGeneration(Id);
             StartedThisTick++;
         }
     }
