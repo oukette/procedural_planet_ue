@@ -364,10 +364,17 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
         const float AltitudeAlpha = FMath::Clamp(Altitude / RuntimeConfig.LookAheadAltitudeScale, 0.f, 1.f);
         const float CurrentLookAheadTime = FMath::Lerp(RuntimeConfig.MaxLookAheadTime, RuntimeConfig.MinLookAheadTime, AltitudeAlpha);
         const FVector PredictedOffset = Context.ObserverVelocity * CurrentLookAheadTime;
-        const FVector PredictedObserverWorld = Context.ObserverLocation + PredictedOffset;
+
+        // Use Pawn location for visualization if available, otherwise fallback to Context (Camera)
+        FVector VisualizationStart = Context.ObserverLocation;
+        if (APawn *PlayerPawn = UGameplayStatics::GetPlayerPawn(GetWorld(), 0))
+        {
+            VisualizationStart = PlayerPawn->GetActorLocation();
+        }
+        const FVector PredictedObserverWorld = VisualizationStart + PredictedOffset;
 
         // Draw a line from current to predicted position
-        DrawDebugLine(GetWorld(), Context.ObserverLocation, PredictedObserverWorld, FColor::Yellow, false, 0.f, 0, 20.f);
+        DrawDebugLine(GetWorld(), VisualizationStart, PredictedObserverWorld, FColor::Yellow, false, 0.f, 0, 10.f);
 
         // Draw a sphere at the predicted position
         DrawDebugSphere(GetWorld(), PredictedObserverWorld, 500.f, 12, FColor::Yellow, false, 0.f, 0, 20.f);
