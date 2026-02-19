@@ -5,6 +5,7 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "Camera/CameraComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "GameFramework/Controller.h"
 #include "DrawDebugHelpers.h"
 
 
@@ -27,7 +28,8 @@ ADebugPlayerPawn::ADebugPlayerPawn()
     {
         BodyMesh->SetStaticMesh(CylinderMesh.Object);
         BodyMesh->SetRelativeScale3D(FVector(0.5f, 0.5f, 1.0f));
-        BodyMesh->SetRelativeLocation(FVector(0, 0, -88.0f));  // Align feet
+        BodyMesh->SetRelativeLocation(FVector(0, 0, 0));              // Center mesh so rotation happens around center
+        BodyMesh->SetRelativeRotation(FRotator(-90.0f, 0.0f, 0.0f));  // Align cylinder with Forward (X) axis for proper Roll visuals
     }
 
     // 3. Skeletal Body (Optional for Mannequin)
@@ -58,6 +60,14 @@ void ADebugPlayerPawn::BeginPlay()
 {
     Super::BeginPlay();
     FindPlanet();
+
+    // Enforce default Flight Mode settings on start
+    if (!bIsWalking)
+    {
+        // In flight, camera must follow the actor's rotation (Roll/Pitch/Yaw), not the Controller's.
+        SpringArm->bUsePawnControlRotation = false;
+        // BodyMesh is already set to -90 (Flight pose) in Constructor.
+    }
 }
 
 
@@ -70,15 +80,16 @@ void ADebugPlayerPawn::Tick(float DeltaTime)
         FindPlanet();
     }
 
-    UpdateGravityDirection();
-    AlignToPlanet(DeltaTime);
-
     if (bIsWalking)
     {
+        UpdateGravityDirection();
+        AlignToPlanet(DeltaTime);
         UpdateMovementWalking(DeltaTime);
     }
     else
     {
+        // In flight mode, we don't force alignment to planet.
+        // We behave like a spaceship (6DOF).
         UpdateMovementFlying(DeltaTime);
     }
 }
@@ -110,6 +121,10 @@ void ADebugPlayerPawn::UpdateGravityDirection()
 
 void ADebugPlayerPawn::AlignToPlanet(float DeltaTime)
 {
+    // Only align if we are walking. Flight mode should be free.
+    if (!bIsWalking)
+        return;
+
     // We want the Actor's "Up" to match the surface normal (opposite of gravity)
     FVector TargetUp = -GravityDirection;
     FVector CurrentUp = GetActorUpVector();
@@ -121,9 +136,18 @@ void ADebugPlayerPawn::AlignToPlanet(float DeltaTime)
     // If walking, we snap instantly or interpolate quickly to avoid jitter on slopes
     // If flying, we might want it smoother, but for a debug pawn, instant alignment prevents disorientation.
     float InterpSpeed = bIsWalking ? 10.0f : 5.0f;
-    FQuat NewRot = FMath::QInterpTo(GetActorQuat(), DeltaRot * GetActorQuat(), DeltaTime, InterpSpeed);
+    FQuat OldRot = GetActorQuat();
+    FQuat NewRot = FMath::QInterpTo(OldRot, DeltaRot * OldRot, DeltaTime, InterpSpeed);
 
     SetActorRotation(NewRot);
+
+    // Apply the same alignment rotation to the Controller
+    if (Controller && bIsWalking)
+    {
+        FQuat RotChange = NewRot * OldRot.Inverse();
+        FQuat NewControlRot = RotChange * Controller->GetControlRotation().Quaternion();
+        Controller->SetControlRotation(NewControlRot.Rotator());
+    }
 }
 
 
@@ -162,15 +186,21 @@ void ADebugPlayerPawn::UpdateMovementWalking(float DeltaTime)
     FCollisionQueryParams Params;
     Params.AddIgnoredActor(this);
 
+    // DEBUG: Visualize the ground check
+    // DrawDebugLine(GetWorld(), TraceStart, TraceEnd, FColor::Red, false, -1.0f, 0, 2.0f);
+
     bool bLanded = false;
 
     // If we hit something
-    if (GetWorld()->SweepSingleByChannel(Hit, TraceStart, TraceEnd, GetActorQuat(), ECC_Visibility, CapsuleComponent->GetCollisionShape(), Params))
+    if (GetWorld()->SweepSingleByChannel(Hit, TraceStart, TraceEnd, GetActorQuat(), ECC_WorldStatic, CapsuleComponent->GetCollisionShape(), Params))
     {
         // Snap to floor
         NewLocation = Hit.Location + (SurfaceNormal * CapsuleComponent->GetScaledCapsuleHalfHeight());
         VerticalSpeed = 0.0f;  // Reset gravity accumulation
         bLanded = true;
+
+        // DEBUG: Visualize hit
+        // DrawDebugPoint(GetWorld(), Hit.Location, 10.0f, FColor::Green, false, -1.0f);
     }
 
     FVector OldLocation = GetActorLocation();
@@ -194,18 +224,28 @@ void ADebugPlayerPawn::UpdateMovementWalking(float DeltaTime)
 
 void ADebugPlayerPawn::UpdateMovementFlying(float DeltaTime)
 {
-    // Standard "Spectator" style movement, but relative to camera orientation
-    FRotator ControlRot = GetControlRotation();
-    FVector ForwardDir = FRotationMatrix(ControlRot).GetScaledAxis(EAxis::X);
-    FVector RightDir = FRotationMatrix(ControlRot).GetScaledAxis(EAxis::Y);
-    FVector UpDir = FRotationMatrix(ControlRot).GetScaledAxis(EAxis::Z);
+    // 1. Rotation (Spaceship Style)
+    // In flight mode, we apply input directly to the Actor's rotation, not the Controller.
+    // Mouse X = Yaw, Mouse Y = Pitch, Q/E = Roll
+    float YawInput = GetInputAxisValue("Turn");
+    float PitchInput = GetInputAxisValue("LookUp");
+    float RollInput = -GetInputAxisValue("Roll"); // TOFIX: inverted as a temp fix, maybe project settigns inputs are inverted
 
-    FVector DesiredMove = (ForwardDir * MovementInput.X) + (RightDir * MovementInput.Y);
+    // Use Quaternions for correct 6DOF rotation around local axes.
+    // Roll is around Forward (X), Pitch around Right (Y), Yaw around Up (Z).
+    FQuat PitchRot(FVector::RightVector, FMath::DegreesToRadians(PitchInput * LookUpSpeed * DeltaTime));
+    FQuat YawRot(FVector::UpVector, FMath::DegreesToRadians(YawInput * TurnSpeed * DeltaTime));
+    FQuat RollRot(FVector::ForwardVector, FMath::DegreesToRadians(RollInput * RollSpeed * DeltaTime));
 
-    // Add "Up/Down" input (Space/Ctrl usually, mapped to LookUp axis or specific keys)
-    // For now, we just fly where we look.
+    FQuat DeltaRot = RollRot * PitchRot * YawRot;
+    AddActorLocalRotation(DeltaRot);
+
+    // 2. Movement
+    // Move along Actor's local axes
+    FVector DesiredMove = (GetActorForwardVector() * MovementInput.X) + (GetActorRightVector() * MovementInput.Y) + (GetActorUpVector() * MovementInput.Z);
 
     FVector DesiredOffset = DesiredMove * FlySpeed * DeltaTime;
+
     FVector OldLocation = GetActorLocation();
 
     // Apply movement
@@ -225,9 +265,11 @@ void ADebugPlayerPawn::SetupPlayerInputComponent(UInputComponent *PlayerInputCom
     // Axis
     PlayerInputComponent->BindAxis("MoveForwardBackward", this, &ADebugPlayerPawn::MoveForward);
     PlayerInputComponent->BindAxis("MoveRightLeft", this, &ADebugPlayerPawn::MoveRight);
+    PlayerInputComponent->BindAxis("MoveUpDown", this, &ADebugPlayerPawn::MoveUp);  // Space/Ctrl
     PlayerInputComponent->BindAxis("Turn", this, &ADebugPlayerPawn::Turn);
     PlayerInputComponent->BindAxis("LookUp", this, &ADebugPlayerPawn::LookUp);
     PlayerInputComponent->BindAxis("SpeedAdjust", this, &ADebugPlayerPawn::AdjustSpeed);  // Mouse Wheel for Speed
+    PlayerInputComponent->BindAxis("Roll", this, &ADebugPlayerPawn::InputRoll);           // Q/E keys
 
     // Actions
     PlayerInputComponent->BindAction("ToggleWalk", IE_Pressed, this, &ADebugPlayerPawn::ToggleMovementMode);
@@ -237,14 +279,81 @@ void ADebugPlayerPawn::SetupPlayerInputComponent(UInputComponent *PlayerInputCom
 }
 
 
+void ADebugPlayerPawn::Turn(float Val)
+{
+    // In Flight Mode, rotation is handled directly in UpdateMovementFlying via AddActorLocalRotation.
+    // We disable Controller rotation here to prevent desync between Camera (Controller) and Body (Actor).
+    if (!bIsWalking)
+        return;
+
+    // Custom Spherical YAW: Rotate around the Pawn's Up vector (Surface Normal)
+    // Standard AddControllerYawInput rotates around World Z, which is wrong on a sphere side.
+    if (Val != 0.f && Controller)
+    {
+        FRotator CtrlRot = Controller->GetControlRotation();
+        FVector UpAxis = GetActorUpVector();  // Planet Normal
+        FQuat DeltaQ(UpAxis, FMath::DegreesToRadians(Val * TurnSpeed * GetWorld()->GetDeltaSeconds()));
+        Controller->SetControlRotation((DeltaQ * CtrlRot.Quaternion()).Rotator());
+    }
+}
+
+
+void ADebugPlayerPawn::LookUp(float Val)
+{
+    // In Flight Mode, rotation is handled directly in UpdateMovementFlying via AddActorLocalRotation.
+    // We disable Controller rotation here to prevent desync between Camera (Controller) and Body (Actor).
+    if (!bIsWalking)
+        return;
+
+    // Custom Spherical PITCH: Rotate around the Camera's Right vector
+    if (Val != 0.f && Controller)
+    {
+        // Revert negation to match the inverted Flight Mode logic (Consistency)
+        float ModifiedVal = Val;
+
+        FRotator CtrlRot = Controller->GetControlRotation();
+        FVector RightAxis = FRotationMatrix(CtrlRot).GetScaledAxis(EAxis::Y);
+        FQuat DeltaQ(RightAxis, FMath::DegreesToRadians(ModifiedVal * LookUpSpeed * GetWorld()->GetDeltaSeconds()));
+        Controller->SetControlRotation((DeltaQ * CtrlRot.Quaternion()).Rotator());
+    }
+}
+
+
+void ADebugPlayerPawn::InputRoll(float Val)
+{
+    // Only used in flight mode via UpdateMovementFlying direct axis read,
+    // but we keep this stub if we want to add logic later.
+}
+
+
 void ADebugPlayerPawn::ToggleMovementMode()
 {
     bIsWalking = !bIsWalking;
 
     if (bIsWalking)
     {
-        // Reset orientation to upright when entering walk mode
+        // Entering Walk Mode
         CurrentVelocity = FVector::ZeroVector;
+
+        // Enable Camera Controller Rotation (Standard FPS/TPS feel)
+        SpringArm->bUsePawnControlRotation = true;
+
+        // Align Body Mesh to Z-Up (Standard Character orientation)
+        if (BodyMesh)
+            BodyMesh->SetRelativeRotation(FRotator::ZeroRotator);
+
+        // Reset Controller rotation to match current actor to avoid snapping
+        if (Controller)
+            Controller->SetControlRotation(GetActorRotation());
+    }
+    else
+    {
+        // Entering Flight Mode
+        SpringArm->bUsePawnControlRotation = false; // Lock Camera to Pawn (Spaceship feel)
+
+        // Align Body Mesh to X-Forward (Spaceship orientation, assuming Cylinder)
+        if (BodyMesh)
+            BodyMesh->SetRelativeRotation(FRotator(-90.0f, 0.0f, 0.0f));
     }
 
     UE_LOG(LogPlayerController, Log, TEXT("ToggleMovementMode: %s"), bIsWalking ? TEXT("Walking") : TEXT("Flying"));
@@ -258,15 +367,19 @@ void ADebugPlayerPawn::ToggleCameraMode()
     {
         SpringArm->TargetArmLength = 0.0f;
         SpringArm->SetRelativeLocation(FVector(0, 0, 60.0f));  // Eye height
-        if (BodyMesh) BodyMesh->SetOwnerNoSee(true);
-        if (SkeletalBody) SkeletalBody->SetOwnerNoSee(true);
+        if (BodyMesh)
+            BodyMesh->SetOwnerNoSee(true);
+        if (SkeletalBody)
+            SkeletalBody->SetOwnerNoSee(true);
     }
     else
     {
         SpringArm->TargetArmLength = 400.0f;
         SpringArm->SetRelativeLocation(FVector::ZeroVector);
-        if (BodyMesh) BodyMesh->SetOwnerNoSee(false);
-        if (SkeletalBody) SkeletalBody->SetOwnerNoSee(false);
+        if (BodyMesh)
+            BodyMesh->SetOwnerNoSee(false);
+        if (SkeletalBody)
+            SkeletalBody->SetOwnerNoSee(false);
     }
 
     UE_LOG(LogPlayerController, Log, TEXT("ToggleCameraMode: %s"), bIsFirstPerson ? TEXT("First Person") : TEXT("Third Person"));

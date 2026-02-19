@@ -59,10 +59,13 @@ class PROCEDURALPLANET_API ADebugPlayerPawn : public APawn
         float GravityStrength = 980.0f;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
-        float TurnSpeed = 45.0f;
+        float TurnSpeed = 50.0f;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
-        float LookUpSpeed = 45.0f;
+        float LookUpSpeed = 50.0f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
+        float RollSpeed = 50.0f;
 
         // --- State ---
         UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "State")
@@ -81,7 +84,7 @@ class PROCEDURALPLANET_API ADebugPlayerPawn : public APawn
 
     private:
         // Input State
-        FVector2D MovementInput;
+        FVector MovementInput;
         FVector2D CameraInput;
         bool bIsRunning;
 
@@ -95,13 +98,17 @@ class PROCEDURALPLANET_API ADebugPlayerPawn : public APawn
         // Input Handlers
         void MoveForward(float Val) { MovementInput.X = Val; }
         void MoveRight(float Val) { MovementInput.Y = Val; }
-        void Turn(float Val) { AddControllerYawInput(Val * TurnSpeed * GetWorld()->GetDeltaSeconds()); }
-        void LookUp(float Val) { AddControllerPitchInput(Val * LookUpSpeed * GetWorld()->GetDeltaSeconds()); }
+        void MoveUp(float Val) { MovementInput.Z = Val; }
+        void Turn(float Val);
+        void LookUp(float Val);
+
+        // New handler for Roll (using the MoveUpDown axis, usually Q/E)
+        void InputRoll(float Val);
 
         void ToggleMovementMode();
         void ToggleCameraMode();
         void AdjustSpeed(float Val);
-        
+
         void StartRun() { bIsRunning = true; }
         void StopRun() { bIsRunning = false; }
 };
