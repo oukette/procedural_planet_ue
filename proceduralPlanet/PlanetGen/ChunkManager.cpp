@@ -13,6 +13,7 @@ FChunkManager::FChunkManager(const FPlanetConfig &planetConfig, const DensityGen
     GenerationRate = Config.ChunkGenerationRate;
     // DEBUG LOG
     UE_LOG(LogTemp, Warning, TEXT("FChunkManager created."));
+    UE_LOG(LogTemp, Warning, TEXT("Collision is globally %s"), Config.bEnableCollision ? TEXT("enabled") : TEXT("disabled"));
 }
 
 
@@ -118,8 +119,29 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
         const float Altitude = FMath::Max(0.f, DistToSurface);
         const float AltitudeAlpha = FMath::Clamp(Altitude / Config.LookAheadAltitudeScale, 0.f, 1.f);
         const float CurrentLookAheadTime = FMath::Lerp(Config.MaxLookAheadTime, Config.MinLookAheadTime, AltitudeAlpha);
-        const FVector PredictedOffset = ObserverVelocityLocal * CurrentLookAheadTime;
-        const FVector LODObserverLocal = ObserverLocal + PredictedOffset;
+
+        // --- Smart Velocity Dampening ---
+        // Decompose velocity into Radial (Vertical) and Tangential (Horizontal) components.
+        // We progressively decrease the weight of the Z-axis (Radial) prediction as we get closer to the surface.
+        FVector RadialDir = ObserverLocal.GetSafeNormal();
+        if (RadialDir.IsZero())
+            RadialDir = FVector::UpVector;
+
+        float RadialSpeed = FVector::DotProduct(ObserverVelocityLocal, RadialDir);
+        FVector TangentialVelocity = ObserverVelocityLocal - (RadialDir * RadialSpeed);
+
+        // Weight the radial component based on altitude (Square curve for smoother falloff near surface)
+        float RadialWeight = AltitudeAlpha * AltitudeAlpha;
+        FVector EffectiveVelocity = TangentialVelocity + (RadialDir * RadialSpeed * RadialWeight);
+
+        FVector LODObserverLocal = ObserverLocal + (EffectiveVelocity * CurrentLookAheadTime);
+
+        // Clamp to Surface: Ensure prediction never goes underground.
+        // This is the ultimate safety net against "bouncing" caused by falling predictions.
+        if (LODObserverLocal.SizeSquared() < FMath::Square(Config.PlanetRadius))
+        {
+            LODObserverLocal = LODObserverLocal.GetSafeNormal() * Config.PlanetRadius;
+        }
 
         // Build a new context with local-space and predicted data for the quadtree update.
         FPlanetViewContext LocalContext = Context;
@@ -180,7 +202,13 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
         // If data is ready but not yet visible, render it!
         else if (Chunk->State == EChunkState::Ready)
         {
-            Renderer->RenderChunk(Chunk);
+            // Enable collision
+            // We enable collision for the highest 2 LOD levels (e.g. MaxLOD and MaxLOD-1).
+            // This ensures the player has a solid surface to land on without overloading physics for far chunks.
+            const int32 CollisionLODThreshold = FMath::Max(0, Config.MaxLOD - 1);
+            const bool bEnableCollision = Config.bEnableCollision && (Chunk->Id.LODLevel >= CollisionLODThreshold);
+
+            Renderer->RenderChunk(Chunk, bEnableCollision);
             Chunk->State = EChunkState::Visible;
         }
     }
@@ -279,6 +307,9 @@ bool FChunkManager::ShouldSplit(const FQuadtreeNode *Node, const FVector &Observ
         return false;
 
     FVector Center = GetChunkCenter(Node->Id);
+
+    // We use the full 3D distance here. The "ObserverLocal" passed in is already the
+    // sanitized/clamped predicted position from Update(), so it won't be underground.
     float Dist = FVector::Dist(Center, ObserverLocal);
 
     // Calculate physical size of this node (arc length)

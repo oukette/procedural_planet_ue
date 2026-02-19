@@ -14,12 +14,12 @@ class ChunkRenderer
         ~ChunkRenderer();
 
         // Assigns a component to the chunk, uploads mesh data, and makes it visible
-        void RenderChunk(FChunk *Chunk);
+        void RenderChunk(FChunk *Chunk, bool bEnableCollision);
 
         // Returns the component to the pool and hides it
         void HideChunk(FChunk *Chunk);
 
-        AActor* GetOwner() const { return OwnerActor; }
+        AActor *GetOwner() const { return OwnerActor; }
 
     private:
         AActor *OwnerActor;

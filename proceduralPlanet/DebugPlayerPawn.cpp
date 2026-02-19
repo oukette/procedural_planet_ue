@@ -95,7 +95,17 @@ void ADebugPlayerPawn::Tick(float DeltaTime)
 }
 
 
-FVector ADebugPlayerPawn::GetVelocity() const { return CurrentVelocity; }
+FVector ADebugPlayerPawn::GetVelocity() const
+{
+    // If walking, we mask out the vertical (gravity) component of the velocity.
+    // This prevents the Predictive LOD system from "digging" into the ground when the pawn
+    // is falling or adjusting to the terrain, which causes LOD thrashing and bouncing.
+    if (bIsWalking)
+    {
+        return FVector::VectorPlaneProject(CurrentVelocity, GravityDirection);
+    }
+    return CurrentVelocity;
+}
 
 
 void ADebugPlayerPawn::FindPlanet()
@@ -153,6 +163,9 @@ void ADebugPlayerPawn::AlignToPlanet(float DeltaTime)
 
 void ADebugPlayerPawn::UpdateMovementWalking(float DeltaTime)
 {
+    // Prevent physics explosion on lag spikes (e.g. during heavy chunk generation)
+    DeltaTime = FMath::Min(DeltaTime, 0.1f);
+
     // 1. Calculate Input Direction relative to Camera View
     FRotator ControlRot = GetControlRotation();
     FVector ForwardDir = FRotationMatrix(ControlRot).GetScaledAxis(EAxis::X);
@@ -175,12 +188,18 @@ void ADebugPlayerPawn::UpdateMovementWalking(float DeltaTime)
     float VerticalSpeed = FVector::DotProduct(CurrentVelocity, GravityDirection);
     VerticalSpeed += GravityStrength * DeltaTime;  // Accelerate down
 
+    // FIX: Limit terminal velocity to prevent tunneling through terrain
+    const float TerminalVelocity = 5000.0f;  // ~50 m/s (Adjust based on your scale)
+    VerticalSpeed = FMath::Min(VerticalSpeed, TerminalVelocity);
+
     // 4. Collision / Ground Snap
     FVector NewLocation = GetActorLocation() + (HorizontalVelocity * DeltaTime) + (GravityDirection * VerticalSpeed * DeltaTime);
 
     FHitResult Hit;
     // Simple capsule sweep
-    FVector TraceStart = GetActorLocation();
+    // FIX: Lift the trace start slightly against gravity.
+    // This prevents the trace from starting "inside" the ground if the pawn is slightly embedded.
+    FVector TraceStart = GetActorLocation() - (GravityDirection * 10.0f);
     FVector TraceEnd = NewLocation + (GravityDirection * 50.0f);  // Look ahead slightly
 
     FCollisionQueryParams Params;
@@ -212,11 +231,15 @@ void ADebugPlayerPawn::UpdateMovementWalking(float DeltaTime)
     {
         CurrentVelocity = (GetActorLocation() - OldLocation) / DeltaTime;
 
-        // Fix for bouncing: If we snapped to the ground, remove the vertical component
-        // from the velocity so it doesn't cause an upward launch in the next frame.
         if (bLanded)
         {
-            CurrentVelocity = FVector::VectorPlaneProject(CurrentVelocity, GravityDirection);
+            // FIX: If we snapped to the ground, do NOT calculate velocity from the position delta.
+            // The snap is an instant teleport, not a velocity. Using it creates a feedback loop (bouncing).
+            CurrentVelocity = HorizontalVelocity;
+        }
+        else
+        {
+            CurrentVelocity = (GetActorLocation() - OldLocation) / DeltaTime;
         }
     }
 }
@@ -229,7 +252,7 @@ void ADebugPlayerPawn::UpdateMovementFlying(float DeltaTime)
     // Mouse X = Yaw, Mouse Y = Pitch, Q/E = Roll
     float YawInput = GetInputAxisValue("Turn");
     float PitchInput = GetInputAxisValue("LookUp");
-    float RollInput = -GetInputAxisValue("Roll"); // TOFIX: inverted as a temp fix, maybe project settigns inputs are inverted
+    float RollInput = -GetInputAxisValue("Roll");  // TOFIX: inverted as a temp fix, maybe project settigns inputs are inverted
 
     // Use Quaternions for correct 6DOF rotation around local axes.
     // Roll is around Forward (X), Pitch around Right (Y), Yaw around Up (Z).
@@ -349,7 +372,7 @@ void ADebugPlayerPawn::ToggleMovementMode()
     else
     {
         // Entering Flight Mode
-        SpringArm->bUsePawnControlRotation = false; // Lock Camera to Pawn (Spaceship feel)
+        SpringArm->bUsePawnControlRotation = false;  // Lock Camera to Pawn (Spaceship feel)
 
         // Align Body Mesh to X-Forward (Spaceship orientation, assuming Cylinder)
         if (BodyMesh)
