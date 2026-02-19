@@ -214,7 +214,9 @@ void ADebugPlayerPawn::UpdateMovementWalking(float DeltaTime)
     if (GetWorld()->SweepSingleByChannel(Hit, TraceStart, TraceEnd, GetActorQuat(), ECC_WorldStatic, CapsuleComponent->GetCollisionShape(), Params))
     {
         // Snap to floor
-        NewLocation = Hit.Location + (SurfaceNormal * CapsuleComponent->GetScaledCapsuleHalfHeight());
+        // FIX: For a Sweep, Hit.Location is already the location of the Capsule Center.
+        // We just add a tiny offset (0.1f) to prevent Z-fighting/penetration in the next frame.
+        NewLocation = Hit.Location + (SurfaceNormal * 0.1f);
         VerticalSpeed = 0.0f;  // Reset gravity accumulation
         bLanded = true;
 
@@ -224,7 +226,7 @@ void ADebugPlayerPawn::UpdateMovementWalking(float DeltaTime)
 
     FVector OldLocation = GetActorLocation();
 
-    SetActorLocation(NewLocation, true);  // bSweep=true for lateral collision
+    SetActorLocation(NewLocation, !bLanded);  // bSweep=true for lateral collision, false if snapping to ground to prevent bouncing
 
     // Calculate actual velocity based on how far we really moved (handles collisions/walls correctly)
     if (DeltaTime > KINDA_SMALL_NUMBER)
