@@ -33,7 +33,7 @@ class FChunkManager
         ~FChunkManager();
 
         // Returns the total number of chunks in memory.
-        int32 GetChunkCount() const;
+        int32 GetTotalChunkCount() const;
 
         // Returns the number of chunks currently being rendered.
         int32 GetVisibleChunkCount() const;
@@ -56,13 +56,13 @@ class FChunkManager
 
     private:
         FPlanetConfig Config;
-        const DensityGenerator *Generator;          // Reference to the density generator (owned by APlanet)
-        TUniquePtr<ChunkRenderer> Renderer;         // Handles visual components
-        TMap<FChunkId, TUniquePtr<FChunk>> Chunks;  // The central registry of all chunks
-        TArray<FChunkId> PendingGenerationQueue;    // Chunks waiting to be processed
-        TSet<FChunkId> CurrentlyGenerating;         // Chunks currently in a background thread
+        const DensityGenerator *Generator;            // Reference to the density generator (owned by APlanet)
+        TUniquePtr<ChunkRenderer> Renderer;           // Handles visual components
+        TMap<FChunkId, TUniquePtr<FChunk>> ChunkMap;  // The central registry of all chunks
+        TArray<FChunkId> GenerationQueue;             // Chunks waiting to be processed
+        TSet<FChunkId> ActiveGenerationTasks;         // Chunks currently in a background thread
 
-        TArray<TUniquePtr<FQuadtreeNode>> RootNodes; // The 6 root nodes of the planet (one per face)
+        TArray<TUniquePtr<FQuadtreeNode>> RootNodes;  // The 6 root nodes of the planet (one per face)
 
         int32 MaxConcurrentGenerations;  // Limit total background threads
         int32 GenerationRate;            // Limit how many start per tick
@@ -73,11 +73,14 @@ class FChunkManager
         // Helper to get a chunk from the map if it exists, otherwise create it
         FChunk *GetChunk(const FChunkId &Id);
 
-        // Loop
-        void UpdateFace(uint8 Face, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired);
+        // Phase 1: Traversal & Identification
+        void DetermineChunkVisibility(const FPlanetViewContext &Context, TSet<FChunkId> &OutVisibleChunks, TSet<FChunkId> &OutCachedChunks);
+
+        // Phase 2: State Machine
+        void ProcessChunkStates(const TSet<FChunkId> &VisibleChunks, const TSet<FChunkId> &CachedChunks);
 
         // Recursive traversal to determine visible chunks
-        void UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired);
+        void UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context, TSet<FChunkId> &OutVisibleChunks, TSet<FChunkId> &OutCachedChunks);
 
         // Helper to determine if a node should split
         bool ShouldSplit(const FQuadtreeNode *Node, const FVector &ObserverLocal) const;
@@ -91,11 +94,13 @@ class FChunkManager
         // Helper to find which chunk contains a specific local position
         FChunkId GetChunkIdAt(const FVector &LocalPosition) const;
 
-        // State Machine
-        void HandleChunkState(FChunk *Chunk, int32 TargetLOD);
+        // Helper to check if a chunk is in memory and has mesh data
+        bool IsChunkReady(const FChunkId &Id) const;
+
+        // Phase 3: Async Dispatch
+        void HandleAsyncRequests();
 
         // Throttling
-        void ProcessQueues();
         void ProcessGenerationQueue();
 
         void StartAsyncGeneration(const FChunkId &Id);

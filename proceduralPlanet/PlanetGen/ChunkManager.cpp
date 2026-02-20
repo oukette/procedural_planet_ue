@@ -20,17 +20,17 @@ FChunkManager::FChunkManager(const FPlanetConfig &planetConfig, const DensityGen
 FChunkManager::~FChunkManager()
 {
     // UniquePtrs in the TMap will automatically destroy all FChunks
-    Chunks.Empty();
+    ChunkMap.Empty();
 }
 
 
-int32 FChunkManager::GetChunkCount() const { return Chunks.Num(); }
+int32 FChunkManager::GetTotalChunkCount() const { return ChunkMap.Num(); }
 
 
 int32 FChunkManager::GetVisibleChunkCount() const
 {
     int32 Count = 0;
-    for (const auto &Pair : Chunks)
+    for (const auto &Pair : ChunkMap)
     {
         if (Pair.Value->State == EChunkState::Visible)
         {
@@ -41,7 +41,7 @@ int32 FChunkManager::GetVisibleChunkCount() const
 }
 
 
-int32 FChunkManager::GetPendingCount() const { return PendingGenerationQueue.Num() + CurrentlyGenerating.Num(); }
+int32 FChunkManager::GetPendingCount() const { return GenerationQueue.Num() + ActiveGenerationTasks.Num(); }
 
 
 void FChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
@@ -60,7 +60,7 @@ void FChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
     }
 
     // DEBUG LOG
-    UE_LOG(LogTemp, Log, TEXT("FChunkManager initialized. Total grid capacity is %d chunks."), GetChunkCount());
+    UE_LOG(LogTemp, Log, TEXT("FChunkManager initialized. Total grid capacity is %d chunks."), GetTotalChunkCount());
 }
 
 
@@ -68,7 +68,7 @@ FChunk *FChunkManager::CreateChunk(const FChunkId &Id)
 {
     TUniquePtr<FChunk> NewChunk = MakeUnique<FChunk>(Id);
     FChunk *Ptr = NewChunk.Get();
-    Chunks.Add(Id, MoveTemp(NewChunk));
+    ChunkMap.Add(Id, MoveTemp(NewChunk));
     return Ptr;
 }
 
@@ -76,7 +76,7 @@ FChunk *FChunkManager::CreateChunk(const FChunkId &Id)
 FChunk *FChunkManager::GetChunk(const FChunkId &Id)
 {
     // If it exists, return it
-    if (TUniquePtr<FChunk> *Found = Chunks.Find(Id))
+    if (TUniquePtr<FChunk> *Found = ChunkMap.Find(Id))
     {
         return Found->Get();
     }
@@ -88,7 +88,31 @@ FChunk *FChunkManager::GetChunk(const FChunkId &Id)
 }
 
 
+bool FChunkManager::IsChunkReady(const FChunkId &Id) const
+{
+    if (const TUniquePtr<FChunk> *Found = ChunkMap.Find(Id))
+    {
+        return Found->Get()->State == EChunkState::Ready || Found->Get()->State == EChunkState::Visible;
+    }
+    return false;
+}
+
+
 void FChunkManager::Update(const FPlanetViewContext &Context)
+{
+    // 1. Prepare View & Traversal
+    TSet<FChunkId> VisibleChunks;
+    TSet<FChunkId> CachedChunks;
+    DetermineChunkVisibility(Context, VisibleChunks, CachedChunks);
+
+    // 2. State Machine & Cache Management
+    ProcessChunkStates(VisibleChunks, CachedChunks);
+
+    // 3. Async Dispatch
+    HandleAsyncRequests();
+}
+
+void FChunkManager::DetermineChunkVisibility(const FPlanetViewContext &Context, TSet<FChunkId> &OutVisibleChunks, TSet<FChunkId> &OutCachedChunks)
 {
     FVector ObserverLocal = Context.ObserverLocation;
     FVector ObserverVelocityLocal = Context.ObserverVelocity;
@@ -108,9 +132,6 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 
     // We want chunks to exist slightly beyond the render distance so they are ready when we get closer.
     bool bShouldGenerateChunks = DistToSurface < (Config.FarDistanceThreshold * FPlanetStatics::FarDistanceSafetyMargin);
-
-    // We use a Set to keep track of what SHOULD exist this frame.
-    TSet<FChunkId> RequiredChunks;
 
     if (bShouldGenerateChunks)
     {
@@ -151,57 +172,55 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 
         for (uint8 Face = 0; Face < 6; ++Face)
         {
-            UpdateFace(Face, LocalContext, RequiredChunks);
+            UpdateNode(RootNodes[Face].Get(), LocalContext, OutVisibleChunks, OutCachedChunks);
         }
     }
+}
 
-    // 3. Process State Changes
+void FChunkManager::ProcessChunkStates(const TSet<FChunkId> &VisibleChunks, const TSet<FChunkId> &CachedChunks)
+{
     TArray<FChunkId> ChunksToRemove;
 
-    // A. Remove/Unload chunks that are no longer required
-    for (auto &Pair : Chunks)
+    // 1. Update existing chunks (Demotion & Cleanup)
+    for (auto &Pair : ChunkMap)
     {
         FChunkId Id = Pair.Key;
         FChunk *Chunk = Pair.Value.Get();
 
-        if (!RequiredChunks.Contains(Id))
+        const bool bIsVisible = VisibleChunks.Contains(Id);
+
+        // Demote Visible -> Ready if no longer visible
+        if (Chunk->State == EChunkState::Visible && !bIsVisible)
         {
-            // Immediately mark as Unloaded if we are hiding it.
-            if (Chunk->State == EChunkState::Visible || Chunk->State == EChunkState::Ready)
-            {
-                Renderer->HideChunk(Chunk);  // Return component to pool
-                Chunk->State = EChunkState::Unloaded;
-            }
-
-            // Garbage Collection: If it's unloaded and not required, we can remove it to save memory.
-            // Only remove if not currently generating (safety)
-            if (Chunk->State == EChunkState::Unloaded && !CurrentlyGenerating.Contains(Id))
-            {
-                ChunksToRemove.Add(Id);
-            }
+            Renderer->HideChunk(Chunk);
+            Chunk->State = EChunkState::Ready;
         }
-    }
 
-    // Execute removal
-    for (const FChunkId &Id : ChunksToRemove)
-    {
-        Chunks.Remove(Id);
-    }
-
-    // B. Request Generation for new required chunks
-    for (const FChunkId &Id : RequiredChunks)
-    {
-        FChunk *Chunk = GetChunk(Id);
-
-        // If it's new (Unloaded) or needs an LOD update
+        // Cleanup: If a chunk is Unloaded (transient/zombie), remove it.
+        // We strictly use 4 states: Requested, Generating, Ready, Visible.
+        // Unloaded chunks are those that were created but never requested, or are invalid.
         if (Chunk->State == EChunkState::Unloaded)
         {
-            Chunk->State = EChunkState::Requested;
-            PendingGenerationQueue.Add(Id);
+            ChunksToRemove.Add(Id);
         }
-        // If data is ready but not yet visible, render it!
-        else if (Chunk->State == EChunkState::Ready)
+    }
+
+    // Execute removal (Garbage Collection)
+    for (const FChunkId &Id : ChunksToRemove)
+    {
+        ChunkMap.Remove(Id);
+    }
+
+    // 2. Process Requirements (Promotion & Requests)
+
+    // A. Visible Chunks
+    for (const FChunkId &Id : VisibleChunks)
+    {
+        FChunk *Chunk = GetChunk(Id);  // Creates with State = Unloaded if missing
+
+        if (Chunk->State == EChunkState::Ready)
         {
+            // Promote Ready -> Visible
             // Enable collision
             // We enable collision for the highest 2 LOD levels (e.g. MaxLOD and MaxLOD-1).
             // This ensures the player has a solid surface to land on without overloading physics for far chunks.
@@ -211,20 +230,30 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
             Renderer->RenderChunk(Chunk, bEnableCollision);
             Chunk->State = EChunkState::Visible;
         }
+        else if (Chunk->State == EChunkState::Unloaded)
+        {
+            // Request Generation
+            Chunk->State = EChunkState::Requested;
+            GenerationQueue.Add(Id);
+        }
     }
 
-    ProcessQueues();
+    // B. Cached Chunks
+    for (const FChunkId &Id : CachedChunks)
+    {
+        FChunk *Chunk = GetChunk(Id);
+
+        if (Chunk->State == EChunkState::Unloaded)
+        {
+            // Request Generation
+            Chunk->State = EChunkState::Requested;
+            GenerationQueue.Add(Id);
+        }
+    }
 }
 
 
-void FChunkManager::UpdateFace(uint8 Face, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired)
-{
-    // Start recursion from root
-    UpdateNode(RootNodes[Face].Get(), Context, OutRequired);
-}
-
-
-void FChunkManager::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context, TSet<FChunkId> &OutRequired)
+void FChunkManager::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context, TSet<FChunkId> &OutVisibleChunks, TSet<FChunkId> &OutCachedChunks)
 {
     FVector Center = GetChunkCenter(Node->Id);
     FVector ToChunk = Center - Context.ObserverLocation;  // Use current position for culling
@@ -273,29 +302,89 @@ void FChunkManager::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Co
             Node->Children.Add(MakeUnique<FQuadtreeNode>(FChunkId(Face, FIntVector(X * 2 + 1, Y * 2 + 1, 0), NextLOD), Node));
         }
 
-        for (auto &Child : Node->Children)
+        // --- BLINKING FIX: SPLIT HYSTERESIS ---
+        // Only switch to children if ALL children are ready.
+        bool bAllChildrenReady = true;
+        for (const auto &Child : Node->Children)
         {
-            UpdateNode(Child.Get(), Context, OutRequired);
+            if (!IsChunkReady(Child->Id))
+            {
+                bAllChildrenReady = false;
+                break;
+            }
+        }
+
+        if (bAllChildrenReady)
+        {
+            // Children are ready, we can safely split without blinking.
+            for (auto &Child : Node->Children)
+            {
+                UpdateNode(Child.Get(), Context, OutVisibleChunks, OutCachedChunks);
+            }
+        }
+        else
+        {
+            // Children are NOT ready. Keep rendering Parent (Self) to avoid holes.
+            OutVisibleChunks.Add(Node->Id);
+
+            // Update Transform for Parent (since we are rendering it)
+            FChunk *Chunk = GetChunk(Node->Id);
+            if (Chunk)
+            {
+                Chunk->Transform.Location = Center;
+                Chunk->Transform.FaceNormal = FMathUtils::getFaceNormal(Node->Id.FaceIndex);
+                Chunk->Transform.Scale = 1.0f;
+            }
+
+            // Force load children in background so they become ready for next frames
+            for (auto &Child : Node->Children)
+            {
+                OutCachedChunks.Add(Child->Id);
+            }
         }
     }
     else
     {
-        // Merge (if it has children, remove them)
-        if (!Node->IsLeaf())
+        // --- BLINKING FIX: MERGE HYSTERESIS ---
+        // We want to merge (render Self).
+        // If Self is NOT ready, keep rendering children if they exist.
+
+        bool bSelfReady = IsChunkReady(Node->Id);
+
+        if (bSelfReady)
         {
-            Node->Children.Empty();
+            // Safe to merge
+            if (!Node->IsLeaf())
+            {
+                Node->Children.Empty();
+            }
+            OutVisibleChunks.Add(Node->Id);
+        }
+        else
+        {
+            // Parent not ready. Request Parent generation.
+            OutVisibleChunks.Add(Node->Id);  // This will trigger generation but won't render until ready
+
+            // Keep children visible for now
+            if (!Node->IsLeaf())
+            {
+                for (auto &Child : Node->Children)
+                {
+                    UpdateNode(Child.Get(), Context, OutVisibleChunks, OutCachedChunks);
+                }
+            }
         }
 
-        // Add this node as a required chunk
-        OutRequired.Add(Node->Id);
-
-        // Update Transform info for the chunk (needed for rendering)
-        FChunk *Chunk = GetChunk(Node->Id);
-        if (Chunk)
+        // Update Transform (Always needed if we might render it)
+        if (bSelfReady || OutVisibleChunks.Contains(Node->Id))
         {
-            Chunk->Transform.Location = Center;
-            Chunk->Transform.FaceNormal = FMathUtils::getFaceNormal(Node->Id.FaceIndex);
-            Chunk->Transform.Scale = 1.0f;
+            FChunk *Chunk = GetChunk(Node->Id);
+            if (Chunk)
+            {
+                Chunk->Transform.Location = Center;
+                Chunk->Transform.FaceNormal = FMathUtils::getFaceNormal(Node->Id.FaceIndex);
+                Chunk->Transform.Scale = 1.0f;
+            }
         }
     }
 }
@@ -380,7 +469,7 @@ void FChunkManager::DrawDebugChunkBounds(const UWorld *World) const
     if (!World)
         return;
 
-    for (const auto &Pair : Chunks)
+    for (const auto &Pair : ChunkMap)
     {
         const FChunk *Chunk = Pair.Value.Get();
         // Only draw bounds for chunks that have a visible mesh component
@@ -466,33 +555,28 @@ FChunkId FChunkManager::GetChunkIdAt(const FVector &LocalPosition) const
 }
 
 
-void FChunkManager::ProcessQueues()
-{
-    ProcessGenerationQueue();
-
-    // ProcessMeshQueue();
-}
+void FChunkManager::HandleAsyncRequests() { ProcessGenerationQueue(); }
 
 
 void FChunkManager::ProcessGenerationQueue()
 {
     // 1. Don't overload the CPU threads
-    if (CurrentlyGenerating.Num() >= MaxConcurrentGenerations)
+    if (ActiveGenerationTasks.Num() >= MaxConcurrentGenerations)
         return;
 
     int32 StartedThisTick = 0;
 
     // 2. Start new tasks up to the GenerationRate
-    while (PendingGenerationQueue.Num() > 0 && StartedThisTick < GenerationRate)
+    while (GenerationQueue.Num() > 0 && StartedThisTick < GenerationRate)
     {
         // Ensure we haven't hit the global thread limit mid-loop
-        if (CurrentlyGenerating.Num() >= MaxConcurrentGenerations)
+        if (ActiveGenerationTasks.Num() >= MaxConcurrentGenerations)
             break;
 
-        FChunkId Id = PendingGenerationQueue.Pop();
+        FChunkId Id = GenerationQueue.Pop();
 
         // Final safety check before threading
-        if (!CurrentlyGenerating.Contains(Id))
+        if (!ActiveGenerationTasks.Contains(Id))
         {
             StartAsyncGeneration(Id);
             StartedThisTick++;
@@ -510,7 +594,7 @@ void FChunkManager::StartAsyncGeneration(const FChunkId &Id)
     // 1. Update State
     Chunk->State = EChunkState::Generating;
     Chunk->GenerationId++;
-    CurrentlyGenerating.Add(Id);
+    ActiveGenerationTasks.Add(Id);
 
     // 2. Prepare Data for Thread (Capture by Value)
     uint32 GenId = Chunk->GenerationId;
@@ -574,7 +658,7 @@ void FChunkManager::StartAsyncGeneration(const FChunkId &Id)
 
 void FChunkManager::OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData)
 {
-    CurrentlyGenerating.Remove(Id);
+    ActiveGenerationTasks.Remove(Id);
 
     FChunk *Chunk = GetChunk(Id);
     if (!Chunk)

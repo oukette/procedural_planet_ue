@@ -93,6 +93,9 @@ void ChunkRenderer::RenderChunk(FChunk *Chunk, bool bEnableCollision)
 
 void ChunkRenderer::HideChunk(FChunk *Chunk)
 {
+    if (!Chunk)
+        return;
+
     if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
     {
         Comp->SetVisibility(false);

@@ -340,7 +340,7 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
     if (ChunkManager.IsValid())
     {
         int32 Vis = ChunkManager->GetVisibleChunkCount();
-        int32 Mem = ChunkManager->GetChunkCount();
+        int32 Mem = ChunkManager->GetTotalChunkCount();
         int32 Pending = ChunkManager->GetPendingCount();
 
         FColor TextColor = (Vis == 0) ? FColor::Red : FColor::Green;

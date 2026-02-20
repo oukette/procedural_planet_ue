@@ -13,8 +13,7 @@ enum class EChunkState : uint8
     Requested,   // Marked for generation, waiting for thread pool
     Generating,  // Currently being processed by an async task
     Ready,       // Mesh data is ready in memory
-    Visible,     // Mesh is assigned to a component and visible in world
-    Unloading    // Marked for destruction/pooling
+    Visible     // Mesh is assigned to a component and visible in world
 };
 
 
