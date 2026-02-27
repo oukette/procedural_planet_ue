@@ -48,17 +48,25 @@ void APlanet::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
-    // 1. Build View Context
-    FPlanetViewContext Context = BuildViewContext();
+    // 1. Build View Context in WORLD space
+    FPlanetViewContext WorldContext = BuildViewContext();
 
-    // 2. Update Manager
-    UpdateChunkManager(Context);
+    // 2. Create a LOCAL space context for the ChunkManager
+    // The ChunkManager and its subsystems (Quadtree, etc.) operate in the Planet's local space.
+    // This allows the entire planet actor to be moved in the world without breaking the generation logic.
+    FPlanetViewContext LocalContext;
+    const FTransform PlanetTransform = GetActorTransform();
+    LocalContext.ObserverLocation = PlanetTransform.InverseTransformPosition(WorldContext.ObserverLocation);
+    LocalContext.ObserverForward = PlanetTransform.InverseTransformVector(WorldContext.ObserverForward);
+    LocalContext.ObserverVelocity = PlanetTransform.InverseTransformVector(WorldContext.ObserverVelocity);
+    LocalContext.ViewDistance = WorldContext.ViewDistance;
 
-    // 3. Update Far Model
-    UpdateFarModelVisibility(Context);
+    // 3. Update Manager with LOCAL context
+    UpdateChunkManager(LocalContext);
 
-    // 4. Debug Output
-    DrawDebugInfo(Context);
+    // 4. Update Far Model & Debug with WORLD context
+    UpdateFarModelVisibility(WorldContext);
+    DrawDebugInfo(WorldContext);
 }
 
 
@@ -359,31 +367,43 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
     // Prediction Info
     if (GenSettings.bShowDebugPrediction && ChunkManager.IsValid())
     {
-        // Re-calculate prediction logic here for visualization in world space
+        // Re-calculate the *exact* same prediction logic as the ChunkManager, but in World Space for visualization.
+        // This ensures the debug visuals match what the LOD system is actually using.
         const float Altitude = FMath::Max(0.f, DistToSurface);
         const float AltitudeAlpha = FMath::Clamp(Altitude / RuntimeConfig.LookAheadAltitudeScale, 0.f, 1.f);
         const float CurrentLookAheadTime = FMath::Lerp(RuntimeConfig.MaxLookAheadTime, RuntimeConfig.MinLookAheadTime, AltitudeAlpha);
-        const FVector PredictedOffset = Context.ObserverVelocity * CurrentLookAheadTime;
 
-        // Use Pawn location for visualization if available, otherwise fallback to Context (Camera)
-        FVector VisualizationStart = Context.ObserverLocation;
+        // --- Smart Velocity Dampening (World Space) ---
+        // We need the observer's location relative to the planet center, but in world space.
+        FVector WorldObserverRelativeToPlanet = Context.ObserverLocation - GetActorLocation();
+        FVector RadialDir = WorldObserverRelativeToPlanet.GetSafeNormal();
+        if (RadialDir.IsZero())
+            RadialDir = FVector::UpVector;
+
+        float RadialSpeed = FVector::DotProduct(Context.ObserverVelocity, RadialDir);
+        FVector TangentialVelocity = Context.ObserverVelocity - (RadialDir * RadialSpeed);
+
+        float RadialWeight = AltitudeAlpha * AltitudeAlpha;
+        FVector EffectiveVelocity = TangentialVelocity + (RadialDir * RadialSpeed * RadialWeight);
+
+        FVector PredictedOffset = EffectiveVelocity * CurrentLookAheadTime;
+
+        // The visualization should start from the Pawn's location for clarity, not the camera's.
+        FVector VisualizationStart = Context.ObserverLocation;  // Default to camera
         if (APawn *PlayerPawn = UGameplayStatics::GetPlayerPawn(GetWorld(), 0))
         {
             VisualizationStart = PlayerPawn->GetActorLocation();
         }
         const FVector PredictedObserverWorld = VisualizationStart + PredictedOffset;
 
-        // Draw a line from current to predicted position
         DrawDebugLine(GetWorld(), VisualizationStart, PredictedObserverWorld, FColor::Yellow, false, 0.f, 0, 10.f);
-
-        // Draw a sphere at the predicted position
         DrawDebugSphere(GetWorld(), PredictedObserverWorld, 500.f, 12, FColor::Yellow, false, 0.f, 0, 20.f);
 
-        // Display the look-ahead time value and observer speed
         GEngine->AddOnScreenDebugMessage(
             FPlanetStatics::DebugKey_PredictionInfo,
             0.f,
             FColor::Yellow,
-            FString::Printf(TEXT("Prediction Time: %.2fs | Speed: %.0f km/h"), CurrentLookAheadTime, Context.ObserverVelocity.Size() * 0.036f));
+            FString::Printf(
+                TEXT("Prediction Time: %.2fs | Speed: %.0f km/h"), CurrentLookAheadTime, Context.ObserverVelocity.Size() * 0.036f));  // Speed in km/h
     }
 }
