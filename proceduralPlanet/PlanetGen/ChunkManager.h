@@ -4,6 +4,7 @@
 #include "Chunk.h"
 #include "DensityGenerator.h"
 #include "ChunkRenderer.h"
+#include "ChunkGenerator.h"
 
 
 // A logical node in the Quadtree.
@@ -58,14 +59,10 @@ class FChunkManager
         FPlanetConfig Config;
         const DensityGenerator *Generator;            // Reference to the density generator (owned by APlanet)
         TUniquePtr<ChunkRenderer> Renderer;           // Handles visual components
+        TUniquePtr<FChunkGenerator> ChunkGenerator;   // Handles async generation
         TMap<FChunkId, TUniquePtr<FChunk>> ChunkMap;  // The central registry of all chunks
-        TArray<FChunkId> GenerationQueue;             // Chunks waiting to be processed
-        TSet<FChunkId> ActiveGenerationTasks;         // Chunks currently in a background thread
 
         TArray<TUniquePtr<FQuadtreeNode>> RootNodes;  // The 6 root nodes of the planet (one per face)
-
-        int32 MaxConcurrentGenerations;  // Limit total background threads
-        int32 GenerationRate;            // Limit how many start per tick
 
         // Helper to create a new chunk entry
         FChunk *CreateChunk(const FChunkId &Id);
@@ -85,25 +82,8 @@ class FChunkManager
         // Helper to determine if a node should split
         bool ShouldSplit(const FQuadtreeNode *Node, const FVector &ObserverLocal) const;
 
-        // Helper to calculate the world position of a chunk center
-        FVector GetChunkCenter(const FChunkId &Id) const;
-
-        // Helper to get UV bounds (0..1) for a specific chunk ID
-        void GetUVBounds(const FChunkId &Id, FVector2D &OutMin, FVector2D &OutMax) const;
-
-        // Helper to find which chunk contains a specific local position
-        FChunkId GetChunkIdAt(const FVector &LocalPosition) const;
-
         // Helper to check if a chunk is in memory and has mesh data
         bool IsChunkReady(const FChunkId &Id) const;
-
-        // Phase 3: Async Dispatch
-        void HandleAsyncRequests();
-
-        // Throttling
-        void ProcessGenerationQueue();
-
-        void StartAsyncGeneration(const FChunkId &Id);
 
         // Callback executed on Game Thread when async generation finishes
         void OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData);

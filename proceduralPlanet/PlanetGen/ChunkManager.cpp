@@ -1,7 +1,4 @@
 #include "ChunkManager.h"
-#include "Async/Async.h"
-#include "SimpleNoise.h"
-#include "MeshGenerator.h"
 #include "DrawDebugHelpers.h"
 
 
@@ -9,8 +6,6 @@ FChunkManager::FChunkManager(const FPlanetConfig &planetConfig, const DensityGen
     Config(planetConfig),
     Generator(densityGen)
 {
-    MaxConcurrentGenerations = Config.MaxConcurrentGenerations;
-    GenerationRate = Config.ChunkGenerationRate;
     // DEBUG LOG
     UE_LOG(LogTemp, Warning, TEXT("FChunkManager created."));
     UE_LOG(LogTemp, Warning, TEXT("Collision is globally %s"), Config.bEnableCollision ? TEXT("enabled") : TEXT("disabled"));
@@ -41,12 +36,16 @@ int32 FChunkManager::GetVisibleChunkCount() const
 }
 
 
-int32 FChunkManager::GetPendingCount() const { return GenerationQueue.Num() + ActiveGenerationTasks.Num(); }
+int32 FChunkManager::GetPendingCount() const { return ChunkGenerator ? ChunkGenerator->GetPendingCount() : 0; }
 
 
 void FChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
 {
     Renderer = MakeUnique<ChunkRenderer>(Owner, Material);
+
+    ChunkGenerator = MakeUnique<FChunkGenerator>(Config, Generator);
+    ChunkGenerator->SetOnChunkGeneratedCallback([this](const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData)
+                                                { OnGenerationComplete(Id, GenId, MoveTemp(MeshData)); });
 
     // Chunks are now created on-demand in the Update loop via GetChunk().
     // Pre-allocating them here is wasteful as most would be immediately garbage collected on the first frame.
@@ -109,7 +108,10 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
     ProcessChunkStates(VisibleChunks, CachedChunks);
 
     // 3. Async Dispatch
-    HandleAsyncRequests();
+    if (ChunkGenerator)
+    {
+        ChunkGenerator->Update();
+    }
 }
 
 void FChunkManager::DetermineChunkVisibility(const FPlanetViewContext &Context, TSet<FChunkId> &OutVisibleChunks, TSet<FChunkId> &OutCachedChunks)
@@ -234,7 +236,10 @@ void FChunkManager::ProcessChunkStates(const TSet<FChunkId> &VisibleChunks, cons
         {
             // Request Generation
             Chunk->State = EChunkState::Requested;
-            GenerationQueue.Add(Id);
+
+            // Increment GenerationId to invalidate any previous stale tasks for this chunk
+            Chunk->GenerationId++;
+            ChunkGenerator->RequestChunk(Id, Chunk->GenerationId);
         }
     }
 
@@ -247,7 +252,9 @@ void FChunkManager::ProcessChunkStates(const TSet<FChunkId> &VisibleChunks, cons
         {
             // Request Generation
             Chunk->State = EChunkState::Requested;
-            GenerationQueue.Add(Id);
+
+            Chunk->GenerationId++;
+            ChunkGenerator->RequestChunk(Id, Chunk->GenerationId);
         }
     }
 }
@@ -255,7 +262,7 @@ void FChunkManager::ProcessChunkStates(const TSet<FChunkId> &VisibleChunks, cons
 
 void FChunkManager::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context, TSet<FChunkId> &OutVisibleChunks, TSet<FChunkId> &OutCachedChunks)
 {
-    FVector Center = GetChunkCenter(Node->Id);
+    FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
     FVector ToChunk = Center - Context.ObserverLocation;  // Use current position for culling
     float DistSq = ToChunk.SizeSquared();
 
@@ -331,9 +338,7 @@ void FChunkManager::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Co
             FChunk *Chunk = GetChunk(Node->Id);
             if (Chunk)
             {
-                Chunk->Transform.Location = Center;
-                Chunk->Transform.FaceNormal = FMathUtils::getFaceNormal(Node->Id.FaceIndex);
-                Chunk->Transform.Scale = 1.0f;
+                Chunk->Transform = FMathUtils::ComputeChunkTransform(Node->Id, Config.PlanetRadius);
             }
 
             // Force load children in background so they become ready for next frames
@@ -381,9 +386,7 @@ void FChunkManager::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Co
             FChunk *Chunk = GetChunk(Node->Id);
             if (Chunk)
             {
-                Chunk->Transform.Location = Center;
-                Chunk->Transform.FaceNormal = FMathUtils::getFaceNormal(Node->Id.FaceIndex);
-                Chunk->Transform.Scale = 1.0f;
+                Chunk->Transform = FMathUtils::ComputeChunkTransform(Node->Id, Config.PlanetRadius);
             }
         }
     }
@@ -395,7 +398,7 @@ bool FChunkManager::ShouldSplit(const FQuadtreeNode *Node, const FVector &Observ
     if (Node->Id.LODLevel >= Config.MaxLOD)
         return false;
 
-    FVector Center = GetChunkCenter(Node->Id);
+    FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
 
     // We use the full 3D distance here. The "ObserverLocal" passed in is already the
     // sanitized/clamped predicted position from Update(), so it won't be underground.
@@ -488,178 +491,8 @@ void FChunkManager::DrawDebugChunkBounds(const UWorld *World) const
 }
 
 
-void FChunkManager::GetUVBounds(const FChunkId &Id, FVector2D &OutMin, FVector2D &OutMax) const
-{
-    // Step size depends on LOD Level.
-    // LOD 0 = 1.0, LOD 1 = 0.5, LOD 2 = 0.25, etc.
-    float Step = 1.0f / (float)(1 << Id.LODLevel);
-
-    OutMin = FVector2D(Id.Coords.X * Step, Id.Coords.Y * Step);
-    OutMax = FVector2D((Id.Coords.X + 1) * Step, (Id.Coords.Y + 1) * Step);
-}
-
-
-FVector FChunkManager::GetChunkCenter(const FChunkId &Id) const
-{
-    FVector2D UVMin, UVMax;
-    GetUVBounds(Id, UVMin, UVMax);
-    FVector2D CenterUV = (UVMin + UVMax) * 0.5f;
-
-    FVector Normal = FMathUtils::getFaceNormal(Id.FaceIndex);
-    FVector Right = FMathUtils::getFaceRight(Id.FaceIndex);
-    FVector Up = FMathUtils::getFaceUp(Id.FaceIndex);
-
-    FVector CubePos = Normal + (Right * (CenterUV.X * 2.0f - 1.0f)) + (Up * (CenterUV.Y * 2.0f - 1.0f));
-
-    return FMathUtils::projectCubeToSphere(CubePos) * Config.PlanetRadius;
-}
-
-
-FChunkId FChunkManager::GetChunkIdAt(const FVector &LocalPosition) const
-{
-    // Inverse of GetChunkCenter logic
-    FVector AbsPos = LocalPosition.GetAbs();
-    float MaxVal = AbsPos.GetMax();
-    uint8 Face = 0;
-
-    // Determine Face
-    if (AbsPos.X == MaxVal)
-        Face = (LocalPosition.X > 0) ? 0 : 1;
-    else if (AbsPos.Y == MaxVal)
-        Face = (LocalPosition.Y > 0) ? 2 : 3;
-    else
-        Face = (LocalPosition.Z > 0) ? 4 : 5;
-
-    // Project to Cube (-1..1)
-    FVector CubePos = LocalPosition / MaxVal;
-
-    // Get Basis Vectors
-    FVector Right = FMathUtils::getFaceRight(Face);
-    FVector Up = FMathUtils::getFaceUp(Face);
-
-    // Project to UV (0..1)
-    // CubePos = Normal + Right*(2u-1) + Up*(2v-1)
-    // Dot(CubePos, Right) = 2u - 1  =>  u = (Dot + 1) / 2
-    float U = (FVector::DotProduct(CubePos, Right) + 1.0f) * 0.5f;
-    float V = (FVector::DotProduct(CubePos, Up) + 1.0f) * 0.5f;
-
-    // Map to Grid Coords (Assuming LOD 0 for now)
-    int32 X = FMath::FloorToInt(U);  // At LOD 0, range is 0..1, so index is 0
-    int32 Y = FMath::FloorToInt(V);
-
-    // Clamp
-    X = 0;
-    Y = 0;
-
-    return FChunkId(Face, FIntVector(X, Y, 0), 0);
-}
-
-
-void FChunkManager::HandleAsyncRequests() { ProcessGenerationQueue(); }
-
-
-void FChunkManager::ProcessGenerationQueue()
-{
-    // 1. Don't overload the CPU threads
-    if (ActiveGenerationTasks.Num() >= MaxConcurrentGenerations)
-        return;
-
-    int32 StartedThisTick = 0;
-
-    // 2. Start new tasks up to the GenerationRate
-    while (GenerationQueue.Num() > 0 && StartedThisTick < GenerationRate)
-    {
-        // Ensure we haven't hit the global thread limit mid-loop
-        if (ActiveGenerationTasks.Num() >= MaxConcurrentGenerations)
-            break;
-
-        FChunkId Id = GenerationQueue.Pop();
-
-        // Final safety check before threading
-        if (!ActiveGenerationTasks.Contains(Id))
-        {
-            StartAsyncGeneration(Id);
-            StartedThisTick++;
-        }
-    }
-}
-
-
-void FChunkManager::StartAsyncGeneration(const FChunkId &Id)
-{
-    FChunk *Chunk = GetChunk(Id);
-    if (!Chunk)
-        return;
-
-    // 1. Update State
-    Chunk->State = EChunkState::Generating;
-    Chunk->GenerationId++;
-    ActiveGenerationTasks.Add(Id);
-
-    // 2. Prepare Data for Thread (Capture by Value)
-    uint32 GenId = Chunk->GenerationId;
-
-    // Reconstruct Spatial Data
-    FVector2D UVMin, UVMax;
-    GetUVBounds(Id, UVMin, UVMax);
-
-    // Remap UVs (0..1) to Cube Coordinates (-1..1)
-    FVector2D CubeMin = UVMin * 2.0f - 1.0f;
-    FVector2D CubeMax = UVMax * 2.0f - 1.0f;
-
-    uint8 FaceIdx = Id.FaceIndex;
-    FVector FaceNormal = FMathUtils::getFaceNormal(FaceIdx);
-    FVector FaceRight = FMathUtils::getFaceRight(FaceIdx);
-    FVector FaceUp = FMathUtils::getFaceUp(FaceIdx);
-
-    // Calculate Transform (Relative to Planet Center)
-    FVector2D CenterUV = (UVMin + UVMax) * 0.5f;
-    FVector CubePos = FaceNormal + (FaceRight * (CenterUV.X * 2.0f - 1.0f)) + (FaceUp * (CenterUV.Y * 2.0f - 1.0f));
-    FVector SphereDir = FMathUtils::projectCubeToSphere(CubePos);
-    FVector ChunkLocation = SphereDir * Config.PlanetRadius;
-
-    // Calculate Rotation (Align Up with Sphere Normal)
-    FVector ChunkUp = SphereDir;
-    FVector ChunkRight = FVector::CrossProduct(FaceUp, ChunkUp).GetSafeNormal();
-    FVector ChunkForward = FVector::CrossProduct(ChunkUp, ChunkRight);
-    FMatrix RotMatrix = FRotationMatrix::MakeFromXY(ChunkForward, ChunkRight);
-    FTransform ChunkTransform(RotMatrix.ToQuat(), ChunkLocation);
-
-    // Store rotation in chunk data for the renderer to use later
-    if (Chunk)
-    {
-        Chunk->Transform.Rotation = RotMatrix.ToQuat();
-    }
-
-    // LOD Config
-    int32 Resolution = Config.GridResolution;
-    int32 LODLevel = Id.LODLevel;
-
-    // Copy Generator Config (Thread Safety)
-    DensityGenerator ThreadGen = *Generator;
-
-    // 3. Launch Async Task
-    Async(EAsyncExecution::ThreadPool,
-          [this, Id, GenId, Resolution, FaceNormal, FaceRight, FaceUp, CubeMin, CubeMax, ChunkTransform, LODLevel, ThreadGen]()
-          {
-              // A. Generate Density
-              GenData GeneratedData = ThreadGen.GenerateDensityField(Resolution, FaceNormal, FaceRight, FaceUp, CubeMin, CubeMax);
-
-              // B. Generate Mesh
-              // PlanetTransform is Identity because we want vertices relative to Planet Center (0,0,0)
-              FChunkMeshData MeshData = MeshGenerator::GenerateMesh(GeneratedData, Resolution, ChunkTransform, FTransform::Identity, LODLevel, ThreadGen);
-
-              // C. Return to Game Thread
-              AsyncTask(ENamedThreads::GameThread,
-                        [this, Id, GenId, MeshData]() mutable { OnGenerationComplete(Id, GenId, MakeUnique<FChunkMeshData>(MoveTemp(MeshData))); });
-          });
-}
-
-
 void FChunkManager::OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData)
 {
-    ActiveGenerationTasks.Remove(Id);
-
     FChunk *Chunk = GetChunk(Id);
     if (!Chunk)
         return;  // Chunk was unloaded while generating
