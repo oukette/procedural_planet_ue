@@ -9,11 +9,11 @@
 UENUM(BlueprintType)
 enum class EChunkState : uint8
 {
-    Unloaded,    // Data exists in manager, but no work is happening
-    Requested,   // Marked for generation, waiting for thread pool
+    None,        // Initial state
+    Pending,     // In the generation queue
     Generating,  // Currently being processed by an async task
-    Ready,       // Mesh data is ready in memory
-    Visible     // Mesh is assigned to a component and visible in world
+    DataReady,   // Mesh data is in RAM but not yet in the GPU
+    Rendered     // Mesh is assigned to a component and visible in the world
 };
 
 
