@@ -13,7 +13,15 @@ enum class EChunkState : uint8
     Pending,     // In the generation queue
     Generating,  // Currently being processed by an async task
     DataReady,   // Mesh data is in RAM but not yet in the GPU
-    Rendered     // Mesh is assigned to a component and visible in the world
+    MeshReady,   // Mesh is assigned to a component
+    Visible      // Mesh is visible in the world
+};
+
+
+enum class ELeafTransitionType : uint8
+{
+    Split,
+    Merge
 };
 
 
@@ -22,22 +30,17 @@ USTRUCT(BlueprintType)
 struct FChunkId
 {
         GENERATED_BODY()
+        UPROPERTY(EditAnywhere, BlueprintReadWrite)
+        uint8 FaceIndex = 0;  // 0-5
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite)
-        uint8 FaceIndex;  // 0-5
+        FIntVector Coords = FIntVector::ZeroValue;  // Face-local grid coordinates (X, Y)
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite)
-        FIntVector Coords;  // Face-local grid coordinates (X, Y)
+        int32 LODLevel = 0;  // 0 = Root, Higher = Smaller/More Detailed
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite)
-        int32 LODLevel;  // 0 = Root, Higher = Smaller/More Detailed
+        FChunkId() = default;
 
-        FChunkId() :
-            FaceIndex(0),
-            Coords(FIntVector::ZeroValue),
-            LODLevel(0)
-        {
-        }
         FChunkId(uint8 InFace, FIntVector InCoords, int32 InLOD) :
             FaceIndex(InFace),
             Coords(InCoords),
@@ -91,27 +94,19 @@ USTRUCT(BlueprintType)
 struct FChunkTransform
 {
         GENERATED_BODY()
+        UPROPERTY()
+        FVector Location = FVector::ZeroVector;  // Center of the chunk in Planet Space
 
         UPROPERTY()
-        FVector Location;  // Center of the chunk in Planet Space
+        float Scale = 1.0f;  // Uniform scale (derived from LOD)
 
         UPROPERTY()
-        float Scale;  // Uniform scale (derived from LOD)
+        FVector FaceNormal = FVector::UpVector;  // Which cube face this belongs to
 
         UPROPERTY()
-        FVector FaceNormal;  // Which cube face this belongs to
+        FQuat Rotation = FQuat::Identity;  // Orientation on the sphere surface
 
-        UPROPERTY()
-        FQuat Rotation;  // Orientation on the sphere surface
-
-        // Default constructor
-        FChunkTransform() :
-            Location(FVector::ZeroVector),
-            Scale(1.0f),
-            FaceNormal(FVector::UpVector),
-            Rotation(FQuat::Identity)
-        {
-        }
+        FChunkTransform() = default;
 
         FChunkTransform(FVector InLoc, float InScale, FVector InNormal, FQuat InRot = FQuat::Identity) :
             Location(InLoc),
@@ -163,6 +158,12 @@ struct FPlanetStatics
         static constexpr float TargetAutoChunkSize = 8000.0f;
         static constexpr float FarDistanceSafetyMargin = 1.1f;
 
+        // Culling & Visibility
+        static constexpr float UndergroundThreshold = -100.0f;
+        static constexpr float HorizonCullingDot = -0.5f;
+        static constexpr float FrustumCullingDot = -0.5f;
+        static constexpr float GridDebugRadiusScale = 1.002f;
+
         // Debug
         static constexpr int32 DebugSphereSegments = 32;
         static constexpr float DebugSphereLifetime = 60.0f;
@@ -172,12 +173,8 @@ struct FPlanetStatics
         static constexpr int32 DebugKey_ManagerStats = 10;
         static constexpr int32 DebugKey_DistanceInfo = 101;
         static constexpr int32 DebugKey_PredictionInfo = 102;
-
-        // Culling & Visibility
-        static constexpr float UndergroundThreshold = -100.0f;
-        static constexpr float HorizonCullingDot = -0.5f;
-        static constexpr float FrustumCullingDot = -0.5f;
-        static constexpr float GridDebugRadiusScale = 1.002f;
+        static constexpr int32 DebugKey_LODBreakdown = 103;
+        static constexpr int32 DebugKey_LODThreshold = 104;
 };
 
 
@@ -234,8 +231,12 @@ struct FPlanetGridSettings
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         float VoxelSize = 100.f;
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (DisplayName = "LOD Split Multiplier", ClampMin = "1.0", ClampMax = "8.0"))
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (DisplayName = "LOD Split Multiplier", ClampMin = "1.0", ClampMax = "5.0"))
         float LODSplitMultiplier = 2.0f;
+
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet",
+                  meta = (DisplayName = "LOD Merge Hysteresis Ratio", ClampMin = "0.05", ClampMax = "2.0"))
+        float LODMergeHysteresisRatio = 1.25f;
 };
 
 
@@ -293,74 +294,48 @@ USTRUCT(BlueprintType)
 struct FPlanetConfig
 {
         GENERATED_BODY()
-
         // Basic Dimensions
-        float PlanetRadius;
-        int32 ChunksPerFace;  // The chunk grid size/res (e.g. 16 or 32)
+        float PlanetRadius = 10000.f;
+        int32 ChunksPerFace = 1;
 
         // Generation Settings
-        int32 Seed;
-        bool bEnableCollision;
-        bool bCastShadows;
+        int32 Seed = 1337;
+        bool bEnableCollision = false;
+        bool bCastShadows = false;
 
-        // Voxel Settings (Finalized)
-        float VoxelSize;       // true size of a voxel in the UE world
-        int32 GridResolution;  // resolution of the voxel grid in voxels
-
+        // Voxel Settings
+        float VoxelSize = 100.f;    // true size of a voxel in the UE world
+        int32 GridResolution = 32;  // resolution of the voxel grid in voxels
 
         // Throttling
-        int32 MaxConcurrentGenerations;
-        int32 ChunkGenerationRate;  // Chunks to start generating per tick
-        int32 MeshUpdatesPerFrame;
+        int32 MaxConcurrentGenerations = 32;
+        int32 ChunkGenerationRate = 8;  // Chunks to start generating per tick
+        int32 MeshUpdatesPerFrame = 2;
 
         // LOD Rules
-        int32 MaxLOD;
-        float FarDistanceThreshold;
-        float LODSplitDistanceMultiplier;
+        int32 MaxLOD = 8;
+        float FarDistanceThreshold = 100000.0f;
+        float LODSplitDistanceMultiplier = 2.0f;
+        float LODMergeHysteresisRatio = 1.25f;  // Merge threshold = Split threshold * this ratio
 
-        float MaxLookAheadTime;
-        float MinLookAheadTime;
-        float LookAheadAltitudeScale;
+        // Look ahead params
+        float MaxLookAheadTime = 2.5f;
+        float MinLookAheadTime = 0.5f;
+        float LookAheadAltitudeScale = 50000.0f;
 
-        // Default Constructor
-        FPlanetConfig() :
-            PlanetRadius(10000.f),
-            ChunksPerFace(1),
-            Seed(1337),
-            bEnableCollision(false),
-            bCastShadows(false),
-            VoxelSize(100.f),
-            GridResolution(32),
-            MaxConcurrentGenerations(32),
-            ChunkGenerationRate(8),
-            MeshUpdatesPerFrame(2),
-            MaxLOD(8),
-            FarDistanceThreshold(100000.0f),
-            LODSplitDistanceMultiplier(2.0f),  // This will be overridden from GridSettings
-            MaxLookAheadTime(2.5f),
-            MinLookAheadTime(0.5f),
-            LookAheadAltitudeScale(50000.0f)  // This will be overridden by PlanetRadius * Factor
-        {
-        }
+        int32 ChunkDemotionFrameDelay = 3;  // X frames. A rendered chunk must be absent before hiding
 };
 
 
 // Configuration structure to keep parameters organized
 struct DensityConfig
 {
-        int32 Seed;
-        float PlanetRadius;
-        float VoxelSize;
+        int32 Seed = 1337;
+        float PlanetRadius = 10000.f;
+        float VoxelSize = 100.f;
         FNoiseSettings Noise;
 
         // Future expansion: biomes, caves, etc.
-
-        DensityConfig() :
-            Seed(1337),
-            PlanetRadius(10000.f),
-            VoxelSize(100.f)
-        {
-        }
 };
 
 
@@ -370,6 +345,15 @@ struct GenData
         TArray<float> Densities;
         TArray<FVector> Positions;
         int32 SampleCount = 0;
+};
+
+
+struct FLODTransition
+{
+        FChunkId Parent;
+        TArray<FChunkId> Children;  // Always 4 for a quadtree split
+        ELeafTransitionType Type;
+        bool bReadyToCommit = false;
 };
 
 

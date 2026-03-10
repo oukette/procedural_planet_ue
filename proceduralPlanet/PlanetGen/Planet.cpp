@@ -106,15 +106,7 @@ void APlanet::ClearPlanet()
     }
     bIsFarModelAutoCreated = false;
 
-    // 3. Clean up any lingering Procedural Mesh Components
-    // (ChunkRenderer might have left them attached to the actor)
-    TArray<UProceduralMeshComponent *> ProcMeshes;
-    GetComponents<UProceduralMeshComponent>(ProcMeshes);
-    for (UProceduralMeshComponent *Comp : ProcMeshes)
-    {
-        if (Comp)
-            Comp->DestroyComponent();
-    }
+    // 3. The ChunkManager's destructor now handles all component cleanup robustly.
 }
 
 
@@ -159,6 +151,7 @@ void APlanet::initPlanet()
     RuntimeConfig.MeshUpdatesPerFrame = PerformanceSettings.MeshUpdatesPerFrame;
     RuntimeConfig.FarDistanceThreshold = GenSettings.PlanetRadius * GenSettings.RenderDistanceMultiplier;
     RuntimeConfig.LODSplitDistanceMultiplier = GridSettings.LODSplitMultiplier;
+    RuntimeConfig.LODMergeHysteresisRatio = GridSettings.LODMergeHysteresisRatio;
     RuntimeConfig.MaxLookAheadTime = PerformanceSettings.MaxLookAheadTime;
     RuntimeConfig.MinLookAheadTime = PerformanceSettings.MinLookAheadTime;
     RuntimeConfig.LookAheadAltitudeScale = PerformanceSettings.LookAheadAltitudeRadiusFactor * GenSettings.PlanetRadius;
@@ -273,7 +266,8 @@ FPlanetViewContext APlanet::BuildViewContext() const
 
         if (APawn *PlayerPawn = UGameplayStatics::GetPlayerPawn(World, 0))
         {
-            Context.ObserverVelocity = PlayerPawn->GetVelocity();
+            if (IsValid(PlayerPawn))
+                Context.ObserverVelocity = PlayerPawn->GetVelocity();
         }
     }
 
@@ -344,37 +338,70 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
     if (!GEngine)
         return;
 
-    // Manager Stats
+    const float DistToCenter = FVector::Dist(GetActorLocation(), Context.ObserverLocation);
+    const float DistToSurface = DistToCenter - GenSettings.PlanetRadius;
+    const float SpeedKmh = Context.ObserverVelocity.Size() * 0.036f;
+
+    // --- Line 1: Altitude and speed ---
+    const FString StatusStr = (DistToSurface < 0.f) ? TEXT("UNDERGROUND") : TEXT("SURFACE");
+    GEngine->AddOnScreenDebugMessage(FPlanetStatics::DebugKey_DistanceInfo,
+                                     0.f,
+                                     FColor::Cyan,
+                                     FString::Printf(TEXT("[Planet] %s | Alt: %.0f m | Speed: %.0f km/h"), *StatusStr, DistToSurface / 100.f, SpeedKmh));
+
     if (ChunkManager.IsValid())
     {
-        int32 Vis = ChunkManager->GetVisibleChunkCount();
-        int32 Mem = ChunkManager->GetTotalChunkCount();
-        int32 Pending = ChunkManager->GetPendingCount();
+        const int32 Vis = ChunkManager->GetVisibleChunkCount();
+        const int32 Mem = ChunkManager->GetTotalChunkCount();
+        const int32 Pending = ChunkManager->GetPendingCount();
 
-        FColor TextColor = (Vis == 0) ? FColor::Red : FColor::Green;
+        // --- Line 2: Chunk counts per state ---
+        const FColor ChunkColor = (Vis == 0) ? FColor::Red : FColor::Green;
+        GEngine->AddOnScreenDebugMessage(
+            FPlanetStatics::DebugKey_ManagerStats, 0.f, ChunkColor, FString::Printf(TEXT("[Chunks] Visible: %d | Total: %d | Pending: %d"), Vis, Mem, Pending));
+
+        // --- Line 3: Per-LOD visible chunk breakdown ---
+        TArray<int32> PerLODCount;
+        PerLODCount.Init(0, RuntimeConfig.MaxLOD + 1);
+        ChunkManager->GetVisibleCountPerLOD(PerLODCount);
+
+        FString LODStr = TEXT("[LOD] ");
+        for (int32 i = 0; i <= RuntimeConfig.MaxLOD; ++i)
+        {
+            if (PerLODCount[i] > 0)
+            {
+                LODStr += FString::Printf(TEXT("L%d:%d  "), i, PerLODCount[i]);
+            }
+        }
+        GEngine->AddOnScreenDebugMessage(FPlanetStatics::DebugKey_LODBreakdown, 0.f, FColor::White, LODStr);
+
+        // --- Line 4: Next split distance for current LOD ---
+        // Show how far the observer is from the next LOD transition
+        int32 CurrentMaxLOD = 0;
+        for (int32 i = 0; i <= RuntimeConfig.MaxLOD; ++i)
+            if (PerLODCount[i] > 0)
+                CurrentMaxLOD = i;
+
+        float NextSplitNodeSize = (RuntimeConfig.PlanetRadius * PI * 0.5f) / (float)(1 << CurrentMaxLOD);
+        float NextSplitDist = NextSplitNodeSize * RuntimeConfig.LODSplitDistanceMultiplier;
+        float NextMergeDist = NextSplitNodeSize * RuntimeConfig.LODSplitDistanceMultiplier * RuntimeConfig.LODMergeHysteresisRatio;
+        float ClosestChunkDist = DistToSurface;  // approximation
 
         GEngine->AddOnScreenDebugMessage(
-            FPlanetStatics::DebugKey_ManagerStats, 0.f, TextColor, FString::Printf(TEXT("Chunks: %d Vis / %d Mem | Pending: %d"), Vis, Mem, Pending));
+            FPlanetStatics::DebugKey_LODThreshold,
+            0.f,
+            FColor::Yellow,
+            FString::Printf(
+                TEXT("[LOD Threshold] Split < %.0fm | Merge > %.0fm | Dist: %.0fm"), NextSplitDist / 100.f, NextMergeDist / 100.f, ClosestChunkDist / 100.f));
     }
 
-    // Distance Info
-    float DistToCenter = FVector::Dist(GetActorLocation(), Context.ObserverLocation);
-    float DistToSurface = DistToCenter - GenSettings.PlanetRadius;
-    FString Status = (DistToSurface < 0) ? TEXT("UNDERGROUND") : TEXT("SURFACE");
-    GEngine->AddOnScreenDebugMessage(
-        FPlanetStatics::DebugKey_DistanceInfo, 0.0f, FColor::Cyan, FString::Printf(TEXT("%s | Alt: %.0f m"), *Status, DistToSurface / 100.f));
-
-    // Prediction Info
+    // --- Prediction visualizer ---
     if (GenSettings.bShowDebugPrediction && ChunkManager.IsValid())
     {
-        // Re-calculate the *exact* same prediction logic as the ChunkManager, but in World Space for visualization.
-        // This ensures the debug visuals match what the LOD system is actually using.
         const float Altitude = FMath::Max(0.f, DistToSurface);
         const float AltitudeAlpha = FMath::Clamp(Altitude / RuntimeConfig.LookAheadAltitudeScale, 0.f, 1.f);
-        const float CurrentLookAheadTime = FMath::Lerp(RuntimeConfig.MaxLookAheadTime, RuntimeConfig.MinLookAheadTime, AltitudeAlpha);
+        const float LookAheadTime = FMath::Lerp(RuntimeConfig.MaxLookAheadTime, RuntimeConfig.MinLookAheadTime, AltitudeAlpha);
 
-        // --- Smart Velocity Dampening (World Space) ---
-        // We need the observer's location relative to the planet center, but in world space.
         FVector WorldObserverRelativeToPlanet = Context.ObserverLocation - GetActorLocation();
         FVector RadialDir = WorldObserverRelativeToPlanet.GetSafeNormal();
         if (RadialDir.IsZero())
@@ -382,28 +409,22 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
 
         float RadialSpeed = FVector::DotProduct(Context.ObserverVelocity, RadialDir);
         FVector TangentialVelocity = Context.ObserverVelocity - (RadialDir * RadialSpeed);
-
         float RadialWeight = AltitudeAlpha * AltitudeAlpha;
         FVector EffectiveVelocity = TangentialVelocity + (RadialDir * RadialSpeed * RadialWeight);
 
-        FVector PredictedOffset = EffectiveVelocity * CurrentLookAheadTime;
+        FVector VisStart = Context.ObserverLocation;
+        if (APawn *Pawn = UGameplayStatics::GetPlayerPawn(GetWorld(), 0))
+            if (IsValid(Pawn))
+                VisStart = Pawn->GetActorLocation();
 
-        // The visualization should start from the Pawn's location for clarity, not the camera's.
-        FVector VisualizationStart = Context.ObserverLocation;  // Default to camera
-        if (APawn *PlayerPawn = UGameplayStatics::GetPlayerPawn(GetWorld(), 0))
-        {
-            VisualizationStart = PlayerPawn->GetActorLocation();
-        }
-        const FVector PredictedObserverWorld = VisualizationStart + PredictedOffset;
+        const FVector PredictedWorld = VisStart + EffectiveVelocity * LookAheadTime;
 
-        DrawDebugLine(GetWorld(), VisualizationStart, PredictedObserverWorld, FColor::Yellow, false, 0.f, 0, 10.f);
-        DrawDebugSphere(GetWorld(), PredictedObserverWorld, 500.f, 12, FColor::Yellow, false, 0.f, 0, 20.f);
+        DrawDebugLine(GetWorld(), VisStart, PredictedWorld, FColor::Yellow, false, 0.f, 0, 10.f);
+        DrawDebugSphere(GetWorld(), PredictedWorld, 500.f, 12, FColor::Yellow, false, 0.f, 0, 20.f);
 
-        GEngine->AddOnScreenDebugMessage(
-            FPlanetStatics::DebugKey_PredictionInfo,
-            0.f,
-            FColor::Yellow,
-            FString::Printf(
-                TEXT("Prediction Time: %.2fs | Speed: %.0f km/h"), CurrentLookAheadTime, Context.ObserverVelocity.Size() * 0.036f));  // Speed in km/h
+        GEngine->AddOnScreenDebugMessage(FPlanetStatics::DebugKey_PredictionInfo,
+                                         0.f,
+                                         FColor::Yellow,
+                                         FString::Printf(TEXT("[Prediction] T: %.2fs | Speed: %.0f km/h"), LookAheadTime, SpeedKmh));
     }
 }

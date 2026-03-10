@@ -22,8 +22,8 @@ FPlanetQuadtree::~FPlanetQuadtree() {}
 
 void FPlanetQuadtree::Update(const FPlanetViewContext &Context, TFunctionRef<bool(const FChunkId &)> IsChunkReady)
 {
-    Results.VisibleChunks.Empty();
-    Results.CachedChunks.Empty();
+    DesiredLeaves.Empty();
+    PendingChildIds.Empty();
 
     for (const auto &Root : RootNodes)
     {
@@ -36,7 +36,6 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
 {
     FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
     FVector ToChunk = Center - Context.ObserverLocation;
-    float DistSq = ToChunk.SizeSquared();
 
     FVector ChunkNormal = Center.GetSafeNormal();
     FVector ToObserverDir = -ToChunk.GetSafeNormal();
@@ -47,14 +46,21 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
 
     // 1. Horizon Culling
     if ((ChunkNormal | ToObserverDir) < HorizonThreshold)
+    {
+        // Culled chunks do not appear in DesiredLeaves.
+        // The manager's deferred cleanup will handle releasing them after a delay.
         return;
+    }
 
     // 2. Frustum Culling
     float NodeSize = (Config.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
-    bool bIsClose = DistSq < (NodeSize * NodeSize * 2.25f);
+    bool bIsClose = ToChunk.SizeSquared() < (NodeSize * NodeSize * 2.25f);
 
     if (!bIsClose && !Context.ObserverForward.IsZero() && (ToChunk.GetSafeNormal() | Context.ObserverForward) < FrustumThreshold)
+    {
+        // Culled — same as above, no DesiredLeaves entry.
         return;
+    }
 
     // --- LOD Logic ---
     if (ShouldSplit(Node, Context.PredictedObserverLocation))
@@ -73,7 +79,7 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
             Node->Children.Add(MakeUnique<FQuadtreeNode>(FChunkId(Face, FIntVector(X * 2 + 1, Y * 2 + 1, 0), NextLOD), Node));
         }
 
-        // BLINKING FIX: Check if children are ready
+        // Check if children are ready
         bool bAllChildrenReady = true;
         for (const auto &Child : Node->Children)
         {
@@ -86,7 +92,7 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
 
         if (bAllChildrenReady)
         {
-            // Recurse down
+            // All children ready — recurse. Parent is no longer a leaf.
             for (auto &Child : Node->Children)
             {
                 UpdateNode(Child.Get(), Context, IsChunkReady);
@@ -94,38 +100,56 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
         }
         else
         {
-            // Keep rendering Parent, force load children
-            Results.VisibleChunks.Add(Node->Id);
-            for (auto &Child : Node->Children)
-            {
-                Results.CachedChunks.Add(Child->Id);
-            }
+            // Children still loading — hold parent as the desired leaf.
+            DesiredLeaves.Add(Node->Id);
+
+            // Tell the manager which children need to be generated.
+            for (const auto &Child : Node->Children)
+                PendingChildIds.Add(Child->Id);
         }
+    }
+    else if (ShouldMerge(Node, Context.PredictedObserverLocation))
+    {
+        // This node should not be split. Prune any children from the tree.
+        // The manager's deferred cleanup handles releasing child chunk data gracefully.
+        Node->Children.Empty();
+
+        DesiredLeaves.Add(Node->Id);
     }
     else
     {
-        // Merge / Leaf
-        bool bSelfReady = IsChunkReady(Node->Id);
-
-        if (bSelfReady)
+        // Hysteresis band — hold current state
+        if (Node->IsLeaf())
         {
-            if (!Node->IsLeaf())
-            {
-                Node->Children.Empty();
-            }
-            Results.VisibleChunks.Add(Node->Id);
+            // Currently a leaf at this LOD — stay visible, no change
+            DesiredLeaves.Add(Node->Id);
         }
         else
         {
-            // Parent not ready, request it but keep children visible if they exist
-            Results.VisibleChunks.Add(Node->Id);
+            // Currently split — keep children alive, recurse into them
+            // This preserves the current split without re-committing or destroying it
+            bool bAllChildrenReady = true;
+            for (const auto &Child : Node->Children)
+            {
+                if (!IsChunkReady(Child->Id))
+                {
+                    bAllChildrenReady = false;
+                    break;
+                }
+            }
 
-            if (!Node->IsLeaf())
+            if (bAllChildrenReady)
             {
                 for (auto &Child : Node->Children)
-                {
                     UpdateNode(Child.Get(), Context, IsChunkReady);
-                }
+            }
+            else
+            {
+                // Children not all ready — hold parent, children will be picked up by the manager
+                DesiredLeaves.Add(Node->Id);
+
+                for (const auto &Child : Node->Children)
+                    PendingChildIds.Add(Child->Id);  // add this
             }
         }
     }
@@ -145,13 +169,27 @@ bool FPlanetQuadtree::ShouldSplit(const FQuadtreeNode *Node, const FVector &Obse
 }
 
 
+bool FPlanetQuadtree::ShouldMerge(const FQuadtreeNode *Node, const FVector &ObserverLocal) const
+{
+    if (Node->Id.LODLevel >= Config.MaxLOD)
+        return true;
+
+    FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
+    float Dist = FVector::Dist(Center, ObserverLocal);
+    float NodeSize = (Config.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
+
+    // Merge only when observer has moved meaningfully farther than the split threshold.
+    // The hysteresis ratio prevents oscillation at the boundary.
+    // it means: split at distance X, but don't merge until distance hysteresisRatio*X.
+    return Dist >= (NodeSize * Config.LODSplitDistanceMultiplier * Config.LODMergeHysteresisRatio);
+}
+
+
 void FPlanetQuadtree::DrawDebugGrid(const UWorld *World, const FTransform &PlanetTransform) const
 {
     if (!World)
         return;
 
-    int32 GridSize = Config.ChunksPerFace;
-    float Step = 1.0f / GridSize;
     float Radius = Config.PlanetRadius * FPlanetStatics::GridDebugRadiusScale;
 
     for (uint8 Face = 0; Face < 6; ++Face)

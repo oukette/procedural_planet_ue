@@ -9,23 +9,23 @@
 class FChunk
 {
     public:
-        FChunkId Id;  // Identity
-        EChunkState State;  // Lifecycle State
+        FChunkId Id;          // Identity
+        EChunkState State;    // Lifecycle State
         uint32 GenerationId;  // To handle async cancellations (if GenerationId changes, ignore old task results)
 
         FChunkTransform Transform;  // Spatial Info
 
-        GenData DensityField;  // This holds the actual density field
+        GenData DensityField;                  // This holds the actual density field
         bool bIsDensityDataGenerated = false;  // Is the data ready to be turned into a mesh?
-        
-        TUniquePtr<FChunkMeshData> MeshData; // The generated mesh data (Valid only when State >= Ready)
-        
-        TWeakObjectPtr<UProceduralMeshComponent> RenderProxy; // Reference to the actual component rendering this chunk (Valid only when State == Visible)
+
+        TUniquePtr<FChunkMeshData> MeshData;  // The generated mesh data (Valid only when State >= DataReady)
+
+        TWeakObjectPtr<UProceduralMeshComponent> RenderProxy;  // Reference to the actual component rendering this chunk (Valid only when State == MeshReady)
 
         // Constructor
         FChunk(const FChunkId &InId) :
             Id(InId),
-            State(EChunkState::Unloaded),
+            State(EChunkState::None),
             GenerationId(0)
         {
         }

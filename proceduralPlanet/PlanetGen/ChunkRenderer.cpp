@@ -10,18 +10,24 @@ ChunkRenderer::ChunkRenderer(AActor *InOwner, UMaterialInterface *InMaterial) :
 
 ChunkRenderer::~ChunkRenderer()
 {
-    // Components attached to the Actor will be destroyed by the Actor.
-    // We just need to clear our references.
-    ComponentPool.Empty();
+    if (FreeComponentPool.Num() > 0)
+    {
+        UE_LOG(LogTemp,
+               Warning,
+               TEXT("ChunkRenderer destroyed with %d components still in pool. "
+                    "ReleaseAllComponents() should be called before destruction."),
+               FreeComponentPool.Num());
+    }
 }
 
 
 UProceduralMeshComponent *ChunkRenderer::GetFreeComponent()
 {
-    if (ComponentPool.Num() > 0)
+    if (FreeComponentPool.Num() > 0)
     {
-        UProceduralMeshComponent *Comp = ComponentPool.Pop();
-        Comp->SetVisibility(true);
+        UProceduralMeshComponent *Comp = FreeComponentPool.Pop();
+        // Comp->SetVisibility(true);
+        Comp->SetRelativeTransform(FTransform::Identity);  // clear stale transform from previous owner
         return Comp;
     }
 
@@ -33,6 +39,8 @@ UProceduralMeshComponent *ChunkRenderer::GetFreeComponent()
         NewComp->AttachToComponent(OwnerActor->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
         NewComp->bUseAsyncCooking = true;         // Important for performance
         NewComp->SetComponentTickEnabled(false);  // Critical: Disable ticking to save performance
+        NewComp->SetVisibility(false);            // always start hidden
+
         return NewComp;
     }
 
@@ -40,7 +48,7 @@ UProceduralMeshComponent *ChunkRenderer::GetFreeComponent()
 }
 
 
-void ChunkRenderer::RenderChunk(FChunk *Chunk, bool bEnableCollision)
+void ChunkRenderer::PrepareChunk(FChunk *Chunk, bool bEnableCollision = false)
 {
     if (!Chunk || !Chunk->MeshData)
     {
@@ -60,10 +68,8 @@ void ChunkRenderer::RenderChunk(FChunk *Chunk, bool bEnableCollision)
         Comp->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
         Comp->SetCollisionProfileName(TEXT("BlockAll"));
         Comp->bUseComplexAsSimpleCollision = true;  // Critical for Trimesh collision
-        
-        // FIX: Disable async cooking for collision chunks to ensure the physics engine 
-        // is aware of the ground immediately. Prevents falling through while cooking.
-        Comp->bUseAsyncCooking = false; 
+        Comp->bUseAsyncCooking = true;
+        // Comp->UpdateCollision(); // explicit, controlled call
     }
     else
     {
@@ -78,7 +84,7 @@ void ChunkRenderer::RenderChunk(FChunk *Chunk, bool bEnableCollision)
                             Chunk->MeshData->UV0,
                             Chunk->MeshData->Colors,
                             TArray<FProcMeshTangent>(),
-                            bEnableCollision);
+                            false);
 
     // 3. Apply Material
     Comp->SetMaterial(0, Material);
@@ -86,8 +92,23 @@ void ChunkRenderer::RenderChunk(FChunk *Chunk, bool bEnableCollision)
     // 4. Set Transform (Location and Rotation on the sphere)
     Comp->SetRelativeLocationAndRotation(Chunk->Transform.Location, Chunk->Transform.Rotation);
 
-    // 5. Link
+    // 5. Stay hidden until ShowChunk is called
+    Comp->SetVisibility(false);
+
+    // 6. Link
     Chunk->RenderProxy = Comp;
+}
+
+
+void ChunkRenderer::ShowChunk(FChunk *Chunk)
+{
+    if (!Chunk)
+        return;
+
+    if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
+    {
+        Comp->SetVisibility(true);
+    }
 }
 
 
@@ -99,8 +120,38 @@ void ChunkRenderer::HideChunk(FChunk *Chunk)
     if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
     {
         Comp->SetVisibility(false);
-        Comp->ClearAllMeshSections();
-        ComponentPool.Add(Comp);
+    }
+}
+
+
+void ChunkRenderer::ReleaseChunk(FChunk *Chunk)
+{
+    if (!Chunk)
+        return;
+
+    if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
+    {
+        if (IsValid(Comp))
+        {
+            Comp->SetVisibility(false);
+            Comp->ClearAllMeshSections();
+            FreeComponentPool.Add(Comp);
+        }
         Chunk->RenderProxy.Reset();
     }
+}
+
+
+void ChunkRenderer::ReleaseAllComponents()
+{
+    // This function is the central point for destroying all pooled mesh components.
+    // It ensures we don't leak components that the renderer created.
+    for (UProceduralMeshComponent *Comp : FreeComponentPool)
+    {
+        if (IsValid(Comp) && !Comp->IsBeingDestroyed())
+        {
+            Comp->DestroyComponent();
+        }
+    }
+    FreeComponentPool.Empty();
 }

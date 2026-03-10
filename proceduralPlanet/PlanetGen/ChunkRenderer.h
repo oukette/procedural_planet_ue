@@ -13,11 +13,24 @@ class ChunkRenderer
         ChunkRenderer(AActor *InOwner, UMaterialInterface *InMaterial);
         ~ChunkRenderer();
 
-        // Assigns a component to the chunk, uploads mesh data, and makes it visible
-        void RenderChunk(FChunk *Chunk, bool bEnableCollision);
+        // Uploads mesh data to a component and assigns it to the chunk.
+        // Component starts hidden. State becomes MeshReady (caller's responsibility).
+        void PrepareChunk(FChunk *Chunk, bool bEnableCollision);
 
-        // Returns the component to the pool and hides it
+        // Makes the chunk's component visible.
+        // Chunk must be in MeshReady state. State becomes Visible (caller's responsibility).
+        void ShowChunk(FChunk *Chunk);
+
+        // Hides the chunk's component. Component stays assigned — no mesh re-upload needed.
+        // State becomes MeshReady (caller's responsibility).
         void HideChunk(FChunk *Chunk);
+
+        // Returns the component to the pool and clears the mesh.
+        // Called only when a chunk is being permanently destroyed.
+        void ReleaseChunk(FChunk *Chunk);
+
+        // Destroys all components currently in the free pool.
+        void ReleaseAllComponents();
 
         AActor *GetOwner() const { return OwnerActor; }
 
@@ -26,7 +39,7 @@ class ChunkRenderer
         UMaterialInterface *Material;
 
         // Pool of inactive components ready for reuse
-        TArray<UProceduralMeshComponent *> ComponentPool;
+        TArray<UProceduralMeshComponent *> FreeComponentPool;
 
         UProceduralMeshComponent *GetFreeComponent();
 };

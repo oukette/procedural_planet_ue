@@ -167,10 +167,6 @@ class PROCEDURALPLANET_API FMathUtils
             float u = FMath::Lerp(UVMin.X, UVMax.X, (float)GridCoords.X / Resolution);
             float v = FMath::Lerp(UVMin.Y, UVMax.Y, (float)GridCoords.Y / Resolution);
 
-            // Map 0..1 to the -1..1 range expected by the CubeSphere projection
-            float uScaled = u * 2.0f - 1.0f;
-            float vScaled = v * 2.0f - 1.0f;
-
             // Combine into a point on the cube face
             return Normal + (Right * u) + (Up * v);
         }

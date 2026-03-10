@@ -22,6 +22,9 @@ class FChunkManager
         // Returns the number of chunks currently being rendered.
         int32 GetVisibleChunkCount() const;
 
+        // Returns per-LOD count of currently visible chunks. Array must be pre-sized to MaxLOD+1.
+        void GetVisibleCountPerLOD(TArray<int32> &OutCounts) const;
+
         // Returns the number of chunks waiting for generation.
         int32 GetPendingCount() const;
 
@@ -40,11 +43,14 @@ class FChunkManager
 
     private:
         FPlanetConfig Config;
-        const DensityGenerator *Generator;            // Reference to the density generator (owned by APlanet)
-        TUniquePtr<ChunkRenderer> Renderer;           // Handles visual components
-        TUniquePtr<FChunkGenerator> ChunkGenerator;   // Handles async generation
-        TUniquePtr<FPlanetQuadtree> Quadtree;         // Handles LOD and Culling logic
-        TMap<FChunkId, TUniquePtr<FChunk>> ChunkMap;  // The central registry of all chunks
+        const DensityGenerator *Generator;                  // Reference to the density generator (owned by APlanet)
+        TUniquePtr<ChunkRenderer> Renderer;                 // Handles visual components
+        TUniquePtr<FChunkGenerator> ChunkGenerator;         // Handles async generation
+        TUniquePtr<FPlanetQuadtree> Quadtree;               // Handles LOD and Culling logic
+        TMap<FChunkId, TUniquePtr<FChunk>> ChunkMap;        // The central registry of all chunks
+        TMap<FChunkId, FLODTransition> PendingTransitions;  // keyed on parent ID
+        TSet<FChunkId> CommittedLeaves;                     // ground truth of what is rendered
+        TSet<FChunkId> StandaloneNewChunks;  // desired leaves with no committed parent — committed individually
 
         // Helper to create a new chunk entry
         FChunk *CreateChunk(const FChunkId &Id);
@@ -52,8 +58,16 @@ class FChunkManager
         // Helper to get a chunk from the map if it exists, otherwise create it
         FChunk *GetChunk(const FChunkId &Id);
 
-        // Phase 2: State Machine
-        void ProcessChunkStates(const TSet<FChunkId> &VisibleChunks, const TSet<FChunkId> &CachedChunks);
+        // Quadtree reconciliation
+        void ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves);
+        void AdvanceLoading();
+        void CommitReadyTransitions();
+
+        // Pure math helpers
+        static FChunkId GetParentId(const FChunkId &Child);
+        static FChunkId GetParentId_Safe(const FChunkId &Child);
+        static TArray<FChunkId> GetChildrenIds(const FChunkId &Parent);
+        static bool IsRootNode(const FChunkId &Id);
 
         // Helper to check if a chunk is in memory and has mesh data
         bool IsChunkReady(const FChunkId &Id) const;

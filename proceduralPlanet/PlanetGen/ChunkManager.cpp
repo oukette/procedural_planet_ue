@@ -14,8 +14,32 @@ FChunkManager::FChunkManager(const FPlanetConfig &planetConfig, const DensityGen
 
 FChunkManager::~FChunkManager()
 {
-    // UniquePtrs in the TMap will automatically destroy all FChunks
-    ChunkMap.Empty();
+    // --- Robust Shutdown Sequence ---
+    // This ensures all resources are released in the correct order, preventing crashes.
+
+    // 1. Stop all background work to prevent callbacks on a partially destroyed manager.
+    //    (Assuming FChunkGenerator has a Stop() method to join threads and clear queues).
+    if (ChunkGenerator)
+        ChunkGenerator->Stop();
+
+    // 2. Return all active visual components to the renderer's pool.
+    if (Renderer)
+    {
+        for (auto &Pair : ChunkMap)
+        {
+            FChunk *Chunk = Pair.Value.Get();
+            // Release any chunk that has a component assigned,
+            // regardless of whether it is visible or just mesh-ready.
+            if (Chunk->State == EChunkState::Visible || Chunk->State == EChunkState::MeshReady)
+            {
+                Renderer->ReleaseChunk(Chunk);
+            }
+            // Null remaining proxies defensively before GC can run
+            Chunk->RenderProxy.Reset();
+        }
+        // 3. Now that all components are in the pool, command the renderer to destroy them.
+        Renderer->ReleaseAllComponents();
+    }
 }
 
 
@@ -28,11 +52,25 @@ int32 FChunkManager::GetVisibleChunkCount() const
     for (const auto &Pair : ChunkMap)
     {
         if (Pair.Value->State == EChunkState::Visible)
-        {
             Count++;
+    }
+
+    return Count;
+}
+
+
+void FChunkManager::GetVisibleCountPerLOD(TArray<int32> &OutCounts) const
+{
+    for (const auto &Pair : ChunkMap)
+    {
+        const FChunk *Chunk = Pair.Value.Get();
+        if (Chunk->State == EChunkState::Visible)
+        {
+            const int32 LOD = Chunk->Id.LODLevel;
+            if (OutCounts.IsValidIndex(LOD))
+                OutCounts[LOD]++;
         }
     }
-    return Count;
 }
 
 
@@ -67,14 +105,9 @@ FChunk *FChunkManager::GetChunk(const FChunkId &Id)
 {
     // If it exists, return it
     if (TUniquePtr<FChunk> *Found = ChunkMap.Find(Id))
-    {
         return Found->Get();
-    }
 
-    // Otherwise, create a new one
-    auto Ptr = CreateChunk(Id);
-
-    return Ptr;
+    return nullptr;
 }
 
 
@@ -82,8 +115,10 @@ bool FChunkManager::IsChunkReady(const FChunkId &Id) const
 {
     if (const TUniquePtr<FChunk> *Found = ChunkMap.Find(Id))
     {
-        return Found->Get()->State == EChunkState::Ready || Found->Get()->State == EChunkState::Visible;
+        EChunkState S = Found->Get()->State;
+        return S == EChunkState::MeshReady || S == EChunkState::Visible;
     }
+
     return false;
 }
 
@@ -110,15 +145,15 @@ FVector FChunkManager::CalculatePredictedLocation(const FPlanetViewContext &Cont
     float RadialWeight = AltitudeAlpha * AltitudeAlpha;
     FVector EffectiveVelocity = TangentialVelocity + (RadialDir * RadialSpeed * RadialWeight);
 
-    FVector LODObserverLocal = Context.ObserverLocation + (EffectiveVelocity * CurrentLookAheadTime);
+    FVector Predicted = Context.ObserverLocation + (EffectiveVelocity * CurrentLookAheadTime);
 
     // Clamp to Surface: Ensure prediction never goes underground
-    if (LODObserverLocal.SizeSquared() < FMath::Square(Config.PlanetRadius))
+    if (Predicted.SizeSquared() < FMath::Square(Config.PlanetRadius))
     {
-        LODObserverLocal = LODObserverLocal.GetSafeNormal() * Config.PlanetRadius;
+        Predicted = Predicted.GetSafeNormal() * Config.PlanetRadius;
     }
 
-    return LODObserverLocal;
+    return Predicted;
 }
 
 
@@ -129,11 +164,7 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
     FPlanetViewContext LocalContext = Context;
 
     // Calculate distance to surface for LOD and generation checks
-    float DistToCenter = Context.ObserverLocation.Size();
-    float DistToSurface = DistToCenter - Config.PlanetRadius;
-
-    // Check if we should be generating chunks at all (Distance Check)
-    // This prevents wasting CPU on quadtree updates when we are in space/far away
+    float DistToSurface = Context.ObserverLocation.Size() - Config.PlanetRadius;
     bool bShouldGenerateChunks = DistToSurface < (Config.FarDistanceThreshold * FPlanetStatics::FarDistanceSafetyMargin);
 
     if (bShouldGenerateChunks)
@@ -142,108 +173,348 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 
         // Update Quadtree with the refined context
         if (Quadtree)
-        {
             Quadtree->Update(LocalContext, [this](const FChunkId &Id) { return IsChunkReady(Id); });
-        }
     }
 
-    // 2. State Machine & Cache Management
-    // If we shouldn't generate chunks (too far), we pass empty sets to clear existing chunks.
-    const auto &Results = (Quadtree && bShouldGenerateChunks) ? Quadtree->GetResults() : FQuadtreeTraversalOutput();
-    ProcessChunkStates(Results.VisibleChunks, Results.CachedChunks);
+    // 2. Process the quadtree's desired output.
+    //    If too far, pass an empty set — this will clean up all existing chunks gracefully.
+    const TSet<FChunkId> EmptySet;
+    const TSet<FChunkId> &DesiredLeaves = (Quadtree && bShouldGenerateChunks) ? Quadtree->GetDesiredLeaves() : EmptySet;
+
+    ReconcileTransitions(DesiredLeaves);  // diff desired vs committed → build PendingTransitions
+    AdvanceLoading();                     // ensure all needed chunks are generating/uploading
+    CommitReadyTransitions();             // atomic show/hide for complete groups
 
     // 3. Async Dispatch
     if (ChunkGenerator)
-    {
         ChunkGenerator->Update();
-    }
 }
 
 
-void FChunkManager::ProcessChunkStates(const TSet<FChunkId> &VisibleChunks, const TSet<FChunkId> &CachedChunks)
+// ---------------------------------------------------------------------------
+// Phase A: Reconcile — diff DesiredLeaves vs CommittedLeaves
+// ---------------------------------------------------------------------------
+void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
 {
-    TArray<FChunkId> ChunksToRemove;
-
-    // 1. Update existing chunks (Demotion & Cleanup)
-    for (auto &Pair : ChunkMap)
+    // Clean up standalone tracking — remove anything already committed or no longer desired
+    TArray<FChunkId> StaleStandalone;
+    for (const FChunkId &Id : StandaloneNewChunks)
     {
-        FChunkId Id = Pair.Key;
-        FChunk *Chunk = Pair.Value.Get();
-
-        const bool bIsVisible = VisibleChunks.Contains(Id);
-
-        // Demote Visible -> Ready if no longer visible
-        if (Chunk->State == EChunkState::Visible && !bIsVisible)
-        {
-            Renderer->HideChunk(Chunk);
-            Chunk->State = EChunkState::Ready;
-        }
-
-        // Cleanup: If a chunk is Unloaded (transient/zombie), remove it.
-        // We strictly use 4 states: Requested, Generating, Ready, Visible.
-        // Unloaded chunks are those that were created but never requested, or are invalid.
-        if (Chunk->State == EChunkState::Unloaded)
-        {
-            ChunksToRemove.Add(Id);
-        }
+        if (CommittedLeaves.Contains(Id) || !DesiredLeaves.Contains(Id))
+            StaleStandalone.Add(Id);
     }
 
-    // Execute removal (Garbage Collection)
-    for (const FChunkId &Id : ChunksToRemove)
+    for (const FChunkId &Id : StaleStandalone)
+        StandaloneNewChunks.Remove(Id);
+
+    // --- A1. Find nodes that are desired but not yet committed (new work) ---
+    for (const FChunkId &Id : DesiredLeaves)
     {
-        ChunkMap.Remove(Id);
+        if (CommittedLeaves.Contains(Id))
+            continue;  // Already committed — nothing to do
+
+        if (!IsRootNode(Id))
+        {
+            const FChunkId ParentId = GetParentId(Id);
+
+            if (CommittedLeaves.Contains(ParentId))
+            {
+                // Parent is committed and desired children appeared → this is a Split.
+                // Register a transition if one doesn't already exist for this parent.
+                if (!PendingTransitions.Contains(ParentId))
+                {
+                    FLODTransition T;
+                    T.Type = ELeafTransitionType::Split;
+                    T.Parent = ParentId;
+                    T.Children = GetChildrenIds(ParentId);
+                    PendingTransitions.Add(ParentId, MoveTemp(T));
+                }
+                continue;
+            }
+        }
+
+        // No committed parent found — standalone new chunk (first entry, LOD 0 roots, etc.)
+        // Track it so CommitReadyTransitions can show it once ready.
+        StandaloneNewChunks.Add(Id);
     }
 
-    // 2. Process Requirements (Promotion & Requests)
-
-    // A. Visible Chunks
-    for (const FChunkId &Id : VisibleChunks)
+    // --- A2. Find nodes that were committed but are no longer desired (work to undo) ---
+    TArray<FChunkId> Stale;
+    for (const FChunkId &Id : CommittedLeaves)
     {
-        FChunk *Chunk = GetChunk(Id);  // Creates with State = Unloaded if missing
+        if (DesiredLeaves.Contains(Id))
+            continue;  // Still desired — nothing to do
 
-        if (Chunk->State == EChunkState::Ready)
+        // CRITICAL: If this node is already the parent of a pending transition,
+        // leave it alone. CommitReadyTransitions owns it now.
+        if (PendingTransitions.Contains(Id))
+            continue;
+
+        // CRITICAL: If any pending transition references this node as a child,
+        // leave it alone — it's part of a merge or split in progress.
+        bool bInvolvedInTransition = false;
+        for (const auto &TPair : PendingTransitions)
         {
-            // Promote Ready -> Visible
-            // Enable collision
-            // We enable collision for the highest 2 LOD levels (e.g. MaxLOD and MaxLOD-1).
-            // This ensures the player has a solid surface to land on without overloading physics for far chunks.
-            const int32 CollisionLODThreshold = FMath::Max(0, Config.MaxLOD - 1);
-            const bool bEnableCollision = Config.bEnableCollision && (Chunk->Id.LODLevel >= CollisionLODThreshold);
-
-            // Ensure transform is up to date (Quadtree no longer does this)
-            Chunk->Transform = FMathUtils::ComputeChunkTransform(Id, Config.PlanetRadius);
-
-            Renderer->RenderChunk(Chunk, bEnableCollision);
-            Chunk->State = EChunkState::Visible;
+            for (const FChunkId &ChildId : TPair.Value.Children)
+            {
+                if (ChildId == Id)
+                {
+                    bInvolvedInTransition = true;
+                    break;
+                }
+            }
+            if (bInvolvedInTransition)
+                break;
         }
-        else if (Chunk->State == EChunkState::Unloaded)
+        if (bInvolvedInTransition)
+            continue;
+
+        // Check if this is a merge case: parent is desired, this child is committed
+        if (!IsRootNode(Id))
         {
-            // Request Generation
-            Chunk->State = EChunkState::Requested;
-
-            // Increment GenerationId to invalidate any previous stale tasks for this chunk
-            Chunk->GenerationId++;
-            ChunkGenerator->RequestChunk(Id, Chunk->GenerationId);
+            const FChunkId ParentId = GetParentId(Id);
+            if (DesiredLeaves.Contains(ParentId))
+            {
+                if (!PendingTransitions.Contains(ParentId))
+                {
+                    FLODTransition T;
+                    T.Type = ELeafTransitionType::Merge;
+                    T.Parent = ParentId;
+                    T.Children = GetChildrenIds(ParentId);
+                    PendingTransitions.Add(ParentId, MoveTemp(T));
+                }
+                continue;
+            }
         }
+
+        // Truly gone — no transition, not desired, not root merge candidate.
+        // Release immediately (Step 4 will make this deferred).
+        FChunk *Chunk = GetChunk(Id);
+        if (Chunk)
+        {
+            if (ChunkGenerator)
+                ChunkGenerator->CancelRequest(Id);
+            if (Chunk->State == EChunkState::Visible || Chunk->State == EChunkState::MeshReady)
+                Renderer->ReleaseChunk(Chunk);
+            ChunkMap.Remove(Id);
+        }
+        Stale.Add(Id);
     }
 
-    // B. Cached Chunks
-    for (const FChunkId &Id : CachedChunks)
+    for (const FChunkId &Id : Stale)
+        CommittedLeaves.Remove(Id);
+}
+
+// ---------------------------------------------------------------------------
+// Phase B: AdvanceLoading — ensure all chunks referenced by transitions exist
+//          and are progressing through the pipeline.
+//          DataReady → MeshReady uploads happen here, before the commit check.
+// ---------------------------------------------------------------------------
+void FChunkManager::AdvanceLoading()
+{
+    // Collect all chunk IDs we need to keep alive and progressing.
+    // This includes both sides of every pending transition, plus any desired leaf that has no transition (brand new regions).
+    TSet<FChunkId> Required;
+
+    for (auto &Pair : PendingTransitions)
+    {
+        const FLODTransition &T = Pair.Value;
+        Required.Add(T.Parent);
+        for (const FChunkId &ChildId : T.Children)
+            Required.Add(ChildId);
+    }
+
+    if (Quadtree)
+    {
+        // Brand-new standalone chunks (no transition, no committed parent)
+        for (const FChunkId &Id : StandaloneNewChunks)
+            Required.Add(Id);
+
+        for (const FChunkId &Id : Quadtree->GetPendingChildIds())
+            Required.Add(Id);
+    }
+
+    // Advance each required chunk through its lifecycle
+    for (const FChunkId &Id : Required)
     {
         FChunk *Chunk = GetChunk(Id);
+        if (!Chunk)
+            Chunk = CreateChunk(Id);
 
-        if (Chunk->State == EChunkState::Unloaded)
+        switch (Chunk->State)
         {
-            // Request Generation
-            Chunk->State = EChunkState::Requested;
+            case EChunkState::None:
+                Chunk->GenerationId++;
+                Chunk->State = EChunkState::Pending;
+                ChunkGenerator->RequestChunk(Id, Chunk->GenerationId);
+                break;
 
-            Chunk->GenerationId++;
-            ChunkGenerator->RequestChunk(Id, Chunk->GenerationId);
+            case EChunkState::DataReady:
+                // Upload to GPU now, while we wait for the group to be complete.
+                // This is the key difference from Step 1: upload happens eagerly, but Show is deferred to CommitReadyTransitions.
+                Renderer->PrepareChunk(Chunk, Config.bEnableCollision);
+                Chunk->State = EChunkState::MeshReady;
+                break;
+
+            case EChunkState::Pending:
+            case EChunkState::Generating:
+            case EChunkState::MeshReady:
+            case EChunkState::Visible:
+                break;  // Already progressing or ready
         }
     }
 }
 
+// ---------------------------------------------------------------------------
+// Phase C: CommitReadyTransitions — atomic show/hide when a group is complete
+// ---------------------------------------------------------------------------
+void FChunkManager::CommitReadyTransitions()
+{
+    TArray<FChunkId> ToRemove;
 
+    for (auto &Pair : PendingTransitions)
+    {
+        FLODTransition &T = Pair.Value;
+
+        if (T.Type == ELeafTransitionType::Split)
+        {
+            // Gate: all 4 children must be MeshReady (or already Visible)
+            bool bAllReady = true;
+            for (const FChunkId &ChildId : T.Children)
+            {
+                if (!IsChunkReady(ChildId))
+                {
+                    bAllReady = false;
+                    break;
+                }
+            }
+
+            if (!bAllReady)
+                continue;
+
+            // Atomic swap: show all children, hide parent
+            for (const FChunkId &ChildId : T.Children)
+            {
+                FChunk *Child = GetChunk(ChildId);
+                if (Child)
+                {
+                    Renderer->ShowChunk(Child);
+                    Child->State = EChunkState::Visible;
+                    CommittedLeaves.Add(ChildId);
+                }
+            }
+
+            FChunk *Parent = GetChunk(T.Parent);
+            if (Parent && (Parent->State == EChunkState::Visible || Parent->State == EChunkState::MeshReady))
+            {
+                Renderer->HideChunk(Parent);
+                Parent->State = EChunkState::MeshReady;  // Keep in pool, don't release yet
+            }
+            CommittedLeaves.Remove(T.Parent);
+
+            ToRemove.Add(Pair.Key);
+        }
+        else  // Merge
+        {
+            // Gate: parent must be MeshReady
+            if (!IsChunkReady(T.Parent))
+                continue;
+
+            // Atomic swap: show parent, hide all children
+            FChunk *Parent = GetChunk(T.Parent);
+            if (Parent)
+            {
+                Renderer->ShowChunk(Parent);
+                Parent->State = EChunkState::Visible;
+                CommittedLeaves.Add(T.Parent);
+            }
+
+            for (const FChunkId &ChildId : T.Children)
+            {
+                FChunk *Child = GetChunk(ChildId);
+                if (Child && (Child->State == EChunkState::Visible || Child->State == EChunkState::MeshReady))
+                {
+                    Renderer->HideChunk(Child);
+                    Child->State = EChunkState::MeshReady;
+                    // Step 4 will add these to a deferred release queue.
+                    // For now, release immediately.
+                    Renderer->ReleaseChunk(Child);
+                    ChunkMap.Remove(ChildId);
+                }
+                CommittedLeaves.Remove(ChildId);
+            }
+
+            ToRemove.Add(Pair.Key);
+        }
+    }
+
+    // --- Commit standalone new chunks (no transition group, just show when ready) ---
+    TArray<FChunkId> CommittedStandalone;
+    for (const FChunkId &Id : StandaloneNewChunks)
+    {
+        if (IsChunkReady(Id))
+        {
+            FChunk *Chunk = GetChunk(Id);
+            if (Chunk)
+            {
+                Renderer->ShowChunk(Chunk);
+                Chunk->State = EChunkState::Visible;
+                CommittedLeaves.Add(Id);
+                CommittedStandalone.Add(Id);
+            }
+        }
+    }
+
+    for (const FChunkId &Id : CommittedStandalone)
+        StandaloneNewChunks.Remove(Id);
+
+
+    // --- Removal of pending transition groups ---
+    for (const FChunkId &Id : ToRemove)
+        PendingTransitions.Remove(Id);
+}
+
+
+// ---------------------------------------------------------------------------
+// Pure math helpers
+// ---------------------------------------------------------------------------
+bool FChunkManager::IsRootNode(const FChunkId &Id) { return Id.LODLevel == 0; }
+
+
+FChunkId FChunkManager::GetParentId(const FChunkId &Child)
+{
+    // Integer divide coords by 2, step up one LOD level.
+    return FChunkId(Child.FaceIndex, FIntVector(Child.Coords.X / 2, Child.Coords.Y / 2, 0), Child.LODLevel - 1);
+}
+
+
+FChunkId FChunkManager::GetParentId_Safe(const FChunkId &Id)
+{
+    if (IsRootNode(Id))
+        return Id;
+    return GetParentId(Id);
+}
+
+
+TArray<FChunkId> FChunkManager::GetChildrenIds(const FChunkId &Parent)
+{
+    const int32 NextLOD = Parent.LODLevel + 1;
+    const int32 X = Parent.Coords.X;
+    const int32 Y = Parent.Coords.Y;
+    const uint8 Face = Parent.FaceIndex;
+
+    return {
+        FChunkId(Face, FIntVector(X * 2, Y * 2, 0), NextLOD),
+        FChunkId(Face, FIntVector(X * 2 + 1, Y * 2, 0), NextLOD),
+        FChunkId(Face, FIntVector(X * 2, Y * 2 + 1, 0), NextLOD),
+        FChunkId(Face, FIntVector(X * 2 + 1, Y * 2 + 1, 0), NextLOD),
+    };
+}
+
+
+// ---------------------------------------------------------------------------
+// Debug stuff
+// ---------------------------------------------------------------------------
 void FChunkManager::DrawDebugGrid(const UWorld *World) const
 {
     if (!World || !Quadtree)
@@ -293,11 +564,8 @@ void FChunkManager::OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniq
     if (Chunk->GenerationId != GenId)
         return;  // Stale task (Chunk was reset/regenerated)
 
-
     // Store Data
     Chunk->MeshData = MoveTemp(MeshData);
-    Chunk->State = EChunkState::Ready;
-
-    // Note: We do not spawn the component here.
-    // The Update loop or a separate "ProcessMeshQueue" will handle visibility/spawning.
+    Chunk->Transform = FMathUtils::ComputeChunkTransform(Id, Config.PlanetRadius);
+    Chunk->State = EChunkState::DataReady;
 }

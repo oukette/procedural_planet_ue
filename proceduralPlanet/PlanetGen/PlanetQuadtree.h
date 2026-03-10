@@ -16,15 +16,8 @@ struct FQuadtreeNode
             Parent(InParent)
         {
         }
+
         bool IsLeaf() const { return Children.Num() == 0; }
-};
-
-
-// Output of the traversal
-struct FQuadtreeTraversalOutput
-{
-        TSet<FChunkId> VisibleChunks;
-        TSet<FChunkId> CachedChunks;
 };
 
 
@@ -40,7 +33,11 @@ class FPlanetQuadtree
         // IsChunkReady: A callback to check if a specific chunk ID has mesh data loaded (used for hysteresis).
         void Update(const FPlanetViewContext &Context, TFunctionRef<bool(const FChunkId &)> IsChunkReady);
 
-        const FQuadtreeTraversalOutput &GetResults() const { return Results; }
+        const TSet<FChunkId> &GetDesiredLeaves() const { return DesiredLeaves; }
+
+        // All chunk IDs that are children of a splitting node but not yet ready.
+        // The manager uses this to start generating them before they appear in DesiredLeaves.
+        const TSet<FChunkId> &GetPendingChildIds() const { return PendingChildIds; }
 
         // Debug drawing for the logical grid
         void DrawDebugGrid(const UWorld *World, const FTransform &PlanetTransform) const;
@@ -48,8 +45,10 @@ class FPlanetQuadtree
     private:
         FPlanetConfig Config;
         TArray<TUniquePtr<FQuadtreeNode>> RootNodes;
-        FQuadtreeTraversalOutput Results;
+        TSet<FChunkId> DesiredLeaves;
+        TSet<FChunkId> PendingChildIds;
 
         void UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context, TFunctionRef<bool(const FChunkId &)> IsChunkReady);
         bool ShouldSplit(const FQuadtreeNode *Node, const FVector &ObserverLocal) const;
+        bool ShouldMerge(const FQuadtreeNode *Node, const FVector &ObserverLocal) const;
 };
