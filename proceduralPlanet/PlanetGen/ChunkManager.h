@@ -72,9 +72,6 @@ class FChunkManager
         // Helper to check if a chunk is in memory and has mesh data
         bool IsChunkReady(const FChunkId &Id) const;
 
-        // Helper to calculate where the observer will be, for predictive LOD splitting
-        FVector CalculatePredictedLocation(const FPlanetViewContext &Context) const;
-
         // Callback executed on Game Thread when async generation finishes
         void OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData);
 };

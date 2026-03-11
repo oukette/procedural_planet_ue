@@ -63,7 +63,7 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
     }
 
     // --- LOD Logic ---
-    if (ShouldSplit(Node, Context.PredictedObserverLocation))
+    if (ShouldSplit(Node, Context.ObserverLocation))
     {
         if (Node->IsLeaf())
         {
@@ -108,7 +108,7 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
                 PendingChildIds.Add(Child->Id);
         }
     }
-    else if (ShouldMerge(Node, Context.PredictedObserverLocation))
+    else if (ShouldMerge(Node, Context.ObserverLocation))
     {
         // This node should not be split. Prune any children from the tree.
         // The manager's deferred cleanup handles releasing child chunk data gracefully.

@@ -342,7 +342,7 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
     const float DistToSurface = DistToCenter - GenSettings.PlanetRadius;
     const float SpeedKmh = Context.ObserverVelocity.Size() * 0.036f;
 
-    // --- Line 1: Altitude and speed ---
+    // --- onscreen debug line 1: Altitude and speed ---
     const FString StatusStr = (DistToSurface < 0.f) ? TEXT("UNDERGROUND") : TEXT("SURFACE");
     GEngine->AddOnScreenDebugMessage(FPlanetStatics::DebugKey_DistanceInfo,
                                      0.f,
@@ -355,12 +355,12 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
         const int32 Mem = ChunkManager->GetTotalChunkCount();
         const int32 Pending = ChunkManager->GetPendingCount();
 
-        // --- Line 2: Chunk counts per state ---
+        // --- onscreen debug line 2: Chunk counts per state ---
         const FColor ChunkColor = (Vis == 0) ? FColor::Red : FColor::Green;
         GEngine->AddOnScreenDebugMessage(
             FPlanetStatics::DebugKey_ManagerStats, 0.f, ChunkColor, FString::Printf(TEXT("[Chunks] Visible: %d | Total: %d | Pending: %d"), Vis, Mem, Pending));
 
-        // --- Line 3: Per-LOD visible chunk breakdown ---
+        // --- onscreen debug line 3: Per-LOD visible chunk breakdown ---
         TArray<int32> PerLODCount;
         PerLODCount.Init(0, RuntimeConfig.MaxLOD + 1);
         ChunkManager->GetVisibleCountPerLOD(PerLODCount);
@@ -375,7 +375,7 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
         }
         GEngine->AddOnScreenDebugMessage(FPlanetStatics::DebugKey_LODBreakdown, 0.f, FColor::White, LODStr);
 
-        // --- Line 4: Next split distance for current LOD ---
+        // --- onscreen debug line 4: Next split distance for current LOD ---
         // Show how far the observer is from the next LOD transition
         int32 CurrentMaxLOD = 0;
         for (int32 i = 0; i <= RuntimeConfig.MaxLOD; ++i)
@@ -393,38 +393,5 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
             FColor::Yellow,
             FString::Printf(
                 TEXT("[LOD Threshold] Split < %.0fm | Merge > %.0fm | Dist: %.0fm"), NextSplitDist / 100.f, NextMergeDist / 100.f, ClosestChunkDist / 100.f));
-    }
-
-    // --- Prediction visualizer ---
-    if (GenSettings.bShowDebugPrediction && ChunkManager.IsValid())
-    {
-        const float Altitude = FMath::Max(0.f, DistToSurface);
-        const float AltitudeAlpha = FMath::Clamp(Altitude / RuntimeConfig.LookAheadAltitudeScale, 0.f, 1.f);
-        const float LookAheadTime = FMath::Lerp(RuntimeConfig.MaxLookAheadTime, RuntimeConfig.MinLookAheadTime, AltitudeAlpha);
-
-        FVector WorldObserverRelativeToPlanet = Context.ObserverLocation - GetActorLocation();
-        FVector RadialDir = WorldObserverRelativeToPlanet.GetSafeNormal();
-        if (RadialDir.IsZero())
-            RadialDir = FVector::UpVector;
-
-        float RadialSpeed = FVector::DotProduct(Context.ObserverVelocity, RadialDir);
-        FVector TangentialVelocity = Context.ObserverVelocity - (RadialDir * RadialSpeed);
-        float RadialWeight = AltitudeAlpha * AltitudeAlpha;
-        FVector EffectiveVelocity = TangentialVelocity + (RadialDir * RadialSpeed * RadialWeight);
-
-        FVector VisStart = Context.ObserverLocation;
-        if (APawn *Pawn = UGameplayStatics::GetPlayerPawn(GetWorld(), 0))
-            if (IsValid(Pawn))
-                VisStart = Pawn->GetActorLocation();
-
-        const FVector PredictedWorld = VisStart + EffectiveVelocity * LookAheadTime;
-
-        DrawDebugLine(GetWorld(), VisStart, PredictedWorld, FColor::Yellow, false, 0.f, 0, 10.f);
-        DrawDebugSphere(GetWorld(), PredictedWorld, 500.f, 12, FColor::Yellow, false, 0.f, 0, 20.f);
-
-        GEngine->AddOnScreenDebugMessage(FPlanetStatics::DebugKey_PredictionInfo,
-                                         0.f,
-                                         FColor::Yellow,
-                                         FString::Printf(TEXT("[Prediction] T: %.2fs | Speed: %.0f km/h"), LookAheadTime, SpeedKmh));
     }
 }

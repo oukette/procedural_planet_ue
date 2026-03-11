@@ -128,9 +128,6 @@ struct FPlanetViewContext
         FVector ObserverLocation;
 
         UPROPERTY()
-        FVector PredictedObserverLocation;  // for LOD splitting
-
-        UPROPERTY()
         FVector ObserverForward;
 
         UPROPERTY()
@@ -214,8 +211,8 @@ struct FPlanetGenSettings
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         bool bShowDebugChunkBounds = false;
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (DisplayName = "Show Debug Prediction"))
-        bool bShowDebugPrediction = false;
+        // UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (DisplayName = "Show Debug Prediction"))
+        // bool bShowDebugPrediction = false;
 };
 
 

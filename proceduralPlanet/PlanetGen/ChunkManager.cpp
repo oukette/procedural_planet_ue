@@ -123,40 +123,6 @@ bool FChunkManager::IsChunkReady(const FChunkId &Id) const
 }
 
 
-FVector FChunkManager::CalculatePredictedLocation(const FPlanetViewContext &Context) const
-{
-    // Calculate distance to surface
-    float DistToCenter = Context.ObserverLocation.Size();
-    float DistToSurface = DistToCenter - Config.PlanetRadius;
-
-    // Calculate Prediction based on Altitude and Velocity
-    const float Altitude = FMath::Max(0.f, DistToSurface);
-    const float AltitudeAlpha = FMath::Clamp(Altitude / Config.LookAheadAltitudeScale, 0.f, 1.f);
-    const float CurrentLookAheadTime = FMath::Lerp(Config.MaxLookAheadTime, Config.MinLookAheadTime, AltitudeAlpha);
-
-    // Smart Velocity Dampening: Ignore vertical velocity when high up to prevent LOD thrashing
-    FVector RadialDir = Context.ObserverLocation.GetSafeNormal();
-    if (RadialDir.IsZero())
-        RadialDir = FVector::UpVector;
-
-    float RadialSpeed = FVector::DotProduct(Context.ObserverVelocity, RadialDir);
-    FVector TangentialVelocity = Context.ObserverVelocity - (RadialDir * RadialSpeed);
-
-    float RadialWeight = AltitudeAlpha * AltitudeAlpha;
-    FVector EffectiveVelocity = TangentialVelocity + (RadialDir * RadialSpeed * RadialWeight);
-
-    FVector Predicted = Context.ObserverLocation + (EffectiveVelocity * CurrentLookAheadTime);
-
-    // Clamp to Surface: Ensure prediction never goes underground
-    if (Predicted.SizeSquared() < FMath::Square(Config.PlanetRadius))
-    {
-        Predicted = Predicted.GetSafeNormal() * Config.PlanetRadius;
-    }
-
-    return Predicted;
-}
-
-
 void FChunkManager::Update(const FPlanetViewContext &Context)
 {
     // 1. Prepare View & Traversal
@@ -169,8 +135,6 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 
     if (bShouldGenerateChunks)
     {
-        LocalContext.PredictedObserverLocation = CalculatePredictedLocation(Context);
-
         // Update Quadtree with the refined context
         if (Quadtree)
             Quadtree->Update(LocalContext, [this](const FChunkId &Id) { return IsChunkReady(Id); });
