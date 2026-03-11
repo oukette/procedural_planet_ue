@@ -325,7 +325,7 @@ struct FPlanetConfig
         float MinLookAheadTime = 0.5f;
         float LookAheadAltitudeScale = 50000.0f;
 
-        int32 ChunkDemotionFrameDelay = 3;  // X frames. A rendered chunk must be absent before hiding
+        int32 ChunkDemotionFrameDelay = 12;  // X frames. A rendered chunk must be absent before hiding
 };
 
 

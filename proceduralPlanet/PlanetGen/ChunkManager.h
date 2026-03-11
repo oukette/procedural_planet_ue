@@ -8,6 +8,15 @@
 #include "PlanetQuadtree.h"
 
 
+
+// Chunks hidden after a merge, waiting to be released after a delay
+        struct FDeferredRelease
+        {
+                FChunkId Id;
+                int32 FrameCountdown;
+        };
+
+
 // Manages the lifecycle of all chunks (Quadtree logic, LOD selection, Async requests).
 // Owned strictly by the APlanet actor.
 class FChunkManager
@@ -50,6 +59,8 @@ class FChunkManager
         TMap<FChunkId, TUniquePtr<FChunk>> ChunkMap;        // The central registry of all chunks
         TMap<FChunkId, FLODTransition> PendingTransitions;  // keyed on parent ID
         TSet<FChunkId> CommittedLeaves;                     // ground truth of what is rendered
+        TSet<FChunkId> PendingTransitionChildren;           // flat set rebuilt each reconcile for O(1) lookup                                         
+        TArray<FDeferredRelease> DeferredReleaseQueue;
 
         // Helper to create a new chunk entry
         FChunk *CreateChunk(const FChunkId &Id);
@@ -57,10 +68,17 @@ class FChunkManager
         // Helper to get a chunk from the map if it exists, otherwise create it
         FChunk *GetChunk(const FChunkId &Id);
 
-        // Quadtree reconciliation
+        // Quadtree reconciliation, diff desired vs committed, build PendingTransitions
         void ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves);
+
+        // ensure all needed chunks are generating/uploading
         void AdvanceLoading();
+
+        // atomic show/hide for complete groups
         void CommitReadyTransitions();
+
+        // atomic release of deferred chunks
+        void ProcessDeferredReleases();
 
         // Pure math helpers
         static FChunkId GetParentId(const FChunkId &Child);

@@ -146,9 +146,10 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
     const TSet<FChunkId> EmptySet;
     const TSet<FChunkId> &DesiredLeaves = (Quadtree && bShouldGenerateChunks) ? Quadtree->GetDesiredLeaves() : EmptySet;
 
-    ReconcileTransitions(DesiredLeaves);  // diff desired vs committed → build PendingTransitions
-    AdvanceLoading();                     // ensure all needed chunks are generating/uploading
-    CommitReadyTransitions();             // atomic show/hide for complete groups
+    ReconcileTransitions(DesiredLeaves);
+    AdvanceLoading();
+    CommitReadyTransitions();
+    ProcessDeferredReleases();
 
     // 3. Async Dispatch
     if (ChunkGenerator)
@@ -161,6 +162,24 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 // ---------------------------------------------------------------------------
 void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
 {
+    // Temporary diagnostic — remove after confirmation
+    for (const FChunkId &Id : CommittedLeaves)
+    {
+        if (IsSentinelId(Id))
+            continue;
+        if (!DesiredLeaves.Contains(Id))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("CommittedLeaf not in DesiredLeaves — LOD:%d Face:%d"), Id.LODLevel, Id.FaceIndex);
+        }
+    }
+
+    // Rebuild flat child lookup to replace the O(N*M) scan below.
+    // Cost: O(T*4) once per frame instead of O(committed * T * 4).
+    PendingTransitionChildren.Reset();
+    for (const auto &Pair : PendingTransitions)
+        for (const FChunkId &ChildId : Pair.Value.Children)
+            PendingTransitionChildren.Add(ChildId);
+
     // --- A1. Find nodes that are desired but not yet committed (new work) ---
     for (const FChunkId &Id : DesiredLeaves)
     {
@@ -196,46 +215,37 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
         if (DesiredLeaves.Contains(Id))
             continue;  // Still desired — nothing to do
 
-        // CRITICAL: If this node is already the parent of a pending transition,
-        // leave it alone. CommitReadyTransitions owns it now.
+        // If this node is already the parent of a pending transition, leave it alone.
         if (PendingTransitions.Contains(Id))
             continue;
 
-        // CRITICAL: If any pending transition references this node as a child,
-        // leave it alone — it's part of a merge or split in progress.
-        bool bInvolvedInTransition = false;
-        for (const auto &TPair : PendingTransitions)
-        {
-            for (const FChunkId &ChildId : TPair.Value.Children)
-            {
-                if (ChildId == Id)
-                {
-                    bInvolvedInTransition = true;
-                    break;
-                }
-            }
-            if (bInvolvedInTransition)
-                break;
-        }
-        if (bInvolvedInTransition)
+        if (PendingTransitionChildren.Contains(Id))
             continue;
 
         // Check if this is a merge case: parent is desired, this child is committed
         if (!IsRootNode(Id))
         {
-            const FChunkId ParentId = GetParentId(Id);
-            if (DesiredLeaves.Contains(ParentId))
+            FChunkId AncestorId = GetParentId(Id);
+            while (true)
             {
-                if (!PendingTransitions.Contains(ParentId))
+                if (DesiredLeaves.Contains(AncestorId))
                 {
-                    FLODTransition T;
-                    T.Type = ELeafTransitionType::Merge;
-                    T.Parent = ParentId;
-                    T.Children = GetChildrenIds(ParentId);
-                    PendingTransitions.Add(ParentId, MoveTemp(T));
+                    // Found a desired ancestor — register merge at that level if needed
+                    if (!PendingTransitions.Contains(AncestorId))
+                    {
+                        FLODTransition T;
+                        T.Type = ELeafTransitionType::Merge;
+                        T.Parent = AncestorId;
+                        T.Children = GetChildrenIds(AncestorId);
+                        PendingTransitions.Add(AncestorId, MoveTemp(T));
+                    }
+                    break;
                 }
-                continue;
+                if (IsRootNode(AncestorId))
+                    break;
+                AncestorId = GetParentId(AncestorId);
             }
+            continue;
         }
 
         // Truly gone — no transition, not desired, not root merge candidate.
@@ -411,10 +421,7 @@ void FChunkManager::CommitReadyTransitions()
                 {
                     Renderer->HideChunk(Child);
                     Child->State = EChunkState::MeshReady;
-                    // Step 4 will add these to a deferred release queue.
-                    // For now, release immediately.
-                    Renderer->ReleaseChunk(Child);
-                    ChunkMap.Remove(ChildId);
+                    DeferredReleaseQueue.Add({ChildId, Config.ChunkDemotionFrameDelay});
                 }
                 CommittedLeaves.Remove(ChildId);
             }
@@ -425,7 +432,47 @@ void FChunkManager::CommitReadyTransitions()
 
     // --- Removal of pending transition groups ---
     for (const FChunkId &Id : ToRemove)
+    {
+        // Clean up children from the fast lookup set
+        if (const FLODTransition *T = PendingTransitions.Find(Id))
+            for (const FChunkId &ChildId : T->Children)
+                PendingTransitionChildren.Remove(ChildId);
+
         PendingTransitions.Remove(Id);
+    }
+}
+
+
+void FChunkManager::ProcessDeferredReleases()
+{
+    TArray<FDeferredRelease> StillWaiting;
+
+    for (FDeferredRelease &Entry : DeferredReleaseQueue)
+    {
+        Entry.FrameCountdown--;
+
+        if (Entry.FrameCountdown > 0)
+        {
+            StillWaiting.Add(Entry);
+            continue;
+        }
+
+        // Countdown reached zero — release if not re-committed in the meantime
+        if (CommittedLeaves.Contains(Entry.Id))
+        {
+            // Chunk was re-committed (e.g. merge was cancelled) — do not release
+            continue;
+        }
+
+        FChunk *Chunk = GetChunk(Entry.Id);
+        if (Chunk && Chunk->State == EChunkState::MeshReady)
+        {
+            Renderer->ReleaseChunk(Chunk);
+            ChunkMap.Remove(Entry.Id);
+        }
+    }
+
+    DeferredReleaseQueue = MoveTemp(StillWaiting);
 }
 
 

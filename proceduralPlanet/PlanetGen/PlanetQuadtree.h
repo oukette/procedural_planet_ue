@@ -51,4 +51,7 @@ class FPlanetQuadtree
         void UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context, TFunctionRef<bool(const FChunkId &)> IsChunkReady);
         bool ShouldSplit(const FQuadtreeNode *Node, const FVector &ObserverLocal) const;
         bool ShouldMerge(const FQuadtreeNode *Node, const FVector &ObserverLocal) const;
+
+        bool IsAnyDescendantDesired(const FQuadtreeNode *Node) const;
+
 };

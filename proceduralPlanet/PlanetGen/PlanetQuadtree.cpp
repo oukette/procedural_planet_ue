@@ -34,33 +34,13 @@ void FPlanetQuadtree::Update(const FPlanetViewContext &Context, TFunctionRef<boo
 
 void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context, TFunctionRef<bool(const FChunkId &)> IsChunkReady)
 {
-    FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
-    FVector ToChunk = Center - Context.ObserverLocation;
+    // FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
+    // FVector ToChunk = Center - Context.ObserverLocation;
 
-    FVector ChunkNormal = Center.GetSafeNormal();
-    FVector ToObserverDir = -ToChunk.GetSafeNormal();
+    // FVector ChunkNormal = Center.GetSafeNormal();
+    // FVector ToObserverDir = -ToChunk.GetSafeNormal();
 
-    // --- Culling Logic ---
-    float HorizonThreshold = (Node->Id.LODLevel == 0) ? -0.9f : FPlanetStatics::HorizonCullingDot;
-    float FrustumThreshold = (Node->Id.LODLevel == 0) ? -0.9f : FPlanetStatics::FrustumCullingDot;
-
-    // 1. Horizon Culling
-    if ((ChunkNormal | ToObserverDir) < HorizonThreshold)
-    {
-        // Culled chunks do not appear in DesiredLeaves.
-        // The manager's deferred cleanup will handle releasing them after a delay.
-        return;
-    }
-
-    // 2. Frustum Culling
-    float NodeSize = (Config.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
-    bool bIsClose = ToChunk.SizeSquared() < (NodeSize * NodeSize * 2.25f);
-
-    if (!bIsClose && !Context.ObserverForward.IsZero() && (ToChunk.GetSafeNormal() | Context.ObserverForward) < FrustumThreshold)
-    {
-        // Culled — same as above, no DesiredLeaves entry.
-        return;
-    }
+    // culling will come back later
 
     // --- LOD Logic ---
     if (ShouldSplit(Node, Context.ObserverLocation))
@@ -94,9 +74,21 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
         {
             // All children ready — recurse. Parent is no longer a leaf.
             for (auto &Child : Node->Children)
-            {
                 UpdateNode(Child.Get(), Context, IsChunkReady);
+
+            // If no descendant was added to DesiredLeaves (all culled at every depth),
+            // fall back to showing this node as the closest visible ancestor.
+            bool bAnyDescendantDesired = false;
+            for (const auto &Child : Node->Children)
+            {
+                if (IsAnyDescendantDesired(Child.Get()))
+                {
+                    bAnyDescendantDesired = true;
+                    break;
+                }
             }
+            if (!bAnyDescendantDesired)
+                DesiredLeaves.Add(Node->Id);
         }
         else
         {
@@ -142,6 +134,20 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
             {
                 for (auto &Child : Node->Children)
                     UpdateNode(Child.Get(), Context, IsChunkReady);
+
+                // If no descendant was added to DesiredLeaves (all culled at every depth),
+                // fall back to showing this node as the closest visible ancestor.
+                bool bAnyDescendantDesired = false;
+                for (const auto &Child : Node->Children)
+                {
+                    if (IsAnyDescendantDesired(Child.Get()))
+                    {
+                        bAnyDescendantDesired = true;
+                        break;
+                    }
+                }
+                if (!bAnyDescendantDesired)
+                    DesiredLeaves.Add(Node->Id);
             }
             else
             {
@@ -182,6 +188,19 @@ bool FPlanetQuadtree::ShouldMerge(const FQuadtreeNode *Node, const FVector &Obse
     // The hysteresis ratio prevents oscillation at the boundary.
     // it means: split at distance X, but don't merge until distance hysteresisRatio*X.
     return Dist >= (NodeSize * Config.LODSplitDistanceMultiplier * Config.LODMergeHysteresisRatio);
+}
+
+
+bool FPlanetQuadtree::IsAnyDescendantDesired(const FQuadtreeNode *Node) const
+{
+    if (DesiredLeaves.Contains(Node->Id))
+        return true;
+
+    for (const auto &Child : Node->Children)
+        if (IsAnyDescendantDesired(Child.Get()))
+            return true;
+
+    return false;
 }
 
 
