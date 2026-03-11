@@ -50,7 +50,6 @@ class FChunkManager
         TMap<FChunkId, TUniquePtr<FChunk>> ChunkMap;        // The central registry of all chunks
         TMap<FChunkId, FLODTransition> PendingTransitions;  // keyed on parent ID
         TSet<FChunkId> CommittedLeaves;                     // ground truth of what is rendered
-        TSet<FChunkId> StandaloneNewChunks;  // desired leaves with no committed parent — committed individually
 
         // Helper to create a new chunk entry
         FChunk *CreateChunk(const FChunkId &Id);
@@ -65,9 +64,11 @@ class FChunkManager
 
         // Pure math helpers
         static FChunkId GetParentId(const FChunkId &Child);
-        static FChunkId GetParentId_Safe(const FChunkId &Child);
         static TArray<FChunkId> GetChildrenIds(const FChunkId &Parent);
         static bool IsRootNode(const FChunkId &Id);
+
+        FChunkId GetParentId_OrSentinel(const FChunkId &Id) const;
+        void SeedSentinels();
 
         // Helper to check if a chunk is in memory and has mesh data
         bool IsChunkReady(const FChunkId &Id) const;

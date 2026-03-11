@@ -56,6 +56,11 @@ struct FChunkId
         }
 };
 
+// Sentinels are never rendered — they exist only to unify the transition logic.
+inline FChunkId MakeSentinelId(uint8 FaceIndex) { return FChunkId(FaceIndex, FIntVector(-1, -1, -1), -1); }
+
+inline bool IsSentinelId(const FChunkId &Id) { return Id.LODLevel == -1; }
+
 
 // All data required for a single Mesh Section
 USTRUCT(BlueprintType)
