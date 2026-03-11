@@ -8,13 +8,12 @@
 #include "PlanetQuadtree.h"
 
 
-
 // Chunks hidden after a merge, waiting to be released after a delay
-        struct FDeferredRelease
-        {
-                FChunkId Id;
-                int32 FrameCountdown;
-        };
+struct FDeferredRelease
+{
+        FChunkId Id;
+        int32 FrameCountdown;
+};
 
 
 // Manages the lifecycle of all chunks (Quadtree logic, LOD selection, Async requests).
@@ -52,14 +51,16 @@ class FChunkManager
 
     private:
         FPlanetConfig Config;
-        const DensityGenerator *Generator;                  // Reference to the density generator (owned by APlanet)
-        TUniquePtr<ChunkRenderer> Renderer;                 // Handles visual components
-        TUniquePtr<FChunkGenerator> ChunkGenerator;         // Handles async generation
-        TUniquePtr<FPlanetQuadtree> Quadtree;               // Handles LOD and Culling logic
+        const DensityGenerator *Generator;           // Reference to the density generator (owned by APlanet)
+        TUniquePtr<ChunkRenderer> Renderer;          // Handles visual components
+        TUniquePtr<FChunkGenerator> ChunkGenerator;  // Handles async generation
+        TUniquePtr<FPlanetQuadtree> Quadtree;        // Handles LOD and Culling logic
+
         TMap<FChunkId, TUniquePtr<FChunk>> ChunkMap;        // The central registry of all chunks
         TMap<FChunkId, FLODTransition> PendingTransitions;  // keyed on parent ID
-        TSet<FChunkId> CommittedLeaves;                     // ground truth of what is rendered
-        TSet<FChunkId> PendingTransitionChildren;           // flat set rebuilt each reconcile for O(1) lookup                                         
+        TSet<FChunkId> RenderSet;                           // ground truth of what is rendered
+        TSet<FChunkId> LoadSet;                             // All chunk IDs that must be kept alive this frame
+        TSet<FChunkId> DeferredReleaseIds;                  // O(1) mirror of DeferredReleaseQueue
         TArray<FDeferredRelease> DeferredReleaseQueue;
 
         // Helper to create a new chunk entry
@@ -68,16 +69,25 @@ class FChunkManager
         // Helper to get a chunk from the map if it exists, otherwise create it
         FChunk *GetChunk(const FChunkId &Id);
 
+        // Derives LoadSet from RenderSet + all active PendingTransitions
+        void BuildLoadSet();
+
+        // Safety net: any chunk in ChunkMap not in LoadSet and not in flight gets deferred
+        void PruneOrphans();
+
+        // Explicit initialization of the 6 root chunks directly into RenderSet
+        void InitializeRoots();
+
         // Quadtree reconciliation, diff desired vs committed, build PendingTransitions
         void ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves);
 
-        // ensure all needed chunks are generating/uploading
+        // Ensure all needed chunks are generating/uploading
         void AdvanceLoading();
 
-        // atomic show/hide for complete groups
+        // Atomic show/hide for complete groups
         void CommitReadyTransitions();
 
-        // atomic release of deferred chunks
+        // Atomic release of deferred chunks
         void ProcessDeferredReleases();
 
         // Pure math helpers
@@ -85,12 +95,11 @@ class FChunkManager
         static TArray<FChunkId> GetChildrenIds(const FChunkId &Parent);
         static bool IsRootNode(const FChunkId &Id);
 
-        FChunkId GetParentId_OrSentinel(const FChunkId &Id) const;
-        void SeedSentinels();
-
         // Helper to check if a chunk is in memory and has mesh data
         bool IsChunkReady(const FChunkId &Id) const;
 
         // Callback executed on Game Thread when async generation finishes
         void OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData);
+
+        void DebugRootNodes();
 };

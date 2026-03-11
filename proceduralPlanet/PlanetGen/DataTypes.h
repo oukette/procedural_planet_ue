@@ -56,11 +56,6 @@ struct FChunkId
         }
 };
 
-// Sentinels are never rendered — they exist only to unify the transition logic.
-inline FChunkId MakeSentinelId(uint8 FaceIndex) { return FChunkId(FaceIndex, FIntVector(-1, -1, -1), -1); }
-
-inline bool IsSentinelId(const FChunkId &Id) { return Id.LODLevel == -1; }
-
 
 // All data required for a single Mesh Section
 USTRUCT(BlueprintType)
@@ -312,7 +307,7 @@ struct FPlanetConfig
         // Throttling
         int32 MaxConcurrentGenerations = 32;
         int32 ChunkGenerationRate = 8;  // Chunks to start generating per tick
-        int32 MeshUpdatesPerFrame = 2;
+        int32 MeshUpdatesPerFrame = 4;
 
         // LOD Rules
         int32 MaxLOD = 8;
@@ -325,7 +320,7 @@ struct FPlanetConfig
         float MinLookAheadTime = 0.5f;
         float LookAheadAltitudeScale = 50000.0f;
 
-        int32 ChunkDemotionFrameDelay = 12;  // X frames. A rendered chunk must be absent before hiding
+        int32 ChunkDemotionFrameDelay = 8;  // X frames. A rendered chunk must be absent before hiding
 };
 
 

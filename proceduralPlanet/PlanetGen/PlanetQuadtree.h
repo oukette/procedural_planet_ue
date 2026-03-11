@@ -31,13 +31,10 @@ class FPlanetQuadtree
 
         // Rebuilds the visibility lists based on the view context.
         // IsChunkReady: A callback to check if a specific chunk ID has mesh data loaded (used for hysteresis).
-        void Update(const FPlanetViewContext &Context, TFunctionRef<bool(const FChunkId &)> IsChunkReady);
+        void Update(const FPlanetViewContext &Context);
 
+        // The ideal set of leaf IDs this frame. Manager diffs this against RenderSet.
         const TSet<FChunkId> &GetDesiredLeaves() const { return DesiredLeaves; }
-
-        // All chunk IDs that are children of a splitting node but not yet ready.
-        // The manager uses this to start generating them before they appear in DesiredLeaves.
-        const TSet<FChunkId> &GetPendingChildIds() const { return PendingChildIds; }
 
         // Debug drawing for the logical grid
         void DrawDebugGrid(const UWorld *World, const FTransform &PlanetTransform) const;
@@ -46,12 +43,8 @@ class FPlanetQuadtree
         FPlanetConfig Config;
         TArray<TUniquePtr<FQuadtreeNode>> RootNodes;
         TSet<FChunkId> DesiredLeaves;
-        TSet<FChunkId> PendingChildIds;
 
-        void UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context, TFunctionRef<bool(const FChunkId &)> IsChunkReady);
+        void UpdateNode(FQuadtreeNode *Node, const FVector &ObserverLocal);
         bool ShouldSplit(const FQuadtreeNode *Node, const FVector &ObserverLocal) const;
         bool ShouldMerge(const FQuadtreeNode *Node, const FVector &ObserverLocal) const;
-
-        bool IsAnyDescendantDesired(const FQuadtreeNode *Node) const;
-
 };

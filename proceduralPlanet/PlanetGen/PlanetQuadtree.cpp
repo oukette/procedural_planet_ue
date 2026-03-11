@@ -20,38 +20,36 @@ FPlanetQuadtree::FPlanetQuadtree(const FPlanetConfig &InConfig) :
 FPlanetQuadtree::~FPlanetQuadtree() {}
 
 
-void FPlanetQuadtree::Update(const FPlanetViewContext &Context, TFunctionRef<bool(const FChunkId &)> IsChunkReady)
+void FPlanetQuadtree::Update(const FPlanetViewContext &Context)
 {
     DesiredLeaves.Empty();
-    PendingChildIds.Empty();
 
     for (const auto &Root : RootNodes)
     {
-        UpdateNode(Root.Get(), Context, IsChunkReady);
+        UpdateNode(Root.Get(), Context.ObserverLocation);
     }
 }
 
 
-void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context, TFunctionRef<bool(const FChunkId &)> IsChunkReady)
+void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FVector &ObserverLocal)
 {
+    // --- culling will come back later ---
     // FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
     // FVector ToChunk = Center - Context.ObserverLocation;
 
     // FVector ChunkNormal = Center.GetSafeNormal();
     // FVector ToObserverDir = -ToChunk.GetSafeNormal();
 
-    // culling will come back later
-
     // --- LOD Logic ---
-    if (ShouldSplit(Node, Context.ObserverLocation))
+    if (ShouldSplit(Node, ObserverLocal))
     {
+        // Expand children if not already split
         if (Node->IsLeaf())
         {
-            // Create Children
-            int32 NextLOD = Node->Id.LODLevel + 1;
-            int32 X = Node->Id.Coords.X;
-            int32 Y = Node->Id.Coords.Y;
-            uint8 Face = Node->Id.FaceIndex;
+            const int32 NextLOD = Node->Id.LODLevel + 1;
+            const int32 X = Node->Id.Coords.X;
+            const int32 Y = Node->Id.Coords.Y;
+            const uint8 Face = Node->Id.FaceIndex;
 
             Node->Children.Add(MakeUnique<FQuadtreeNode>(FChunkId(Face, FIntVector(X * 2, Y * 2, 0), NextLOD), Node));
             Node->Children.Add(MakeUnique<FQuadtreeNode>(FChunkId(Face, FIntVector(X * 2 + 1, Y * 2, 0), NextLOD), Node));
@@ -59,104 +57,27 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
             Node->Children.Add(MakeUnique<FQuadtreeNode>(FChunkId(Face, FIntVector(X * 2 + 1, Y * 2 + 1, 0), NextLOD), Node));
         }
 
-        // Check if children are ready
-        bool bAllChildrenReady = true;
-        for (const auto &Child : Node->Children)
-        {
-            if (!IsChunkReady(Child->Id))
-            {
-                bAllChildrenReady = false;
-                break;
-            }
-        }
-
-        if (bAllChildrenReady)
-        {
-            // All children ready — recurse. Parent is no longer a leaf.
-            for (auto &Child : Node->Children)
-                UpdateNode(Child.Get(), Context, IsChunkReady);
-
-            // If no descendant was added to DesiredLeaves (all culled at every depth),
-            // fall back to showing this node as the closest visible ancestor.
-            bool bAnyDescendantDesired = false;
-            for (const auto &Child : Node->Children)
-            {
-                if (IsAnyDescendantDesired(Child.Get()))
-                {
-                    bAnyDescendantDesired = true;
-                    break;
-                }
-            }
-            if (!bAnyDescendantDesired)
-                DesiredLeaves.Add(Node->Id);
-        }
-        else
-        {
-            // Children still loading — hold parent as the desired leaf.
-            DesiredLeaves.Add(Node->Id);
-
-            // Tell the manager which children need to be generated.
-            for (const auto &Child : Node->Children)
-                PendingChildIds.Add(Child->Id);
-        }
+        // Recurse regardless — children may themselves split or merge
+        for (auto &Child : Node->Children)
+            UpdateNode(Child.Get(), ObserverLocal);
     }
-    else if (ShouldMerge(Node, Context.ObserverLocation))
+    else if (ShouldMerge(Node, ObserverLocal))
     {
-        // This node should not be split. Prune any children from the tree.
-        // The manager's deferred cleanup handles releasing child chunk data gracefully.
-        Node->Children.Empty();
-
+        // Collapse children — this node becomes a leaf again
+        Node->Children.Empty(); // dont care if those children have loaded chunks — that's the manager's problem.
         DesiredLeaves.Add(Node->Id);
     }
     else
     {
-        // Hysteresis band — hold current state
+        // Hysteresis band — hold current structure
         if (Node->IsLeaf())
         {
-            // Currently a leaf at this LOD — stay visible, no change
             DesiredLeaves.Add(Node->Id);
         }
         else
         {
-            // Currently split — keep children alive, recurse into them
-            // This preserves the current split without re-committing or destroying it
-            bool bAllChildrenReady = true;
-            for (const auto &Child : Node->Children)
-            {
-                if (!IsChunkReady(Child->Id))
-                {
-                    bAllChildrenReady = false;
-                    break;
-                }
-            }
-
-            if (bAllChildrenReady)
-            {
-                for (auto &Child : Node->Children)
-                    UpdateNode(Child.Get(), Context, IsChunkReady);
-
-                // If no descendant was added to DesiredLeaves (all culled at every depth),
-                // fall back to showing this node as the closest visible ancestor.
-                bool bAnyDescendantDesired = false;
-                for (const auto &Child : Node->Children)
-                {
-                    if (IsAnyDescendantDesired(Child.Get()))
-                    {
-                        bAnyDescendantDesired = true;
-                        break;
-                    }
-                }
-                if (!bAnyDescendantDesired)
-                    DesiredLeaves.Add(Node->Id);
-            }
-            else
-            {
-                // Children not all ready — hold parent, children will be picked up by the manager
-                DesiredLeaves.Add(Node->Id);
-
-                for (const auto &Child : Node->Children)
-                    PendingChildIds.Add(Child->Id);  // add this
-            }
+            for (auto &Child : Node->Children)
+                UpdateNode(Child.Get(), ObserverLocal);
         }
     }
 }
@@ -186,21 +107,7 @@ bool FPlanetQuadtree::ShouldMerge(const FQuadtreeNode *Node, const FVector &Obse
 
     // Merge only when observer has moved meaningfully farther than the split threshold.
     // The hysteresis ratio prevents oscillation at the boundary.
-    // it means: split at distance X, but don't merge until distance hysteresisRatio*X.
     return Dist >= (NodeSize * Config.LODSplitDistanceMultiplier * Config.LODMergeHysteresisRatio);
-}
-
-
-bool FPlanetQuadtree::IsAnyDescendantDesired(const FQuadtreeNode *Node) const
-{
-    if (DesiredLeaves.Contains(Node->Id))
-        return true;
-
-    for (const auto &Child : Node->Children)
-        if (IsAnyDescendantDesired(Child.Get()))
-            return true;
-
-    return false;
 }
 
 
