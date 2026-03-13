@@ -14,28 +14,32 @@ FChunkManager::FChunkManager(const FPlanetConfig &planetConfig, const DensityGen
 
 FChunkManager::~FChunkManager()
 {
+    // CRITICAL: Stop the generator first.
+    // This prevents new async tasks from being started and invalidates pending ones (if handled correctly).
+    if (ChunkGenerator)
+    {
+        ChunkGenerator->Stop();
+    }
+
     DeferredReleaseQueue.Empty();
 
-    // STOP all background work to prevent callbacks on a partially destroyed manager.
-    if (ChunkGenerator)
-        ChunkGenerator->Stop();
-
-    // 2. Return all active visual components to the renderer's pool.
-    if (Renderer)
+    // Systematically clean up active chunks.
+    if (Renderer && !GIsRequestingExit)
     {
         for (auto &Pair : ChunkMap)
         {
             FChunk *Chunk = Pair.Value.Get();
-            // Release any chunk that has a component assigned,
-            // regardless of whether it is visible or just mesh-ready.
-            if (Chunk->State == EChunkState::Visible || Chunk->State == EChunkState::MeshReady)
+
+            if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
             {
-                Renderer->ReleaseChunk(Chunk);
+                // Hand the component back to the renderer for immediate safe disposal.
+                // We do NOT use ReleaseChunk (which pools it) because we are shutting down.
+                Renderer->DiscardComponent(Comp);
+                Chunk->RenderProxy.Reset();
             }
-            // Null remaining proxies defensively before GC can run
-            Chunk->RenderProxy.Reset();
         }
-        // COMMAND the renderer to destroy them now that all components are in the pool.
+
+        // 3. Finally, destroy any components remaining in the pool.
         Renderer->ReleaseAllComponents();
     }
 }
@@ -134,7 +138,7 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
     if (bShouldGenerateChunks && Quadtree)
         Quadtree->Update(Context);
 
-    const TSet<FChunkId> &DesiredLeaves = (bShouldGenerateChunks && Quadtree) ? Quadtree->GetDesiredLeaves() : TSet<FChunkId>();    
+    const TSet<FChunkId> &DesiredLeaves = (bShouldGenerateChunks && Quadtree) ? Quadtree->GetDesiredLeaves() : TSet<FChunkId>();
 
     BuildLoadSet(DesiredLeaves);
 
@@ -147,7 +151,7 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
     if (ChunkGenerator)
         ChunkGenerator->Update();
 
-    DebugRootNodes();
+    // DebugRootNodes();
 }
 
 
@@ -666,8 +670,8 @@ void FChunkManager::OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniq
     if (Chunk->GenerationId != GenId)
         return;  // Stale task (Chunk was reset/regenerated)
 
-    // // Only accept the result if the chunk is still in the generation pipeline.
-    // // MeshReady or Visible chunks must not be overwritten by a late callback.
+    // Only accept the result if the chunk is still in the generation pipeline.
+    // MeshReady or Visible chunks must not be overwritten by a late callback.
     if (Chunk->State == EChunkState::MeshReady || Chunk->State == EChunkState::Visible)
         return;
 

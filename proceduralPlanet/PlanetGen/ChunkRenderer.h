@@ -13,17 +13,20 @@ class ChunkRenderer
         ChunkRenderer(AActor *InOwner, UMaterialInterface *InMaterial);
         ~ChunkRenderer();
 
-        // Uploads mesh data to a component and assigns it to the chunk.
+        // Upload mesh data to a component and assigns it to the chunk.
         // Component starts hidden. State becomes MeshReady (caller's responsibility).
         void PrepareChunk(FChunk *Chunk, bool bEnableCollision);
 
-        // Makes the chunk's component visible.
+        // Make the chunk's component visible.
         // Chunk must be in MeshReady state. State becomes Visible (caller's responsibility).
         void ShowChunk(FChunk *Chunk);
 
-        // Hides the chunk's component. Component stays assigned — no mesh re-upload needed.
+        // Hide the chunk's component. Component stays assigned — no mesh re-upload needed.
         // State becomes MeshReady (caller's responsibility).
         void HideChunk(FChunk *Chunk);
+
+        // Unregister and destroy the given component.
+        void DiscardComponent(UProceduralMeshComponent* Comp);
 
         // Returns the component to the pool and clears the mesh.
         // Called only when a chunk is being permanently destroyed.

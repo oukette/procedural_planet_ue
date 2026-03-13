@@ -1,4 +1,5 @@
 #include "ChunkRenderer.h"
+#include "Engine/Engine.h"  // For GIsRequestingExit
 
 
 ChunkRenderer::ChunkRenderer(AActor *InOwner, UMaterialInterface *InMaterial) :
@@ -10,13 +11,12 @@ ChunkRenderer::ChunkRenderer(AActor *InOwner, UMaterialInterface *InMaterial) :
 
 ChunkRenderer::~ChunkRenderer()
 {
-    if (FreeComponentPool.Num() > 0)
+    // If the engine is exiting, the UWorld and AActor are likely already tearing down.
+    // The components in the pool (Raw Pointers) may have already been freed by the engine.
+    // Touching them now would cause a Segfault.
+    if (!GIsRequestingExit)
     {
-        UE_LOG(LogTemp,
-               Warning,
-               TEXT("ChunkRenderer destroyed with %d components still in pool. "
-                    "ReleaseAllComponents() should be called before destruction."),
-               FreeComponentPool.Num());
+        ReleaseAllComponents();
     }
 }
 
@@ -26,8 +26,8 @@ UProceduralMeshComponent *ChunkRenderer::GetFreeComponent()
     if (FreeComponentPool.Num() > 0)
     {
         UProceduralMeshComponent *Comp = FreeComponentPool.Pop();
-        // Comp->SetVisibility(true);
         Comp->SetRelativeTransform(FTransform::Identity);  // clear stale transform from previous owner
+
         return Comp;
     }
 
@@ -61,7 +61,7 @@ void ChunkRenderer::PrepareChunk(FChunk *Chunk, bool bEnableCollision = false)
         return;
     }
 
-    // 1. Configure Collision Settings BEFORE creating the mesh
+    // Configure Collision Settings BEFORE creating the mesh
     // This ensures that when CreateMeshSection triggers collision cooking, it uses the correct flags.
     if (bEnableCollision)
     {
@@ -76,7 +76,7 @@ void ChunkRenderer::PrepareChunk(FChunk *Chunk, bool bEnableCollision = false)
         Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
     }
 
-    // 2. Upload Mesh Data
+    // Upload Mesh Data
     Comp->CreateMeshSection(0,
                             Chunk->MeshData->Vertices,
                             Chunk->MeshData->Triangles,
@@ -86,16 +86,16 @@ void ChunkRenderer::PrepareChunk(FChunk *Chunk, bool bEnableCollision = false)
                             TArray<FProcMeshTangent>(),
                             false);
 
-    // 3. Apply Material
+    // Apply Material
     Comp->SetMaterial(0, Material);
 
-    // 4. Set Transform (Location and Rotation on the sphere)
+    // Set Transform (Location and Rotation on the sphere)
     Comp->SetRelativeLocationAndRotation(Chunk->Transform.Location, Chunk->Transform.Rotation);
 
-    // 5. Stay hidden until ShowChunk is called
+    // Stay hidden until ShowChunk is called
     Comp->SetVisibility(false);
 
-    // 6. Link
+    // Link
     Chunk->RenderProxy = Comp;
 }
 
@@ -123,6 +123,20 @@ void ChunkRenderer::HideChunk(FChunk *Chunk)
     }
 }
 
+void ChunkRenderer::DiscardComponent(UProceduralMeshComponent *Comp)
+{
+    if (IsValid(Comp) && !GIsRequestingExit)
+    {
+        // Unregister to stop physics/rendering immediately
+        Comp->UnregisterComponent();
+
+        // Destroy the UObject
+        if (!Comp->IsBeingDestroyed())
+        {
+            Comp->DestroyComponent();
+        }
+    }
+}
 
 void ChunkRenderer::ReleaseChunk(FChunk *Chunk)
 {
@@ -134,7 +148,16 @@ void ChunkRenderer::ReleaseChunk(FChunk *Chunk)
         if (IsValid(Comp))
         {
             Comp->SetVisibility(false);
-            Comp->ClearAllMeshSections();
+
+            // Only clear mesh sections if the game is running.
+            // Doing this during exit can crash physics/cooking threads.
+            if (!GIsRequestingExit && !Comp->IsPendingKill())
+            {
+                Comp->ClearAllMeshSections();
+            }
+
+            Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
             FreeComponentPool.Add(Comp);
         }
         Chunk->RenderProxy.Reset();
@@ -148,7 +171,10 @@ void ChunkRenderer::ReleaseAllComponents()
     // It ensures we don't leak components that the renderer created.
     for (UProceduralMeshComponent *Comp : FreeComponentPool)
     {
-        if (IsValid(Comp) && !Comp->IsBeingDestroyed())
+        // Vital check: During shutdown, raw pointers to UObjects can be dangling
+        // even if 'IsValid' (which checks null/pendingkill) passes on the memory address.
+        // We assume that if IsRequestingExit is true, we should stop touching these.
+        if (!GIsRequestingExit && IsValid(Comp) && !Comp->IsBeingDestroyed())
         {
             Comp->DestroyComponent();
         }

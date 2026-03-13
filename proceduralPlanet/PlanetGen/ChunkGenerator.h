@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "HAL/ThreadSafeBool.h"
+#include "HAL/ThreadSafeCounter.h"
 #include "DataTypes.h"
 #include "DensityGenerator.h"
 
@@ -50,6 +51,14 @@ class FChunkGenerator
 
         // Flag to signal that the generator is shutting down.
         FThreadSafeBool bIsStopping;
+
+        // Token to track the lifecycle of this instance safely across threads.
+        // The bool value is true while the generator is alive, and set to false in the destructor.
+        TSharedPtr<bool, ESPMode::ThreadSafe> AliveToken;
+
+        // Shared counter to track how many background threads are currently running.
+        // We use this to force the destructor to wait until all workers are done.
+        TSharedPtr<FThreadSafeCounter, ESPMode::ThreadSafe> ActiveThreadsCounter;
 
         void StartAsyncTask(const FChunkRequest &Request);
 };

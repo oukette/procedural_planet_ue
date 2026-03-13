@@ -48,10 +48,10 @@ void APlanet::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
-    // 1. Build View Context in WORLD space
+    // Build View Context in WORLD space
     FPlanetViewContext WorldContext = BuildViewContext();
 
-    // 2. Create a LOCAL space context for the ChunkManager
+    // Create a LOCAL space context for the ChunkManager
     // The ChunkManager and its subsystems (Quadtree, etc.) operate in the Planet's local space.
     // This allows the entire planet actor to be moved in the world without breaking the generation logic.
     FPlanetViewContext LocalContext;
@@ -61,10 +61,10 @@ void APlanet::Tick(float DeltaTime)
     LocalContext.ObserverVelocity = PlanetTransform.InverseTransformVector(WorldContext.ObserverVelocity);
     LocalContext.ViewDistance = WorldContext.ViewDistance;
 
-    // 3. Update Manager with LOCAL context
+    // Update Manager with LOCAL context
     UpdateChunkManager(LocalContext);
 
-    // 4. Update Far Model & Debug with WORLD context
+    // Update Far Model & Debug with WORLD context
     UpdateFarModelVisibility(WorldContext);
     DrawDebugInfo(WorldContext);
 }
@@ -75,9 +75,12 @@ bool APlanet::ShouldTickIfViewportsOnly() const { return true; }
 
 void APlanet::Destroyed()
 {
+    // Explicitly clear the planet to clean up C++ managers (ChunkManager) and their UObject resources (Meshes)
+    // while the Actor is still in a valid state. Leaving this to the destructor (GC time) causes crashes
+    // because the UObjects may already be unreachable.
+    ClearPlanet();
+    
     Super::Destroyed();
-
-    // Chunk manager shall handle chunk clearing.
 }
 
 
@@ -90,12 +93,12 @@ void APlanet::GeneratePlanet()
 
 void APlanet::ClearPlanet()
 {
-    // 1. Reset Managers (Destroys ChunkManager, Renderer, and Chunks)
+    // Reset Managers (Destroys ChunkManager, Renderer, and Chunks)
     ChunkManager.Reset();
     Generator.Reset();
     NoiseProvider.Reset();
 
-    // 2. Destroy Far Model if we created it
+    // Destroy Far Model if we created it
     if (bIsFarModelAutoCreated && GenSettings.FarPlanetModel)
     {
         if (IsValid(GenSettings.FarPlanetModel))
@@ -106,7 +109,7 @@ void APlanet::ClearPlanet()
     }
     bIsFarModelAutoCreated = false;
 
-    // 3. The ChunkManager's destructor now handles all component cleanup robustly.
+    // The ChunkManager's destructor now handles all component cleanup robustly.
 }
 
 
@@ -119,7 +122,7 @@ FVector APlanet::GetGravityDirection(const FVector &WorldLocation) const
 
 void APlanet::initPlanet()
 {
-    // 1. Handle Visuals (Far Model)
+    // Handle Visuals (Far Model)
     if (!GenSettings.FarPlanetModel)
     {
         CreateFarModel();
@@ -130,7 +133,7 @@ void APlanet::initPlanet()
         GenSettings.FarPlanetModel->SetActorScale3D(FVector(GenSettings.PlanetRadius / FPlanetStatics::DefaultEngineSphereRadius));
     }
 
-    // 2. Calculate "Auto" Settings (Configuration)
+    // Calculate "Auto" Settings (Configuration)
     int32 FinalChunksPerFace;
     float FinalVoxelSize;
     int32 FinalResolution;
@@ -192,7 +195,7 @@ void APlanet::CreateFarModel()
     if (!GetWorld())
         return;
 
-    // 1. Find the engine's default sphere mesh
+    // Find the engine's default sphere mesh
     UStaticMesh *SphereMesh = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere"));
     if (!SphereMesh)
     {
@@ -200,13 +203,13 @@ void APlanet::CreateFarModel()
         return;
     }
 
-    // 2. Spawn a StaticMeshActor
+    // Spawn a StaticMeshActor
     AStaticMeshActor *SphereActor = GetWorld()->SpawnActor<AStaticMeshActor>(GetActorLocation(), GetActorRotation());
     if (SphereActor)
     {
         UStaticMeshComponent *MeshComponent = SphereActor->GetStaticMeshComponent();
 
-        // 3. Configure the actor
+        // Configure the actor
         MeshComponent->SetMobility(EComponentMobility::Movable);
         MeshComponent->SetStaticMesh(SphereMesh);
         MeshComponent->SetMaterial(0, GenSettings.DebugMaterial);
@@ -226,7 +229,7 @@ void APlanet::CreateFarModel()
         // Hide it initially, the LOD system will unhide it when needed
         SphereActor->SetActorHiddenInGame(true);
 
-        // 4. Store the reference and set the flag
+        // Store the reference and set the flag
         GenSettings.FarPlanetModel = SphereActor;
         bIsFarModelAutoCreated = true;
 
