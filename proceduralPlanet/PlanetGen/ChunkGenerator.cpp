@@ -54,17 +54,17 @@ void FChunkGenerator::RequestChunk(const FChunkId &Id, uint32 GenerationId, floa
     if (ActiveTasks.Contains(Id))
         return;  // Already in queue
 
-    // Add the request to queue
-    RequestsQueue.Add({Id, GenerationId, PriorityScore});
-
-    // Sort the queue so the lowest score (closest chunk) is at index 0
-    RequestsQueue.Sort([](const FChunkRequest &A, const FChunkRequest &B) { return A.PrioScore < B.PrioScore; });
+    QueuedIds.Add(Id);
+    // Use a Min-Heap (Lowest Score at Top).
+    // We use the 'Greater' predicate (>), which causes Heap functions to prioritize smaller values as 'Top'.
+    RequestsQueue.HeapPush({Id, GenerationId, PriorityScore}, [](const FChunkRequest &A, const FChunkRequest &B) { return A.PrioScore > B.PrioScore; });
 }
 
 void FChunkGenerator::Stop()
 {
     bIsStopping = true;
     RequestsQueue.Empty();
+    QueuedIds.Empty();
 
     // Clear active tasks set immediately so no new tasks can be added or processed by logic relying on this set.
     ActiveTasks.Empty();
@@ -72,15 +72,11 @@ void FChunkGenerator::Stop()
 
 void FChunkGenerator::CancelRequest(const FChunkId &Id)
 {
-    // If it's in the queue, remove it. This is O(n), but the queue is not expected to be huge.
-    RequestsQueue.RemoveAll([&Id](const FChunkRequest &Request) { return Request.Id == Id; });
-
-    // If it's an active task, we can't stop it.
-    // Add it to a "cancelled" set. The task will complete, but we'll check this set before firing the callback.
-    if (ActiveTasks.Contains(Id))
-    {
-        CancelledTasks.Add(Id);
-    }
+    // Mark as cancelled regardless of whether it's queued or actively running.
+    // - If queued: it will be popped and skipped in Update()
+    // - If active: it will be caught in the game thread callback
+    CancelledTasks.Add(Id);
+    QueuedIds.Remove(Id);  // Keep QueuedIds consistent so RequestChunk can re-queue it later if needed
 }
 
 void FChunkGenerator::Update()
@@ -100,14 +96,10 @@ void FChunkGenerator::Update()
         for (const FChunkId &Id : CancelledTasks)
         {
             if (!ActiveTasks.Contains(Id))
-            {
                 StaleCancellations.Add(Id);
-            }
         }
         for (const FChunkId &Id : StaleCancellations)
-        {
             CancelledTasks.Remove(Id);
-        }
     }
 
     // Check limits
@@ -122,9 +114,17 @@ void FChunkGenerator::Update()
         if (ActiveTasks.Num() >= Config.MaxConcurrentGenerations)
             break;
 
-        // Pop from front (index 0) for FIFO ordering — oldest request processed first.
-        FChunkRequest Request = RequestsQueue[0];
-        RequestsQueue.RemoveAt(0, 1, false);  // false = don't shrink allocation each removal
+        // Efficiently pop the highest priority (lowest score) request from the heap (O(log n))
+        FChunkRequest Request;
+        RequestsQueue.HeapPop(Request, [](const FChunkRequest &A, const FChunkRequest &B) { return A.PrioScore > B.PrioScore; });
+        QueuedIds.Remove(Request.Id);
+
+        // Skip if cancelled while sitting in the queue
+        if (CancelledTasks.Contains(Request.Id))
+        {
+            CancelledTasks.Remove(Request.Id);
+            continue;
+        }
 
         // If not already active (double check)
         if (!ActiveTasks.Contains(Request.Id))

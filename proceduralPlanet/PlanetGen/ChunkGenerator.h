@@ -46,6 +46,7 @@ class FChunkGenerator
 
         TArray<FChunkRequest> RequestsQueue;
         TSet<FChunkId> ActiveTasks;     // Set of IDs currently processing to prevent duplicates
+        TSet<FChunkId> QueuedIds;       // mirrors heap contents for O(1) duplicate detection
         TSet<FChunkId> CancelledTasks;  // Set of IDs that were cancelled while active
 
         FOnChunkGenerated OnGeneratedCallback;
