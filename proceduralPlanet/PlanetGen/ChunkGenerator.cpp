@@ -49,13 +49,16 @@ FChunkGenerator::~FChunkGenerator()
     }
 }
 
-void FChunkGenerator::RequestChunk(const FChunkId &Id, uint32 GenerationId)
+void FChunkGenerator::RequestChunk(const FChunkId &Id, uint32 GenerationId, float PriorityScore)
 {
     if (ActiveTasks.Contains(Id))
         return;  // Already in queue
 
     // Add the request to queue
-    RequestsQueue.Add({Id, GenerationId});
+    RequestsQueue.Add({Id, GenerationId, PriorityScore});
+
+    // Sort the queue so the lowest score (closest chunk) is at index 0
+    RequestsQueue.Sort([](const FChunkRequest &A, const FChunkRequest &B) { return A.PrioScore < B.PrioScore; });
 }
 
 void FChunkGenerator::Stop()

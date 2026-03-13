@@ -33,14 +33,25 @@ void FPlanetQuadtree::Update(const FPlanetViewContext &Context)
 
 void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FVector &ObserverLocal)
 {
-    // --- culling will come back later ---
-    // FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
-    // FVector ToChunk = Center - Context.ObserverLocation;
+    // --- Horizon Culling ---
+    // If a node is deep over the horizon, we don't need to split it further.
+    // We use a dot product check: If the surface normal points in the same direction as the view ray, it's facing away.
+    // We only apply this to LOD >= 2 to ensure the curvature is approximated well enough.
+    if (Node->Id.LODLevel >= 2)
+    {
+        FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
+        FVector ViewDir = (Center - ObserverLocal).GetSafeNormal();
+        FVector Normal = Center.GetUnsafeNormal();  // For a sphere, Normal is Center normalized
 
-    // FVector ChunkNormal = Center.GetSafeNormal();
-    // FVector ToObserverDir = -ToChunk.GetSafeNormal();
+        // 0.0 would be the exact horizon. We use a small positive margin to account for terrain height and chunk extents.
+        if (FVector::DotProduct(Normal, ViewDir) > 0.15f)
+        {
+            DesiredLeaves.Add(Node->Id);
+            return;  // Stop recursion
+        }
+    }
 
-    // --- LOD Logic ---
+    // --- LOD logic ---
     if (ShouldSplit(Node, ObserverLocal))
     {
         // Expand children if not already split
@@ -64,7 +75,7 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FVector &ObserverLoc
     else if (ShouldMerge(Node, ObserverLocal))
     {
         // Collapse children — this node becomes a leaf again
-        Node->Children.Empty(); // dont care if those children have loaded chunks — that's the manager's problem.
+        Node->Children.Empty();  // dont care if those children have loaded chunks — that's the manager's problem.
         DesiredLeaves.Add(Node->Id);
     }
     else
@@ -89,10 +100,11 @@ bool FPlanetQuadtree::ShouldSplit(const FQuadtreeNode *Node, const FVector &Obse
         return false;
 
     FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
-    float Dist = FVector::Dist(Center, ObserverLocal);
+    float DistSq = FVector::DistSquared(Center, ObserverLocal);
     float NodeSize = (Config.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
+    float SplitDist = NodeSize * Config.LODSplitDistanceMultiplier;
 
-    return Dist < (NodeSize * Config.LODSplitDistanceMultiplier);
+    return DistSq < (SplitDist * SplitDist);
 }
 
 
@@ -102,12 +114,13 @@ bool FPlanetQuadtree::ShouldMerge(const FQuadtreeNode *Node, const FVector &Obse
         return true;
 
     FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
-    float Dist = FVector::Dist(Center, ObserverLocal);
+    float DistSq = FVector::DistSquared(Center, ObserverLocal);
     float NodeSize = (Config.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
 
     // Merge only when observer has moved meaningfully farther than the split threshold.
     // The hysteresis ratio prevents oscillation at the boundary.
-    return Dist >= (NodeSize * Config.LODSplitDistanceMultiplier * Config.LODMergeHysteresisRatio);
+    float MergeDist = NodeSize * Config.LODSplitDistanceMultiplier * Config.LODMergeHysteresisRatio;
+    return DistSq >= (MergeDist * MergeDist);
 }
 
 

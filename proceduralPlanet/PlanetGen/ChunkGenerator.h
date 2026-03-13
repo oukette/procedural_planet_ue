@@ -14,6 +14,7 @@ struct FChunkRequest
 {
         FChunkId Id;
         uint32 GenerationId;
+        float PrioScore;  // Lower score = Higher priority (e.g. Distance)
 };
 
 class FChunkGenerator
@@ -23,7 +24,7 @@ class FChunkGenerator
         ~FChunkGenerator();
 
         // Adds a chunk to the generation queue
-        void RequestChunk(const FChunkId &Id, uint32 GenerationId);
+        void RequestChunk(const FChunkId &Id, uint32 GenerationId, float PriorityScore);
 
         // Cancels a pending or active generation request
         void CancelRequest(const FChunkId &Id);

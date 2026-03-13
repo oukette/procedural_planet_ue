@@ -62,6 +62,7 @@ class FChunkManager
         TSet<FChunkId> LoadSet;                             // All chunk IDs that must be kept alive this frame
         TSet<FChunkId> DeferredReleaseIds;                  // O(1) mirror of DeferredReleaseQueue
         TArray<FDeferredRelease> DeferredReleaseQueue;
+        FVector LastObserverLocalPos;
 
         // Helper to create a new chunk entry
         FChunk *CreateChunk(const FChunkId &Id);

@@ -1,5 +1,6 @@
 #include "ChunkManager.h"
 #include "DrawDebugHelpers.h"
+#include "MathUtils.h"
 
 
 FChunkManager::FChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen) :
@@ -134,6 +135,8 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 {
     const float DistToSurface = Context.ObserverLocation.Size() - Config.PlanetRadius;
     const bool bShouldGenerateChunks = DistToSurface < (Config.FarDistanceThreshold * FPlanetStatics::FarDistanceSafetyMargin);
+
+    LastObserverLocalPos = Context.ObserverLocation;
 
     if (bShouldGenerateChunks && Quadtree)
         Quadtree->Update(Context);
@@ -397,11 +400,14 @@ void FChunkManager::AdvanceLoading()
         switch (Chunk->State)
         {
             case EChunkState::None:
+            {
                 UE_LOG(LogTemp, Warning, TEXT("AdvanceLoading: requesting LOD:%d Face:%d"), Id.LODLevel, Id.FaceIndex);
                 Chunk->GenerationId++;
                 Chunk->State = EChunkState::Pending;
-                ChunkGenerator->RequestChunk(Id, Chunk->GenerationId);
+                float DistSq = FVector::DistSquared(FMathUtils::GetChunkCenter(Id, Config.PlanetRadius), LastObserverLocalPos);
+                ChunkGenerator->RequestChunk(Id, Chunk->GenerationId, DistSq);
                 break;
+            }
 
             case EChunkState::DataReady:
                 if (MeshUploadsThisFrame < Config.MeshUpdatesPerFrame)
