@@ -23,12 +23,19 @@ ChunkRenderer::~ChunkRenderer()
 
 UProceduralMeshComponent *ChunkRenderer::GetFreeComponent()
 {
-    if (FreeComponentPool.Num() > 0)
+    // FIX: Loop until we find a valid live component or empty the pool.
+    // Components in the pool might have been GC'd or destroyed by the engine.
+    while (FreeComponentPool.Num() > 0)
     {
-        UProceduralMeshComponent *Comp = FreeComponentPool.Pop();
-        Comp->SetRelativeTransform(FTransform::Identity);  // clear stale transform from previous owner
+        // Pop the weak pointer
+        TWeakObjectPtr<UProceduralMeshComponent> WeakComp = FreeComponentPool.Pop();
 
-        return Comp;
+        // .Get() returns nullptr if the object is stale/dead. Safe!
+        if (UProceduralMeshComponent *Comp = WeakComp.Get())
+        {
+            Comp->SetRelativeTransform(FTransform::Identity);
+            return Comp;
+        }
     }
 
     // Create new component if pool is empty
@@ -169,14 +176,17 @@ void ChunkRenderer::ReleaseAllComponents()
 {
     // This function is the central point for destroying all pooled mesh components.
     // It ensures we don't leak components that the renderer created.
-    for (UProceduralMeshComponent *Comp : FreeComponentPool)
+    for (auto WeakComp : FreeComponentPool)
     {
-        // Vital check: During shutdown, raw pointers to UObjects can be dangling
-        // even if 'IsValid' (which checks null/pendingkill) passes on the memory address.
-        // We assume that if IsRequestingExit is true, we should stop touching these.
-        if (!GIsRequestingExit && IsValid(Comp) && !Comp->IsBeingDestroyed())
+        // FIX: Resolve the weak pointer safely.
+        // If the component was already destroyed (stale), .Get() returns null and we skip the body.
+        // This completely prevents the Segfault at address 0x0.
+        if (UProceduralMeshComponent *Comp = WeakComp.Get())
         {
-            Comp->DestroyComponent();
+            if (!GIsRequestingExit && !Comp->IsBeingDestroyed())
+            {
+                Comp->DestroyComponent();
+            }
         }
     }
     FreeComponentPool.Empty();

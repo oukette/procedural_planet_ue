@@ -42,7 +42,7 @@ class ChunkRenderer
         UMaterialInterface *Material;
 
         // Pool of inactive components ready for reuse
-        TArray<UProceduralMeshComponent *> FreeComponentPool;
+        TArray<TWeakObjectPtr<UProceduralMeshComponent>> FreeComponentPool;
 
         UProceduralMeshComponent *GetFreeComponent();
 };
