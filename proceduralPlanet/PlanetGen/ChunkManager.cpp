@@ -134,9 +134,10 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
     if (bShouldGenerateChunks && Quadtree)
         Quadtree->Update(Context);
 
-    const TSet<FChunkId> &DesiredLeaves = (bShouldGenerateChunks && Quadtree) ? Quadtree->GetDesiredLeaves() : TSet<FChunkId>();
+    const TSet<FChunkId> &DesiredLeaves = (bShouldGenerateChunks && Quadtree) ? Quadtree->GetDesiredLeaves() : TSet<FChunkId>();    
 
-    BuildLoadSet();
+    BuildLoadSet(DesiredLeaves);
+
     ReconcileTransitions(DesiredLeaves);
     AdvanceLoading();
     CommitReadyTransitions();
@@ -150,7 +151,7 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 }
 
 
-void FChunkManager::BuildLoadSet()
+void FChunkManager::BuildLoadSet(const TSet<FChunkId> &DesiredLeaves)
 {
     LoadSet.Reset();
 
@@ -166,6 +167,15 @@ void FChunkManager::BuildLoadSet()
 
         for (const FChunkId &ChildId : T.Children)
             LoadSet.Add(ChildId);
+    }
+
+    // Ensure desired roots are added to LoadSet so they generate.
+    // Since they aren't in RenderSet yet, and no transition exists to spawn them (no parent),
+    // we must explicitly request them here to kickstart the lifecycle.
+    for (const FChunkId &Id : DesiredLeaves)
+    {
+        if (IsRootNode(Id) && !RenderSet.Contains(Id))
+            LoadSet.Add(Id);
     }
 }
 
@@ -210,7 +220,8 @@ void FChunkManager::InitializeRoots()
     {
         FChunkId RootId(Face, FIntVector(0, 0, 0), 0);
         CreateChunk(RootId);
-        RenderSet.Add(RootId);
+        // FIX: Do not add to RenderSet yet. They are not visible.
+        // CommitReadyTransitions will promote them when they are MeshReady.
     }
 }
 
@@ -253,6 +264,8 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
     }
 
     // --- A2. Rendered but not desired → find desired ancestor → register Merge ---
+    TArray<FChunkId> ToUnrender;
+
     for (const FChunkId &Id : RenderSet)
     {
         if (DesiredLeaves.Contains(Id))
@@ -301,10 +314,31 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
             }
 
             if (IsRootNode(AncestorId))
+            {
+                // FIX: We reached the root and even the root is not desired.
+                // This means the Far Model has taken over and we should unrender this branch.
+                ToUnrender.Add(Id);
                 break;  // No desired ancestor exists anywhere up the chain
-            
+            }
+
             AncestorId = GetParentId(AncestorId);
         }
+    }
+
+    // Process unrendering (Far Model overlap logic)
+    for (const FChunkId &Id : ToUnrender)
+    {
+        FChunk *Chunk = GetChunk(Id);
+        if (Chunk && (Chunk->State == EChunkState::Visible || Chunk->State == EChunkState::MeshReady))
+        {
+            Renderer->HideChunk(Chunk);
+            Chunk->State = EChunkState::MeshReady;
+
+            // Use deferred release to prevent thrashing at the hysteresis boundary
+            DeferredReleaseQueue.Add({Id, Config.ChunkDemotionFrameDelay});
+            DeferredReleaseIds.Add(Id);
+        }
+        RenderSet.Remove(Id);
     }
 
     // --- A3. Conflict resolution: cancel Split if Merge now exists for same region, and vice versa ---

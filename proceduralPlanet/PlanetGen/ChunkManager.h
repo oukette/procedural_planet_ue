@@ -69,8 +69,8 @@ class FChunkManager
         // Helper to get a chunk from the map if it exists, otherwise create it
         FChunk *GetChunk(const FChunkId &Id);
 
-        // Derives LoadSet from RenderSet + all active PendingTransitions
-        void BuildLoadSet();
+        // Derives LoadSet from RenderSet, PendingTransitions, and desired roots.
+        void BuildLoadSet(const TSet<FChunkId> &DesiredLeaves);
 
         // Safety net: any chunk in ChunkMap not in LoadSet and not in flight gets deferred
         void PruneOrphans();
