@@ -355,17 +355,43 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
         const FLODTransition &T = Pair.Value;
         if (T.Type == ELeafTransitionType::Split)
         {
-            // If none of the children are in DesiredLeaves anymore, this split is stale
-            bool bAnyChildDesired = false;
-            for (const FChunkId &ChildId : T.Children)
+            // Cancel only if the desired leaves have moved back UP the tree — i.e. the parent itself or an ancestor is now desired (observer moved away).
+            // Do NOT cancel just because children aren't direct leaves — they may themselves need to split further, meaning deeper descendants are desired.
+            bool bParentOrAncestorDesired = false;
+            FChunkId WalkId = T.Parent;
+            while (true)
             {
-                if (DesiredLeaves.Contains(ChildId))
+                if (DesiredLeaves.Contains(WalkId))
                 {
-                    bAnyChildDesired = true;
+                    bParentOrAncestorDesired = true;
                     break;
                 }
+                if (IsRootNode(WalkId))
+                    break;
+                WalkId = GetParentId(WalkId);
             }
-            if (!bAnyChildDesired)
+
+            // Also check: is any desired leaf a descendant of the transition parent?
+            bool bAnyDescendantDesired = false;
+            for (const FChunkId &LeafId : DesiredLeaves)
+            {
+                // Walk up from each desired leaf — if we hit T.Parent, it's a descendant
+                FChunkId AncestorWalk = LeafId;
+                while (!IsRootNode(AncestorWalk))
+                {
+                    AncestorWalk = GetParentId(AncestorWalk);
+                    if (AncestorWalk == T.Parent)
+                    {
+                        bAnyDescendantDesired = true;
+                        break;
+                    }
+                }
+                if (bAnyDescendantDesired)
+                    break;
+            }
+
+            // Cancel only if neither the parent's ancestor nor any descendant is desired
+            if (!bParentOrAncestorDesired && !bAnyDescendantDesired)
                 ToCancel.Add(Pair.Key);
         }
         else  // Merge
@@ -465,7 +491,7 @@ void FChunkManager::CommitReadyTransitions()
             float DistB = FVector::DistSquared(FMathUtils::GetChunkCenter(B, Config.PlanetRadius), LastObserverLocalPos);
             return DistA < DistB;
         });
-    
+
     // Update pending transitions (split and merge) and mark unwanted ones for removal
     TArray<FChunkId> ToRemove;
     for (const FChunkId &Key : SortedTransitionKeys)
