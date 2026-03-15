@@ -79,7 +79,7 @@ void APlanet::Destroyed()
     // while the Actor is still in a valid state. Leaving this to the destructor (GC time) causes crashes
     // because the UObjects may already be unreachable.
     ClearPlanet();
-    
+
     Super::Destroyed();
 }
 
@@ -153,7 +153,7 @@ void APlanet::initPlanet()
     RuntimeConfig.ChunkGenerationRate = PerformanceSettings.ChunksToSpawnPerFrame;
     RuntimeConfig.MeshUpdatesPerFrame = PerformanceSettings.MeshUpdatesPerFrame;
     RuntimeConfig.FarDistanceThreshold = GenSettings.PlanetRadius * GenSettings.RenderDistanceMultiplier;
-    RuntimeConfig.LODSplitDistanceMultiplier = GridSettings.LODSplitMultiplier;
+    RuntimeConfig.LODSplitScreenFraction = GridSettings.LODSplitScreenFraction;
     RuntimeConfig.LODMergeHysteresisRatio = GridSettings.LODMergeHysteresisRatio;
     RuntimeConfig.MaxLookAheadTime = PerformanceSettings.MaxLookAheadTime;
     RuntimeConfig.MinLookAheadTime = PerformanceSettings.MinLookAheadTime;
@@ -265,6 +265,8 @@ FPlanetViewContext APlanet::BuildViewContext() const
         if (APlayerCameraManager *PCM = UGameplayStatics::GetPlayerCameraManager(World, 0))
         {
             Context.ObserverForward = PCM->GetCameraRotation().Vector();
+            BuildVerticalFOV(PCM, Context);
+            BuildViewFrustum(PCM, Context);
         }
 
         if (APawn *PlayerPawn = UGameplayStatics::GetPlayerPawn(World, 0))
@@ -276,6 +278,66 @@ FPlanetViewContext APlanet::BuildViewContext() const
 
 
     return Context;
+}
+
+
+void APlanet::BuildViewFrustum(APlayerCameraManager *PCM, FPlanetViewContext &Context) const
+{
+    if (!PCM || !GEngine || !GEngine->GameViewport || !GEngine->GameViewport->Viewport)
+        return;
+
+    // Assemble minimal camera view
+    FMinimalViewInfo CameraView;
+    CameraView.Location = PCM->GetCameraLocation();
+    CameraView.Rotation = PCM->GetCameraRotation();
+    CameraView.FOV = PCM->GetFOVAngle();
+    CameraView.ProjectionMode = ECameraProjectionMode::Perspective;
+
+    FIntPoint ViewportSize = GEngine->GameViewport->Viewport->GetSizeXY();
+    CameraView.AspectRatio = (ViewportSize.Y > 0) ? (float)ViewportSize.X / (float)ViewportSize.Y : 1.777f;  // fallback to 16:9
+
+    // Guard: degenerate viewport on first frame — skip frustum build entirely
+    // rather than producing planes that cull everything
+    if (ViewportSize.X == 0 || ViewportSize.Y == 0)
+        return;
+
+    // Build ViewProjection matrix and extract world-space frustum planes
+    FMatrix ViewMatrix, ProjectionMatrix, ViewProjectionMatrix;
+    UGameplayStatics::GetViewProjectionMatrix(CameraView, ViewMatrix, ProjectionMatrix, ViewProjectionMatrix);
+
+    FConvexVolume WorldFrustum;
+    GetViewFrustumBounds(WorldFrustum, ViewProjectionMatrix, false);
+
+    // Transform frustum planes from world space into planet local space
+    // Chunk centers are computed in local space, so the frustum must match.
+    const FMatrix LocalMatrix = GetActorTransform().ToMatrixWithScale().Inverse();
+    Context.ViewFrustum.Planes.Empty(WorldFrustum.Planes.Num());
+    for (const FPlane &WorldPlane : WorldFrustum.Planes)
+    {
+        Context.ViewFrustum.Planes.Add(WorldPlane.TransformBy(LocalMatrix));
+    }
+
+    // Recompute permuted planes used internally by IntersectSphere for SIMD performance
+    Context.ViewFrustum.Init();
+}
+
+
+void APlanet::BuildVerticalFOV(APlayerCameraManager *PCM, FPlanetViewContext &Context) const
+{
+    if (!PCM)
+        return;
+
+    float AspectRatio = 1.777f; // fallback 16:9
+    if (GEngine && GEngine->GameViewport && GEngine->GameViewport->Viewport)
+    {
+        FIntPoint Size = GEngine->GameViewport->Viewport->GetSizeXY();
+        if (Size.X > 0 && Size.Y > 0)
+            AspectRatio = (float)Size.X / (float)Size.Y;
+    }
+
+    float HFOVRad = FMath::DegreesToRadians(PCM->GetFOVAngle());
+    float VFOVRad = 2.f * FMath::Atan(FMath::Tan(HFOVRad * 0.5f) / AspectRatio);
+    Context.VerticalFOVRadians = VFOVRad;
 }
 
 
@@ -386,8 +448,8 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
                 CurrentMaxLOD = i;
 
         float NextSplitNodeSize = (RuntimeConfig.PlanetRadius * PI * 0.5f) / (float)(1 << CurrentMaxLOD);
-        float NextSplitDist = NextSplitNodeSize * RuntimeConfig.LODSplitDistanceMultiplier;
-        float NextMergeDist = NextSplitNodeSize * RuntimeConfig.LODSplitDistanceMultiplier * RuntimeConfig.LODMergeHysteresisRatio;
+        float NextSplitDist = NextSplitNodeSize * RuntimeConfig.LODSplitScreenFraction;
+        float NextMergeDist = NextSplitNodeSize * RuntimeConfig.LODSplitScreenFraction * RuntimeConfig.LODMergeHysteresisRatio;
         float ClosestChunkDist = DistToSurface;  // approximation
 
         GEngine->AddOnScreenDebugMessage(

@@ -44,7 +44,7 @@ class FPlanetQuadtree
         TArray<TUniquePtr<FQuadtreeNode>> RootNodes;
         TSet<FChunkId> DesiredLeaves;
 
-        void UpdateNode(FQuadtreeNode *Node, const FVector &ObserverLocal);
-        bool ShouldSplit(const FQuadtreeNode *Node, const FVector &ObserverLocal) const;
-        bool ShouldMerge(const FQuadtreeNode *Node, const FVector &ObserverLocal) const;
+        void UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context);
+        bool ShouldSplit(const FQuadtreeNode *Node, const FPlanetViewContext &Context) const;
+        bool ShouldMerge(const FQuadtreeNode *Node, const FPlanetViewContext &Context) const;
 };

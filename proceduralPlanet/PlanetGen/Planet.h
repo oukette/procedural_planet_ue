@@ -43,6 +43,8 @@ class PROCEDURALPLANET_API APlanet : public AActor
 
         // Tick Helpers
         FPlanetViewContext BuildViewContext() const;
+        void BuildViewFrustum(APlayerCameraManager *PCM, FPlanetViewContext &Context) const;
+        void BuildVerticalFOV(APlayerCameraManager* PCM, FPlanetViewContext& Context) const; // ADD
         void UpdateChunkManager(const FPlanetViewContext &Context);
         void UpdateFarModelVisibility(const FPlanetViewContext &Context);
         void DrawDebugInfo(const FPlanetViewContext &Context) const;

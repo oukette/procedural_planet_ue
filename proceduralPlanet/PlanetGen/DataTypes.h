@@ -63,20 +63,11 @@ struct FChunkMeshData
 {
         GENERATED_BODY()
 
-        UPROPERTY()
-        TArray<FVector> Vertices;
-
-        UPROPERTY()
-        TArray<int32> Triangles;
-
-        UPROPERTY()
-        TArray<FVector> Normals;
-
-        UPROPERTY()
-        TArray<FVector2D> UV0;
-
-        UPROPERTY()
-        TArray<FColor> Colors;
+        UPROPERTY() TArray<FVector> Vertices;
+        UPROPERTY() TArray<int32> Triangles;
+        UPROPERTY() TArray<FVector> Normals;
+        UPROPERTY() TArray<FVector2D> UV0;
+        UPROPERTY() TArray<FColor> Colors;
 
         void Empty()
         {
@@ -94,17 +85,11 @@ USTRUCT(BlueprintType)
 struct FChunkTransform
 {
         GENERATED_BODY()
-        UPROPERTY()
-        FVector Location = FVector::ZeroVector;  // Center of the chunk in Planet Space
 
-        UPROPERTY()
-        float Scale = 1.0f;  // Uniform scale (derived from LOD)
-
-        UPROPERTY()
-        FVector FaceNormal = FVector::UpVector;  // Which cube face this belongs to
-
-        UPROPERTY()
-        FQuat Rotation = FQuat::Identity;  // Orientation on the sphere surface
+        UPROPERTY() FVector Location = FVector::ZeroVector;  // Center of the chunk in Planet Space
+        UPROPERTY() float Scale = 1.0f;                      // Uniform scale (derived from LOD)
+        UPROPERTY() FVector FaceNormal = FVector::UpVector;  // Which cube face this belongs to
+        UPROPERTY() FQuat Rotation = FQuat::Identity;        // Orientation on the sphere surface
 
         FChunkTransform() = default;
 
@@ -124,17 +109,13 @@ struct FPlanetViewContext
 {
         GENERATED_BODY()
 
-        UPROPERTY()
-        FVector ObserverLocation;
+        UPROPERTY() FVector ObserverLocation;
+        UPROPERTY() FVector ObserverForward;
+        UPROPERTY() FVector ObserverVelocity;
+        UPROPERTY() float ViewDistance;
+        UPROPERTY() float VerticalFOVRadians = FMath::DegreesToRadians(90.f);
 
-        UPROPERTY()
-        FVector ObserverForward;
-
-        UPROPERTY()
-        FVector ObserverVelocity;
-
-        UPROPERTY()
-        float ViewDistance;
+        FConvexVolume ViewFrustum;
 };
 
 
@@ -229,11 +210,11 @@ struct FPlanetGridSettings
         float VoxelSize = 100.f;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (DisplayName = "LOD Split Multiplier", ClampMin = "1.0", ClampMax = "5.0"))
-        float LODSplitMultiplier = 2.0f;
+        float LODSplitScreenFraction = 0.25f;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet",
-                  meta = (DisplayName = "LOD Merge Hysteresis Ratio", ClampMin = "0.05", ClampMax = "2.0"))
-        float LODMergeHysteresisRatio = 1.25f;
+                  meta = (DisplayName = "LOD Merge Hysteresis Ratio", ClampMin = "0.15", ClampMax = "0.95"))
+        float LODMergeHysteresisRatio = 0.75f;
 };
 
 
@@ -244,7 +225,7 @@ struct FPlanetPerformanceSettings
         GENERATED_BODY()
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Performance", meta = (ClampMin = "1", ClampMax = "100"))
-        int32 MeshUpdatesPerFrame = 2;
+        int32 MeshUpdatesPerFrame = 8;
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Performance", meta = (ClampMin = "1", ClampMax = "100"))
         int32 ChunksToSpawnPerFrame = 8;
@@ -307,13 +288,15 @@ struct FPlanetConfig
         // Throttling
         int32 MaxConcurrentGenerations = 32;
         int32 ChunkGenerationRate = 8;  // Chunks to start generating per tick
-        int32 MeshUpdatesPerFrame = 4;
+        int32 MeshUpdatesPerFrame = 8;
 
         // LOD Rules
         int32 MaxLOD = 8;
         float FarDistanceThreshold = 100000.0f;
-        float LODSplitDistanceMultiplier = 2.0f;
-        float LODMergeHysteresisRatio = 1.25f;  // Merge threshold = Split threshold * this ratio
+        float LODSplitScreenFraction = 0.25f;  // Fraction of screen height a chunk must subtend to trigger a split.
+                                               // 0.25 means "split when the chunk covers 25% of the vertical screen".
+
+        float LODMergeHysteresisRatio = 0.75f;  // Merge threshold = Split threshold * this ratio
 
         // Look ahead params
         float MaxLookAheadTime = 2.5f;

@@ -388,41 +388,50 @@ void FChunkManager::AdvanceLoading()
 {
     int32 MeshUploadsThisFrame = 0;
 
-    // Advance each required chunk through its lifecycle
+    // First pass: request generation for all None-state chunks (order doesn't matter, priority is handled inside ChunkGenerator's heap)
     for (const FChunkId &Id : LoadSet)
     {
         FChunk *Chunk = GetChunk(Id);
         if (!Chunk)
-        {
             Chunk = CreateChunk(Id);
-        }
 
-        switch (Chunk->State)
+        if (Chunk->State == EChunkState::None)
         {
-            case EChunkState::None:
-            {
-                UE_LOG(LogTemp, Warning, TEXT("AdvanceLoading: requesting LOD:%d Face:%d"), Id.LODLevel, Id.FaceIndex);
-                Chunk->GenerationId++;
-                Chunk->State = EChunkState::Pending;
-                float DistSq = FVector::DistSquared(FMathUtils::GetChunkCenter(Id, Config.PlanetRadius), LastObserverLocalPos);
-                ChunkGenerator->RequestChunk(Id, Chunk->GenerationId, DistSq);
-                break;
-            }
+            Chunk->GenerationId++;
+            Chunk->State = EChunkState::Pending;
+            float DistSq = FVector::DistSquared(FMathUtils::GetChunkCenter(Id, Config.PlanetRadius), LastObserverLocalPos);
+            ChunkGenerator->RequestChunk(Id, Chunk->GenerationId, DistSq);
+        }
+    }
 
-            case EChunkState::DataReady:
-                if (MeshUploadsThisFrame < Config.MeshUpdatesPerFrame)
-                {
-                    Renderer->PrepareChunk(Chunk, Config.bEnableCollision);
-                    Chunk->State = EChunkState::MeshReady;
-                    MeshUploadsThisFrame++;
-                }
-                break;
+    // Second pass: upload meshes in distance order — closest chunk gets GPU memory first
+    TArray<FChunkId> DataReadyChunks;
+    for (const FChunkId &Id : LoadSet)
+    {
+        FChunk *Chunk = GetChunk(Id);
+        if (Chunk && Chunk->State == EChunkState::DataReady)
+            DataReadyChunks.Add(Id);
+    }
 
-            case EChunkState::Pending:
-            case EChunkState::Generating:
-            case EChunkState::MeshReady:
-            case EChunkState::Visible:
-                break;  // Already progressing or ready
+    DataReadyChunks.Sort(
+        [this](const FChunkId &A, const FChunkId &B)
+        {
+            float DistA = FVector::DistSquared(FMathUtils::GetChunkCenter(A, Config.PlanetRadius), LastObserverLocalPos);
+            float DistB = FVector::DistSquared(FMathUtils::GetChunkCenter(B, Config.PlanetRadius), LastObserverLocalPos);
+            return DistA < DistB;
+        });
+
+    for (const FChunkId &Id : DataReadyChunks)
+    {
+        if (MeshUploadsThisFrame >= Config.MeshUpdatesPerFrame)
+            break;
+
+        FChunk *Chunk = GetChunk(Id);
+        if (Chunk)
+        {
+            Renderer->PrepareChunk(Chunk, Config.bEnableCollision);
+            Chunk->State = EChunkState::MeshReady;
+            MeshUploadsThisFrame++;
         }
     }
 }
@@ -430,6 +439,7 @@ void FChunkManager::AdvanceLoading()
 
 void FChunkManager::CommitReadyTransitions()
 {
+    // Promote root chunks first
     for (const auto &Pair : ChunkMap)
     {
         const FChunkId &Id = Pair.Key;
@@ -443,11 +453,24 @@ void FChunkManager::CommitReadyTransitions()
         }
     }
 
-    TArray<FChunkId> ToRemove;
+    // Collect and sort pending transitions by distance — closest commits first
+    TArray<FChunkId> SortedTransitionKeys;
+    for (const auto &Pair : PendingTransitions)
+        SortedTransitionKeys.Add(Pair.Key);
 
-    for (auto &Pair : PendingTransitions)
+    SortedTransitionKeys.Sort(
+        [this](const FChunkId &A, const FChunkId &B)
+        {
+            float DistA = FVector::DistSquared(FMathUtils::GetChunkCenter(A, Config.PlanetRadius), LastObserverLocalPos);
+            float DistB = FVector::DistSquared(FMathUtils::GetChunkCenter(B, Config.PlanetRadius), LastObserverLocalPos);
+            return DistA < DistB;
+        });
+    
+    // Update pending transitions (split and merge) and mark unwanted ones for removal
+    TArray<FChunkId> ToRemove;
+    for (const FChunkId &Key : SortedTransitionKeys)
     {
-        FLODTransition &T = Pair.Value;
+        FLODTransition &T = PendingTransitions[Key];
 
         if (T.Type == ELeafTransitionType::Split)
         {
@@ -491,7 +514,7 @@ void FChunkManager::CommitReadyTransitions()
                 RenderSet.Remove(T.Parent);
             }
 
-            ToRemove.Add(Pair.Key);
+            ToRemove.Add(Key);
         }
         else  // Merge
         {
@@ -544,7 +567,7 @@ void FChunkManager::CommitReadyTransitions()
                 RenderSet.Remove(ChildId);
             }
 
-            ToRemove.Add(Pair.Key);
+            ToRemove.Add(Key);
         }
     }
 

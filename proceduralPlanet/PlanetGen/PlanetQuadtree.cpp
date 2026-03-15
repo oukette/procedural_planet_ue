@@ -26,33 +26,58 @@ void FPlanetQuadtree::Update(const FPlanetViewContext &Context)
 
     for (const auto &Root : RootNodes)
     {
-        UpdateNode(Root.Get(), Context.ObserverLocation);
+        UpdateNode(Root.Get(), Context);
     }
 }
 
 
-void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FVector &ObserverLocal)
+void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context)
 {
-    // --- Horizon Culling ---
-    // If a node is deep over the horizon, we don't need to split it further.
-    // We use a dot product check: If the surface normal points in the same direction as the view ray, it's facing away.
-    // We only apply this to LOD >= 2 to ensure the curvature is approximated well enough.
-    if (Node->Id.LODLevel >= 2)
-    {
-        FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
-        FVector ViewDir = (Center - ObserverLocal).GetSafeNormal();
-        FVector Normal = Center.GetUnsafeNormal();  // For a sphere, Normal is Center normalized
+    FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
 
-        // 0.0 would be the exact horizon. We use a small positive margin to account for terrain height and chunk extents.
-        if (FVector::DotProduct(Normal, ViewDir) > 0.15f)
+    // --- 1. Horizon Culling ---
+    float ObserverDist = Context.ObserverLocation.Size();
+    if (ObserverDist > Config.PlanetRadius)
+    {
+        float HorizonCos = Config.PlanetRadius / ObserverDist;  // cos(horizon angle) = PlanetRadius / ObserverDist
+        float ChunkDot = FVector::DotProduct(Context.ObserverLocation.GetSafeNormal(), Center.GetSafeNormal());
+        if (ChunkDot < -HorizonCos)
         {
             DesiredLeaves.Add(Node->Id);
-            return;  // Stop recursion
+            return;
         }
     }
 
+    // --- 2. Frustum Culling ---
+    bool bInFrustum = true;
+    if (!Context.ObserverForward.IsNearlyZero())
+    {
+        float NodeSize = (Config.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
+        float SphereRadius = NodeSize * 0.75f;
+        bInFrustum = Context.ViewFrustum.IntersectSphere(Center, SphereRadius);
+    }
+
+    if (!bInFrustum)
+    {
+        // Keep the node alive as a leaf only if it's already a leaf.
+        // If it has children, recurse one level to let them evaluate split/merge
+        // but don't split further. This prevents stale deep trees outside the frustum.
+        if (Node->IsLeaf())
+        {
+            DesiredLeaves.Add(Node->Id);
+        }
+        else
+        {
+            // Collapse children — outside frustum, no need to maintain deep structure
+            Node->Children.Empty();
+            DesiredLeaves.Add(Node->Id);
+        }
+        return;
+    }
+
+
     // --- LOD logic ---
-    if (ShouldSplit(Node, ObserverLocal))
+    if (ShouldSplit(Node, Context))
     {
         // Expand children if not already split
         if (Node->IsLeaf())
@@ -70,9 +95,9 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FVector &ObserverLoc
 
         // Recurse regardless — children may themselves split or merge
         for (auto &Child : Node->Children)
-            UpdateNode(Child.Get(), ObserverLocal);
+            UpdateNode(Child.Get(), Context);
     }
-    else if (ShouldMerge(Node, ObserverLocal))
+    else if (ShouldMerge(Node, Context))
     {
         // Collapse children — this node becomes a leaf again
         Node->Children.Empty();  // dont care if those children have loaded chunks — that's the manager's problem.
@@ -88,39 +113,48 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FVector &ObserverLoc
         else
         {
             for (auto &Child : Node->Children)
-                UpdateNode(Child.Get(), ObserverLocal);
+                UpdateNode(Child.Get(), Context);
         }
     }
 }
 
 
-bool FPlanetQuadtree::ShouldSplit(const FQuadtreeNode *Node, const FVector &ObserverLocal) const
+bool FPlanetQuadtree::ShouldSplit(const FQuadtreeNode *Node, const FPlanetViewContext &Context) const
 {
     if (Node->Id.LODLevel >= Config.MaxLOD)
         return false;
 
     FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
-    float DistSq = FVector::DistSquared(Center, ObserverLocal);
+    float Dist = FVector::Dist(Center, Context.ObserverLocation);
     float NodeSize = (Config.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
-    float SplitDist = NodeSize * Config.LODSplitDistanceMultiplier;
 
-    return DistSq < (SplitDist * SplitDist);
+    // Angular size: how large does this chunk appear in radians
+    float AngularSize = FMath::Atan2(NodeSize, FMath::Max(Dist, 1.f));
+
+    // Normalize by vertical FOV to get screen-space fraction (0..1)
+    // A value of 1.0 means the chunk fills the entire vertical screen height
+    float ScreenFraction = AngularSize / FMath::Max(Context.VerticalFOVRadians, KINDA_SMALL_NUMBER);
+
+    return ScreenFraction > Config.LODSplitScreenFraction;
 }
 
 
-bool FPlanetQuadtree::ShouldMerge(const FQuadtreeNode *Node, const FVector &ObserverLocal) const
+bool FPlanetQuadtree::ShouldMerge(const FQuadtreeNode *Node, const FPlanetViewContext &Context) const
 {
     if (Node->Id.LODLevel >= Config.MaxLOD)
         return true;
 
     FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
-    float DistSq = FVector::DistSquared(Center, ObserverLocal);
+    float Dist = FVector::Dist(Center, Context.ObserverLocation);
     float NodeSize = (Config.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
 
-    // Merge only when observer has moved meaningfully farther than the split threshold.
-    // The hysteresis ratio prevents oscillation at the boundary.
-    float MergeDist = NodeSize * Config.LODSplitDistanceMultiplier * Config.LODMergeHysteresisRatio;
-    return DistSq >= (MergeDist * MergeDist);
+    float AngularSize = FMath::Atan2(NodeSize, FMath::Max(Dist, 1.f));
+    float ScreenFraction = AngularSize / FMath::Max(Context.VerticalFOVRadians, KINDA_SMALL_NUMBER);
+
+    // Merge when screen fraction drops below the split threshold scaled by hysteresis.
+    // HysteresisRatio < 1.0 means merge triggers at a smaller screen fraction than split,
+    // preventing oscillation at the boundary.
+    return ScreenFraction < (Config.LODSplitScreenFraction * Config.LODMergeHysteresisRatio);
 }
 
 
