@@ -458,6 +458,7 @@ void FChunkManager::AdvanceLoading()
         if (!LoadSet.Contains(Id) && (Chunk->State == EChunkState::Pending || Chunk->State == EChunkState::Generating))
         {
             ChunkGenerator->CancelRequest(Id);
+            Chunk->GenerationId++;   // invalidate any in-flight task for this chunk
             Chunk->State = EChunkState::None;
             // Now PruneOrphans can collect it this frame
         }
