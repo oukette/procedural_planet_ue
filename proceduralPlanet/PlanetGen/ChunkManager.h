@@ -76,9 +76,6 @@ class FChunkManager
         // Derives LoadSet from RenderSet, PendingTransitions, and desired roots.
         void BuildLoadSet(const TSet<FChunkId> &DesiredLeaves, const bool bShouldGenerateChunks);
 
-        // Safety net: any chunk in ChunkMap not in LoadSet and not in flight gets deferred
-        void PruneOrphans();
-
         // Explicit initialization of the 6 root chunks directly into RenderSet
         void InitializeRoots();
 
@@ -93,6 +90,9 @@ class FChunkManager
 
         // Atomic release of deferred chunks
         void ProcessDeferredReleases();
+
+                // Safety net: any chunk in ChunkMap not in LoadSet and not in flight gets deferred
+        void PruneOrphans();
 
         // Pure math helpers
         static FChunkId GetParentId(const FChunkId &Child);

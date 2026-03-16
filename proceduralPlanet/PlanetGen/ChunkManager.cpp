@@ -143,9 +143,9 @@ bool FChunkManager::IsChunkReady(const FChunkId &Id) const
 }
 
 
-void FChunkManager::DeferHideChunk(FChunk* Chunk, const FChunkId& Id)
+void FChunkManager::DeferHideChunk(FChunk *Chunk, const FChunkId &Id)
 {
-    check(Chunk != nullptr);    // replaces a classic if nullptr
+    check(Chunk != nullptr);  // replaces a classic if nullptr
     Renderer->HideChunk(Chunk);
     Chunk->State = EChunkState::MeshReady;
     DeferredReleaseQueue.Add({Id, GetDeferredReleaseDelay()});
@@ -223,40 +223,6 @@ void FChunkManager::BuildLoadSet(const TSet<FChunkId> &DesiredLeaves, const bool
             if (!bFaceAlreadyCovered)
                 LoadSet.Add(RootId);
         }
-    }
-}
-
-
-void FChunkManager::PruneOrphans()
-{
-    TArray<FChunkId> ToRemove;
-
-    for (const auto &Pair : ChunkMap)
-    {
-        const FChunkId &Id = Pair.Key;
-        const FChunk *Chunk = Pair.Value.Get();
-
-        if (LoadSet.Contains(Id))
-            continue;  // Actively needed
-
-        if (DeferredReleaseIds.Contains(Id))
-            continue;  // Already on its way out
-
-        // Only prune chunks that are not in flight
-        if (Chunk->State == EChunkState::Pending || Chunk->State == EChunkState::Generating)
-            continue;
-
-        // UE_LOG(LogTemp, Warning, TEXT("PruneOrphans: removing LOD:%d Face:%d State:%d"), Id.LODLevel, Id.FaceIndex, (int32)Chunk->State);
-
-        ToRemove.Add(Id);
-    }
-
-    for (const FChunkId &Id : ToRemove)
-    {
-        FChunk *Chunk = GetChunk(Id);
-        if (Chunk && Chunk->State == EChunkState::MeshReady)
-            Renderer->ReleaseChunk(Chunk);
-        ChunkMap.Remove(Id);
     }
 }
 
@@ -458,7 +424,7 @@ void FChunkManager::AdvanceLoading()
         if (!LoadSet.Contains(Id) && (Chunk->State == EChunkState::Pending || Chunk->State == EChunkState::Generating))
         {
             ChunkGenerator->CancelRequest(Id);
-            Chunk->GenerationId++;   // invalidate any in-flight task for this chunk
+            Chunk->GenerationId++;  // invalidate any in-flight task for this chunk
             Chunk->State = EChunkState::None;
             // Now PruneOrphans can collect it this frame
         }
@@ -698,6 +664,50 @@ void FChunkManager::ProcessDeferredReleases()
     }
 
     DeferredReleaseQueue = MoveTemp(StillWaiting);
+}
+
+
+void FChunkManager::PruneOrphans()
+{
+    TArray<FChunkId> ToRemove;
+
+    for (const auto &Pair : ChunkMap)
+    {
+        const FChunkId &Id = Pair.Key;
+        const FChunk *Chunk = Pair.Value.Get();
+
+        if (LoadSet.Contains(Id))
+            continue;  // Actively needed
+
+        if (DeferredReleaseIds.Contains(Id))
+            continue;  // Already on its way out
+
+        // Only prune chunks that are not in flight
+        if (Chunk->State == EChunkState::Pending || Chunk->State == EChunkState::Generating)
+            continue;
+
+        // UE_LOG(LogTemp, Warning, TEXT("PruneOrphans: removing LOD:%d Face:%d State:%d"), Id.LODLevel, Id.FaceIndex, (int32)Chunk->State);
+
+        ToRemove.Add(Id);
+    }
+
+    for (const FChunkId &Id : ToRemove)
+    {
+        FChunk *Chunk = GetChunk(Id);
+        if (!Chunk)
+            continue;
+
+        if (Chunk->State == EChunkState::MeshReady)
+        {
+            // Has GPU resources — must go through deferred release, not immediate destroy
+            DeferHideChunk(Chunk, Id); // calls HideChunk which is safe even if not currently Visible
+        }
+        else
+        {
+            // State is None or DataReady — no RenderProxy, safe to destroy immediately
+            ChunkMap.Remove(Id);
+        }
+    }
 }
 
 
