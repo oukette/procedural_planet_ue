@@ -143,11 +143,11 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 
     const TSet<FChunkId> &DesiredLeaves = (bShouldGenerateChunks && Quadtree) ? Quadtree->GetDesiredLeaves() : TSet<FChunkId>();
 
-    BuildLoadSet(DesiredLeaves);
+    BuildLoadSet(DesiredLeaves, bShouldGenerateChunks);
 
     ReconcileTransitions(DesiredLeaves);
     AdvanceLoading();
-    CommitReadyTransitions();
+    CommitReadyTransitions(bShouldGenerateChunks);
     ProcessDeferredReleases();
     PruneOrphans();
 
@@ -158,7 +158,7 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 }
 
 
-void FChunkManager::BuildLoadSet(const TSet<FChunkId> &DesiredLeaves)
+void FChunkManager::BuildLoadSet(const TSet<FChunkId> &DesiredLeaves, const bool bShouldGenerateChunks)
 {
     LoadSet.Reset();
 
@@ -176,13 +176,31 @@ void FChunkManager::BuildLoadSet(const TSet<FChunkId> &DesiredLeaves)
             LoadSet.Add(ChildId);
     }
 
-    // Ensure desired roots are added to LoadSet so they generate.
-    // Since they aren't in RenderSet yet, and no transition exists to spawn them (no parent),
-    // we must explicitly request them here to kickstart the lifecycle.
-    for (const FChunkId &Id : DesiredLeaves)
+    // Bootstrap: keep unrendered roots in LoadSet so they can be generated. only do this while NO descendant of that root face is already
+    // rendered. Once a split has committed, the root has served its bootstrap purpose and must be left to the normal deferred-release lifecycle.
+    if (bShouldGenerateChunks)
     {
-        if (IsRootNode(Id) && !RenderSet.Contains(Id))
-            LoadSet.Add(Id);
+        for (uint8 Face = 0; Face < 6; ++Face)
+        {
+            FChunkId RootId(Face, FIntVector(0, 0, 0), 0);
+
+            if (RenderSet.Contains(RootId))
+                continue;  // Already rendered, normal lifecycle handles it
+
+            // Check whether any rendered chunk belongs to this face
+            bool bFaceAlreadyCovered = false;
+            for (const FChunkId &RenderedId : RenderSet)
+            {
+                if (RenderedId.FaceIndex == Face)
+                {
+                    bFaceAlreadyCovered = true;
+                    break;
+                }
+            }
+
+            if (!bFaceAlreadyCovered)
+                LoadSet.Add(RootId);
+        }
     }
 }
 
@@ -206,7 +224,7 @@ void FChunkManager::PruneOrphans()
         if (Chunk->State == EChunkState::Pending || Chunk->State == EChunkState::Generating)
             continue;
 
-        UE_LOG(LogTemp, Warning, TEXT("PruneOrphans: removing LOD:%d Face:%d State:%d"), Id.LODLevel, Id.FaceIndex, (int32)Chunk->State);
+        // UE_LOG(LogTemp, Warning, TEXT("PruneOrphans: removing LOD:%d Face:%d State:%d"), Id.LODLevel, Id.FaceIndex, (int32)Chunk->State);
 
         ToRemove.Add(Id);
     }
@@ -259,15 +277,16 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
                     T.Parent = AncestorId;
                     T.Children = GetChildrenIds(AncestorId);
                     PendingTransitions.Add(AncestorId, MoveTemp(T));
-                    UE_LOG(LogTemp, Log, TEXT("Split registered — parent LOD:%d Face:%d"), AncestorId.LODLevel, AncestorId.FaceIndex);
+                    // UE_LOG(LogTemp, Log, TEXT("Split registered — parent LOD:%d Face:%d"), AncestorId.LODLevel, AncestorId.FaceIndex);
                 }
                 break;
             }
         }
 
         // Root node case: if a root is desired and not yet rendered,
-        // it will be promoted by CommitReadyTransitions once its mesh is ready.
-        // No transition needed — InitializeRoots already put it in RenderSet.
+        // CommitReadyTransitions will promote it once MeshReady.
+        // BuildLoadSet unconditionally keeps unrendered roots in the LoadSet,
+        // so generation is guaranteed to start regardless of DesiredLeaves.
     }
 
     // --- A2. Rendered but not desired → find desired ancestor → register Merge ---
@@ -315,7 +334,7 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
                     T.Parent = AncestorId;
                     T.Children = GetChildrenIds(AncestorId);
                     PendingTransitions.Add(AncestorId, MoveTemp(T));
-                    UE_LOG(LogTemp, Log, TEXT("Merge registered — parent LOD:%d Face:%d"), AncestorId.LODLevel, AncestorId.FaceIndex);
+                    // UE_LOG(LogTemp, Log, TEXT("Merge registered — parent LOD:%d Face:%d"), AncestorId.LODLevel, AncestorId.FaceIndex);
                 }
                 break;
             }
@@ -404,7 +423,7 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
 
     for (const FChunkId &Id : ToCancel)
     {
-        UE_LOG(LogTemp, Log, TEXT("Transition cancelled — LOD:%d Face:%d"), Id.LODLevel, Id.FaceIndex);
+        // UE_LOG(LogTemp, Log, TEXT("Transition cancelled — LOD:%d Face:%d"), Id.LODLevel, Id.FaceIndex);
         PendingTransitions.Remove(Id);
     }
 }
@@ -463,19 +482,21 @@ void FChunkManager::AdvanceLoading()
 }
 
 
-void FChunkManager::CommitReadyTransitions()
+void FChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks)
 {
-    // Promote root chunks first
-    for (const auto &Pair : ChunkMap)
+    // Promote root chunks first. Only bootstrap-promote roots when L0 chunks are supposed to be visible.
+    if (bShouldGenerateChunks)
     {
-        const FChunkId &Id = Pair.Key;
-        const FChunk *Chunk = Pair.Value.Get();
-        if (IsRootNode(Id) && !RenderSet.Contains(Id) && IsChunkReady(Id))
+        for (const auto &Pair : ChunkMap)
         {
-            FChunk *Root = GetChunk(Id);
-            Renderer->ShowChunk(Root);
-            Root->State = EChunkState::Visible;
-            RenderSet.Add(Id);
+            const FChunkId &Id = Pair.Key;
+            if (IsRootNode(Id) && !RenderSet.Contains(Id) && IsChunkReady(Id))
+            {
+                FChunk *Root = GetChunk(Id);
+                Renderer->ShowChunk(Root);
+                Root->State = EChunkState::Visible;
+                RenderSet.Add(Id);
+            }
         }
     }
 
@@ -672,6 +693,32 @@ bool FChunkManager::IsRootNode(const FChunkId &Id) { return Id.LODLevel == 0; }
 
 
 // ---------------------------------------------------------------------------
+// Callback for async generation
+// ---------------------------------------------------------------------------
+void FChunkManager::OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData)
+{
+    // UE_LOG(LogTemp, Warning, TEXT("OnGenerationComplete: LOD:%d Face:%d"), Id.LODLevel, Id.FaceIndex);
+
+    FChunk *Chunk = GetChunk(Id);
+    if (!Chunk)
+        return;  // Chunk was unloaded while generating
+
+    if (Chunk->GenerationId != GenId)
+        return;  // Stale task (Chunk was reset/regenerated)
+
+    // Only accept the result if the chunk is still in the generation pipeline.
+    // MeshReady or Visible chunks must not be overwritten by a late callback.
+    if (Chunk->State == EChunkState::MeshReady || Chunk->State == EChunkState::Visible)
+        return;
+
+    // Store Data
+    Chunk->MeshData = MoveTemp(MeshData);
+    Chunk->Transform = FMathUtils::ComputeChunkTransform(Id, Config.PlanetRadius);
+    Chunk->State = EChunkState::DataReady;
+}
+
+
+// ---------------------------------------------------------------------------
 // Debug stuff
 // ---------------------------------------------------------------------------
 void FChunkManager::DrawDebugGrid(const UWorld *World) const
@@ -711,29 +758,6 @@ void FChunkManager::DrawDebugChunkBounds(const UWorld *World) const
             }
         }
     }
-}
-
-
-void FChunkManager::OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData)
-{
-    UE_LOG(LogTemp, Warning, TEXT("OnGenerationComplete: LOD:%d Face:%d"), Id.LODLevel, Id.FaceIndex);
-
-    FChunk *Chunk = GetChunk(Id);
-    if (!Chunk)
-        return;  // Chunk was unloaded while generating
-
-    if (Chunk->GenerationId != GenId)
-        return;  // Stale task (Chunk was reset/regenerated)
-
-    // Only accept the result if the chunk is still in the generation pipeline.
-    // MeshReady or Visible chunks must not be overwritten by a late callback.
-    if (Chunk->State == EChunkState::MeshReady || Chunk->State == EChunkState::Visible)
-        return;
-
-    // Store Data
-    Chunk->MeshData = MoveTemp(MeshData);
-    Chunk->Transform = FMathUtils::ComputeChunkTransform(Id, Config.PlanetRadius);
-    Chunk->State = EChunkState::DataReady;
 }
 
 

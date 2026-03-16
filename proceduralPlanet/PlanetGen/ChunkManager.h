@@ -72,7 +72,7 @@ class FChunkManager
         FChunk *GetChunk(const FChunkId &Id);
 
         // Derives LoadSet from RenderSet, PendingTransitions, and desired roots.
-        void BuildLoadSet(const TSet<FChunkId> &DesiredLeaves);
+        void BuildLoadSet(const TSet<FChunkId> &DesiredLeaves, const bool bShouldGenerateChunks);
 
         // Safety net: any chunk in ChunkMap not in LoadSet and not in flight gets deferred
         void PruneOrphans();
@@ -87,7 +87,7 @@ class FChunkManager
         void AdvanceLoading();
 
         // Atomic show/hide for complete groups
-        void CommitReadyTransitions();
+        void CommitReadyTransitions(const bool bShouldGenerateChunks);
 
         // Atomic release of deferred chunks
         void ProcessDeferredReleases();
