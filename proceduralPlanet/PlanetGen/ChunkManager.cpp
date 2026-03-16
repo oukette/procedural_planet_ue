@@ -49,17 +49,7 @@ FChunkManager::~FChunkManager()
 int32 FChunkManager::GetTotalChunkCount() const { return ChunkMap.Num(); }
 
 
-int32 FChunkManager::GetVisibleChunkCount() const
-{
-    int32 Count = 0;
-    for (const auto &Pair : ChunkMap)
-    {
-        if (Pair.Value->State == EChunkState::Visible)
-            Count++;
-    }
-
-    return Count;
-}
+int32 FChunkManager::GetVisibleChunkCount() const { return RenderSet.Num(); }
 
 
 void FChunkManager::GetVisibleCountPerLOD(TArray<int32> &OutCounts) const
@@ -165,11 +155,19 @@ void FChunkManager::Update(const FPlanetViewContext &Context)
 
     const TSet<FChunkId> &DesiredLeaves = (bShouldGenerateChunks && Quadtree) ? Quadtree->GetDesiredLeaves() : TSet<FChunkId>();
 
-    BuildLoadSet(DesiredLeaves, bShouldGenerateChunks);
+    // Build distance cache once — reused by AdvanceLoading and CommitReadyTransitions
+    TMap<FChunkId, float> DistanceSqCache;
+    DistanceSqCache.Reserve(ChunkMap.Num());
+    for (const auto &Pair : ChunkMap)
+    {
+        const FChunkId &Id = Pair.Key;
+        DistanceSqCache.Add(Id, FVector::DistSquared(FMathUtils::GetChunkCenter(Id, Config.PlanetRadius), LastObserverLocalPos));
+    }
 
+    BuildLoadSet(DesiredLeaves, bShouldGenerateChunks);
     ReconcileTransitions(DesiredLeaves);
-    AdvanceLoading();
-    CommitReadyTransitions(bShouldGenerateChunks);
+    AdvanceLoading(DistanceSqCache);
+    CommitReadyTransitions(bShouldGenerateChunks, DistanceSqCache);
     ProcessDeferredReleases();
     PruneOrphans();
 
@@ -412,7 +410,7 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
 }
 
 
-void FChunkManager::AdvanceLoading()
+void FChunkManager::AdvanceLoading(const TMap<FChunkId, float> &DistanceSqCache)
 {
     // Cancel generation for any Pending/Generating chunk no longer needed
     // This is the primary fix for cache growth at high speed
@@ -443,7 +441,8 @@ void FChunkManager::AdvanceLoading()
         {
             Chunk->GenerationId++;
             Chunk->State = EChunkState::Pending;
-            float DistSq = FVector::DistSquared(FMathUtils::GetChunkCenter(Id, Config.PlanetRadius), LastObserverLocalPos);
+            float DistSq = DistanceSqCache.Contains(Id) ? DistanceSqCache[Id]
+                                                        : FVector::DistSquared(FMathUtils::GetChunkCenter(Id, Config.PlanetRadius), LastObserverLocalPos);
             ChunkGenerator->RequestChunk(Id, Chunk->GenerationId, DistSq);
         }
     }
@@ -458,12 +457,13 @@ void FChunkManager::AdvanceLoading()
     }
 
     DataReadyChunks.Sort(
-        [this](const FChunkId &A, const FChunkId &B)
+        [&DistanceSqCache, this](const FChunkId &A, const FChunkId &B)
         {
-            float DistA = FVector::DistSquared(FMathUtils::GetChunkCenter(A, Config.PlanetRadius), LastObserverLocalPos);
-            float DistB = FVector::DistSquared(FMathUtils::GetChunkCenter(B, Config.PlanetRadius), LastObserverLocalPos);
+            const float DistA = DistanceSqCache.Contains(A) ? DistanceSqCache[A] : 0.f;
+            const float DistB = DistanceSqCache.Contains(B) ? DistanceSqCache[B] : 0.f;
             return DistA < DistB;
         });
+
 
     for (const FChunkId &Id : DataReadyChunks)
     {
@@ -481,7 +481,7 @@ void FChunkManager::AdvanceLoading()
 }
 
 
-void FChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks)
+void FChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks, const TMap<FChunkId, float> &DistanceSqCache)
 {
     // Promote root chunks first. Only bootstrap-promote roots when L0 chunks are supposed to be visible.
     if (bShouldGenerateChunks)
@@ -505,10 +505,10 @@ void FChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks)
         SortedTransitionKeys.Add(Pair.Key);
 
     SortedTransitionKeys.Sort(
-        [this](const FChunkId &A, const FChunkId &B)
+        [&DistanceSqCache, this](const FChunkId &A, const FChunkId &B)
         {
-            float DistA = FVector::DistSquared(FMathUtils::GetChunkCenter(A, Config.PlanetRadius), LastObserverLocalPos);
-            float DistB = FVector::DistSquared(FMathUtils::GetChunkCenter(B, Config.PlanetRadius), LastObserverLocalPos);
+            const float DistA = DistanceSqCache.Contains(A) ? DistanceSqCache[A] : 0.f;
+            const float DistB = DistanceSqCache.Contains(B) ? DistanceSqCache[B] : 0.f;
             return DistA < DistB;
         });
 
@@ -700,7 +700,7 @@ void FChunkManager::PruneOrphans()
         if (Chunk->State == EChunkState::MeshReady)
         {
             // Has GPU resources — must go through deferred release, not immediate destroy
-            DeferHideChunk(Chunk, Id); // calls HideChunk which is safe even if not currently Visible
+            DeferHideChunk(Chunk, Id);  // calls HideChunk which is safe even if not currently Visible
         }
         else
         {

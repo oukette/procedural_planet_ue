@@ -83,10 +83,10 @@ class FChunkManager
         void ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves);
 
         // Ensure all needed chunks are generating/uploading
-        void AdvanceLoading();
+        void AdvanceLoading(const TMap<FChunkId, float> &DistanceSqCache);
 
         // Atomic show/hide for complete groups
-        void CommitReadyTransitions(const bool bShouldGenerateChunks);
+        void CommitReadyTransitions(const bool bShouldGenerateChunks, const TMap<FChunkId, float> &DistanceSqCache);
 
         // Atomic release of deferred chunks
         void ProcessDeferredReleases();
