@@ -102,6 +102,9 @@ class FChunkManager
         // Helper to check if a chunk is in memory and has mesh data
         bool IsChunkReady(const FChunkId &Id) const;
 
+        // Helper to defer hide a chunk
+        void DeferHideChunk(FChunk* Chunk, const FChunkId& Id);
+
         // Callback executed on Game Thread when async generation finishes
         void OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData);
 

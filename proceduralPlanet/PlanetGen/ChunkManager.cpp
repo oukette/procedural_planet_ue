@@ -143,6 +143,16 @@ bool FChunkManager::IsChunkReady(const FChunkId &Id) const
 }
 
 
+void FChunkManager::DeferHideChunk(FChunk* Chunk, const FChunkId& Id)
+{
+    check(Chunk != nullptr);    // replaces a classic if nullptr
+    Renderer->HideChunk(Chunk);
+    Chunk->State = EChunkState::MeshReady;
+    DeferredReleaseQueue.Add({Id, GetDeferredReleaseDelay()});
+    DeferredReleaseIds.Add(Id);
+}
+
+
 void FChunkManager::Update(const FPlanetViewContext &Context)
 {
     const float DistToSurface = Context.ObserverLocation.Size() - Config.PlanetRadius;
@@ -369,12 +379,7 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
         FChunk *Chunk = GetChunk(Id);
         if (Chunk && (Chunk->State == EChunkState::Visible || Chunk->State == EChunkState::MeshReady))
         {
-            Renderer->HideChunk(Chunk);
-            Chunk->State = EChunkState::MeshReady;
-
-            // Use deferred release to prevent thrashing at the hysteresis boundary
-            DeferredReleaseQueue.Add({Id, GetDeferredReleaseDelay()});
-            DeferredReleaseIds.Add(Id);
+            DeferHideChunk(Chunk, Id);
         }
         RenderSet.Remove(Id);
     }
@@ -580,10 +585,7 @@ void FChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks)
                 FChunk *Parent = GetChunk(T.Parent);
                 if (Parent && (Parent->State == EChunkState::Visible || Parent->State == EChunkState::MeshReady))
                 {
-                    Renderer->HideChunk(Parent);
-                    Parent->State = EChunkState::MeshReady;
-                    DeferredReleaseQueue.Add({T.Parent, GetDeferredReleaseDelay()});
-                    DeferredReleaseIds.Add(T.Parent);
+                    DeferHideChunk(Parent, T.Parent);
                 }
                 RenderSet.Remove(T.Parent);
             }
@@ -632,10 +634,7 @@ void FChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks)
                 {
                     if (Child->State == EChunkState::Visible || Child->State == EChunkState::MeshReady)
                     {
-                        Renderer->HideChunk(Child);
-                        Child->State = EChunkState::MeshReady;
-                        DeferredReleaseQueue.Add({ChildId, GetDeferredReleaseDelay()});
-                        DeferredReleaseIds.Add(ChildId);
+                        DeferHideChunk(Child, ChildId);
                     }
                 }
                 RenderSet.Remove(ChildId);

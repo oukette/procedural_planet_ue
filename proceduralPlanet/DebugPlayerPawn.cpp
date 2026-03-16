@@ -415,6 +415,6 @@ void ADebugPlayerPawn::AdjustSpeed(float Val)
 {
     if (Val != 0.0f)
     {
-        FlySpeed = FMath::Clamp(FlySpeed + (Val * 100.0f), 100.0f, 100000.0f);
+        FlySpeed = FMath::Clamp(FlySpeed + (Val * 200.0f), 100.0f, 100000.0f);
     }
 }
