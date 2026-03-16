@@ -119,6 +119,18 @@ FChunk *FChunkManager::GetChunk(const FChunkId &Id)
 }
 
 
+int32 FChunkManager::GetDeferredReleaseDelay() const
+{
+    const int32 Total = ChunkMap.Num();
+    if (Total <= Config.CacheSoftCap)
+        return Config.DeferredReleaseDelay;
+
+    float Pressure = FMath::Clamp((float)(Total - Config.CacheSoftCap) / (float)FMath::Max(Config.CacheHardCap - Config.CacheSoftCap, 1), 0.f, 1.f);
+
+    return FMath::RoundToInt(FMath::Lerp((float)Config.DeferredReleaseDelay, (float)Config.DeferredReleaseDelayMin, Pressure));
+}
+
+
 bool FChunkManager::IsChunkReady(const FChunkId &Id) const
 {
     if (const TUniquePtr<FChunk> *Found = ChunkMap.Find(Id))
@@ -361,7 +373,7 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
             Chunk->State = EChunkState::MeshReady;
 
             // Use deferred release to prevent thrashing at the hysteresis boundary
-            DeferredReleaseQueue.Add({Id, Config.ChunkDemotionFrameDelay});
+            DeferredReleaseQueue.Add({Id, GetDeferredReleaseDelay()});
             DeferredReleaseIds.Add(Id);
         }
         RenderSet.Remove(Id);
@@ -431,6 +443,21 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
 
 void FChunkManager::AdvanceLoading()
 {
+    // Cancel generation for any Pending/Generating chunk no longer needed
+    // This is the primary fix for cache growth at high speed
+    for (auto &Pair : ChunkMap)
+    {
+        const FChunkId &Id = Pair.Key;
+        FChunk *Chunk = Pair.Value.Get();
+
+        if (!LoadSet.Contains(Id) && (Chunk->State == EChunkState::Pending || Chunk->State == EChunkState::Generating))
+        {
+            ChunkGenerator->CancelRequest(Id);
+            Chunk->State = EChunkState::None;
+            // Now PruneOrphans can collect it this frame
+        }
+    }
+
     int32 MeshUploadsThisFrame = 0;
 
     // First pass: request generation for all None-state chunks (order doesn't matter, priority is handled inside ChunkGenerator's heap)
@@ -555,7 +582,7 @@ void FChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks)
                 {
                     Renderer->HideChunk(Parent);
                     Parent->State = EChunkState::MeshReady;
-                    DeferredReleaseQueue.Add({T.Parent, Config.ChunkDemotionFrameDelay});
+                    DeferredReleaseQueue.Add({T.Parent, GetDeferredReleaseDelay()});
                     DeferredReleaseIds.Add(T.Parent);
                 }
                 RenderSet.Remove(T.Parent);
@@ -607,7 +634,7 @@ void FChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks)
                     {
                         Renderer->HideChunk(Child);
                         Child->State = EChunkState::MeshReady;
-                        DeferredReleaseQueue.Add({ChildId, Config.ChunkDemotionFrameDelay});
+                        DeferredReleaseQueue.Add({ChildId, GetDeferredReleaseDelay()});
                         DeferredReleaseIds.Add(ChildId);
                     }
                 }
@@ -626,6 +653,17 @@ void FChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks)
 
 void FChunkManager::ProcessDeferredReleases()
 {
+    // Under pressure, collapse countdowns of already-queued entries
+    if (ChunkMap.Num() > Config.CacheSoftCap)
+    {
+        const int32 Floor = Config.DeferredReleaseDelayMin;
+        for (FDeferredRelease &Entry : DeferredReleaseQueue)
+        {
+            if (Entry.FrameCountdown > Floor)
+                Entry.FrameCountdown = Floor;
+        }
+    }
+
     TArray<FDeferredRelease> StillWaiting;
 
     for (FDeferredRelease &Entry : DeferredReleaseQueue)

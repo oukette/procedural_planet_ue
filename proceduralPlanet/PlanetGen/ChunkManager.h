@@ -71,6 +71,8 @@ class FChunkManager
         // Helper to get a chunk from the map if it exists, otherwise create it
         FChunk *GetChunk(const FChunkId &Id);
 
+        int32 GetDeferredReleaseDelay() const;
+
         // Derives LoadSet from RenderSet, PendingTransitions, and desired roots.
         void BuildLoadSet(const TSet<FChunkId> &DesiredLeaves, const bool bShouldGenerateChunks);
 

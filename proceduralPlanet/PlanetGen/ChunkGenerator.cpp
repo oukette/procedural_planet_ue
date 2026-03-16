@@ -14,6 +14,7 @@ FChunkGenerator::FChunkGenerator(const FPlanetConfig &InConfig, const DensityGen
     ActiveThreadsCounter = MakeShared<FThreadSafeCounter, ESPMode::ThreadSafe>(0);
 }
 
+
 FChunkGenerator::~FChunkGenerator()
 {
     // Log a warning if Stop() was not called before destruction.
@@ -49,9 +50,10 @@ FChunkGenerator::~FChunkGenerator()
     }
 }
 
+
 void FChunkGenerator::RequestChunk(const FChunkId &Id, uint32 GenerationId, float PriorityScore)
 {
-    if (ActiveTasks.Contains(Id))
+    if (ActiveTasks.Contains(Id) || QueuedIds.Contains(Id))
         return;  // Already in queue
 
     QueuedIds.Add(Id);
@@ -59,6 +61,7 @@ void FChunkGenerator::RequestChunk(const FChunkId &Id, uint32 GenerationId, floa
     // We use the 'Greater' predicate (>), which causes Heap functions to prioritize smaller values as 'Top'.
     RequestsQueue.HeapPush({Id, GenerationId, PriorityScore}, [](const FChunkRequest &A, const FChunkRequest &B) { return A.PrioScore > B.PrioScore; });
 }
+
 
 void FChunkGenerator::Stop()
 {
@@ -70,6 +73,7 @@ void FChunkGenerator::Stop()
     ActiveTasks.Empty();
 }
 
+
 void FChunkGenerator::CancelRequest(const FChunkId &Id)
 {
     // Mark as cancelled regardless of whether it's queued or actively running.
@@ -78,6 +82,7 @@ void FChunkGenerator::CancelRequest(const FChunkId &Id)
     CancelledTasks.Add(Id);
     QueuedIds.Remove(Id);  // Keep QueuedIds consistent so RequestChunk can re-queue it later if needed
 }
+
 
 void FChunkGenerator::Update()
 {
@@ -135,9 +140,12 @@ void FChunkGenerator::Update()
     }
 }
 
+
 void FChunkGenerator::SetOnChunkGeneratedCallback(FOnChunkGenerated InCallback) { OnGeneratedCallback = InCallback; }
 
+
 int32 FChunkGenerator::GetPendingCount() const { return RequestsQueue.Num() + ActiveTasks.Num(); }
+
 
 void FChunkGenerator::StartAsyncTask(const FChunkRequest &Request)
 {
