@@ -57,12 +57,13 @@ class FChunkManager
         TUniquePtr<FPlanetQuadtree> Quadtree;        // Handles LOD and Culling logic
 
         TMap<FChunkId, TUniquePtr<FChunk>> ChunkMap;        // The central registry of all chunks
-        TMap<FChunkId, FLODTransition> PendingTransitions;  // keyed on parent ID
         TSet<FChunkId> RenderSet;                           // ground truth of what is rendered
         TSet<FChunkId> LoadSet;                             // All chunk IDs that must be kept alive this frame
+        TMap<FChunkId, FLODTransition> PendingTransitions;  // keyed on parent ID
+        TSet<FChunkId> PendingChildSet;                     // O(1) mirror of all children in PendingTransitions
+        TArray<FDeferredRelease> DeferredReleaseQueue;      // queue of chunks to release after a delay
         TSet<FChunkId> DeferredReleaseIds;                  // O(1) mirror of DeferredReleaseQueue
-        TArray<FDeferredRelease> DeferredReleaseQueue;
-        
+
         FVector LastObserverLocalPos = FVector::ZeroVector;
 
         // Helper to create a new chunk entry
@@ -91,7 +92,7 @@ class FChunkManager
         // Atomic release of deferred chunks
         void ProcessDeferredReleases();
 
-                // Safety net: any chunk in ChunkMap not in LoadSet and not in flight gets deferred
+        // Safety net: any chunk in ChunkMap not in LoadSet and not in flight gets deferred
         void PruneOrphans();
 
         // Pure math helpers
@@ -103,7 +104,7 @@ class FChunkManager
         bool IsChunkReady(const FChunkId &Id) const;
 
         // Helper to defer hide a chunk
-        void DeferHideChunk(FChunk* Chunk, const FChunkId& Id);
+        void DeferHideChunk(FChunk *Chunk, const FChunkId &Id);
 
         // Callback executed on Game Thread when async generation finishes
         void OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData);

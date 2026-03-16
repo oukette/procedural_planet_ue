@@ -262,17 +262,15 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
                     T.Type = ELeafTransitionType::Split;
                     T.Parent = AncestorId;
                     T.Children = GetChildrenIds(AncestorId);
+                    for (const FChunkId &ChildId : T.Children)
+                        PendingChildSet.Add(ChildId);
+
                     PendingTransitions.Add(AncestorId, MoveTemp(T));
                     // UE_LOG(LogTemp, Log, TEXT("Split registered — parent LOD:%d Face:%d"), AncestorId.LODLevel, AncestorId.FaceIndex);
                 }
                 break;
             }
         }
-
-        // Root node case: if a root is desired and not yet rendered,
-        // CommitReadyTransitions will promote it once MeshReady.
-        // BuildLoadSet unconditionally keeps unrendered roots in the LoadSet,
-        // so generation is guaranteed to start regardless of DesiredLeaves.
     }
 
     // --- A2. Rendered but not desired → find desired ancestor → register Merge ---
@@ -287,21 +285,7 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
             continue;  // Already being replaced by a split from this node
 
         // Check if this node is already the child side of a pending transition
-        bool bAlreadyHandled = false;
-        for (const auto &Pair : PendingTransitions)
-        {
-            for (const FChunkId &ChildId : Pair.Value.Children)
-            {
-                if (ChildId == Id)
-                {
-                    bAlreadyHandled = true;
-                    break;
-                }
-            }
-            if (bAlreadyHandled)
-                break;
-        }
-        if (bAlreadyHandled)
+        if (PendingChildSet.Contains(Id))
             continue;
 
         // Walk up to find the closest desired ancestor, including the root itself
@@ -319,6 +303,9 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
                     T.Type = ELeafTransitionType::Merge;
                     T.Parent = AncestorId;
                     T.Children = GetChildrenIds(AncestorId);
+                    for (const FChunkId &ChildId : T.Children)
+                        PendingChildSet.Add(ChildId);
+
                     PendingTransitions.Add(AncestorId, MoveTemp(T));
                     // UE_LOG(LogTemp, Log, TEXT("Merge registered — parent LOD:%d Face:%d"), AncestorId.LODLevel, AncestorId.FaceIndex);
                 }
@@ -405,6 +392,10 @@ void FChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
     for (const FChunkId &Id : ToCancel)
     {
         // UE_LOG(LogTemp, Log, TEXT("Transition cancelled — LOD:%d Face:%d"), Id.LODLevel, Id.FaceIndex);
+        const FLODTransition &T = PendingTransitions[Id];
+        for (const FChunkId &ChildId : T.Children)
+            PendingChildSet.Remove(ChildId);
+
         PendingTransitions.Remove(Id);
     }
 }
@@ -613,7 +604,12 @@ void FChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks, con
 
     // Removal from pending transitions
     for (const FChunkId &Id : ToRemove)
+    {
+        const FLODTransition &T = PendingTransitions[Id];
+        for (const FChunkId &ChildId : T.Children)
+            PendingChildSet.Remove(ChildId);
         PendingTransitions.Remove(Id);
+    }
 }
 
 
