@@ -9,6 +9,13 @@
 // Handles the visual representation of chunks using a pool of ProceduralMeshComponents.
 class ChunkRenderer
 {
+    private:
+        AActor *m_ownerActor;
+        UMaterialInterface *m_material;
+
+        // Pool of inactive components ready for reuse
+        TArray<TWeakObjectPtr<UProceduralMeshComponent>> m_freeComponentPool;
+
     public:
         ChunkRenderer(AActor *InOwner, UMaterialInterface *InMaterial);
         ~ChunkRenderer();
@@ -26,7 +33,7 @@ class ChunkRenderer
         void HideChunk(FChunk *Chunk);
 
         // Unregister and destroy the given component.
-        void DiscardComponent(UProceduralMeshComponent* Comp);
+        void DiscardComponent(UProceduralMeshComponent *Comp);
 
         // Returns the component to the pool and clears the mesh.
         // Called only when a chunk is being permanently destroyed.
@@ -35,14 +42,8 @@ class ChunkRenderer
         // Destroys all components currently in the free pool.
         void ReleaseAllComponents();
 
-        AActor *GetOwner() const { return OwnerActor; }
+        AActor *GetOwner() const { return m_ownerActor; }
 
     private:
-        AActor *OwnerActor;
-        UMaterialInterface *Material;
-
-        // Pool of inactive components ready for reuse
-        TArray<TWeakObjectPtr<UProceduralMeshComponent>> FreeComponentPool;
-
         UProceduralMeshComponent *GetFreeComponent();
 };

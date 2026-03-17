@@ -79,7 +79,7 @@ void ChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
     m_chunkGenerator->SetOnChunkGeneratedCallback([this](const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData)
                                                   { OnGenerationComplete(Id, GenId, MoveTemp(MeshData)); });
 
-    m_quadtree = MakeUnique<FPlanetQuadtree>(m_planetConfig);
+    m_quadtree = MakeUnique<PlanetQuadtree>(m_planetConfig);
 
     InitializeRoots();
 

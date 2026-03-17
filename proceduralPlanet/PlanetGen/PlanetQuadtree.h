@@ -6,13 +6,13 @@
 
 
 // A logical node in the Quadtree.
-struct FQuadtreeNode
+struct QuadtreeNode
 {
         FChunkId Id;
-        FQuadtreeNode *Parent = nullptr;
-        TArray<TUniquePtr<FQuadtreeNode>> Children;
+        QuadtreeNode *Parent = nullptr;
+        TArray<TUniquePtr<QuadtreeNode>> Children;
 
-        FQuadtreeNode(const FChunkId &InId, FQuadtreeNode *InParent) :
+        QuadtreeNode(const FChunkId &InId, QuadtreeNode *InParent) :
             Id(InId),
             Parent(InParent)
         {
@@ -24,28 +24,29 @@ struct FQuadtreeNode
 
 // The "Brain" of the planet system.
 // Decides which chunks should be visible based on camera position and LOD rules.
-class FPlanetQuadtree
+class PlanetQuadtree
 {
+    private:
+        FPlanetConfig m_planetConfig;
+        TArray<TUniquePtr<QuadtreeNode>> m_rootNodes;
+        TSet<FChunkId> m_desiredLeaves;
+
     public:
-        FPlanetQuadtree(const FPlanetConfig &InConfig);
-        ~FPlanetQuadtree();
+        PlanetQuadtree(const FPlanetConfig &InConfig);
+        ~PlanetQuadtree();
 
         // Rebuilds the visibility lists based on the view context.
         // IsChunkReady: A callback to check if a specific chunk ID has mesh data loaded (used for hysteresis).
         void Update(const FPlanetViewContext &Context);
 
         // The ideal set of leaf IDs this frame. Manager diffs this against RenderSet.
-        const TSet<FChunkId> &GetDesiredLeaves() const { return DesiredLeaves; }
+        const TSet<FChunkId> &GetDesiredLeaves() const { return m_desiredLeaves; }
 
         // Debug drawing for the logical grid
         void DrawDebugGrid(const UWorld *World, const FTransform &PlanetTransform) const;
 
     private:
-        FPlanetConfig Config;
-        TArray<TUniquePtr<FQuadtreeNode>> RootNodes;
-        TSet<FChunkId> DesiredLeaves;
-
-        void UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context);
-        bool ShouldSplit(const FQuadtreeNode *Node, const FPlanetViewContext &Context) const;
-        bool ShouldMerge(const FQuadtreeNode *Node, const FPlanetViewContext &Context) const;
+        void UpdateNode(QuadtreeNode *Node, const FPlanetViewContext &Context);
+        bool ShouldSplit(const QuadtreeNode *Node, const FPlanetViewContext &Context) const;
+        bool ShouldMerge(const QuadtreeNode *Node, const FPlanetViewContext &Context) const;
 };

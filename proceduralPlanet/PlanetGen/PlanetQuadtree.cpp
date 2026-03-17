@@ -3,47 +3,47 @@
 #include "DrawDebugHelpers.h"
 
 
-FPlanetQuadtree::FPlanetQuadtree(const FPlanetConfig &InConfig) :
-    Config(InConfig)
+PlanetQuadtree::PlanetQuadtree(const FPlanetConfig &InConfig) :
+    m_planetConfig(InConfig)
 {
     // Initialize Roots (LOD 0)
     for (uint8 i = 0; i < 6; ++i)
     {
         FChunkId RootId(i, FIntVector(0, 0, 0), 0);
-        RootNodes.Add(MakeUnique<FQuadtreeNode>(RootId, nullptr));
+        m_rootNodes.Add(MakeUnique<QuadtreeNode>(RootId, nullptr));
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("FPlanetQuadtree initialized."));
+    UE_LOG(LogTemp, Warning, TEXT("PlanetQuadtree initialized."));
 }
 
 
-FPlanetQuadtree::~FPlanetQuadtree() {}
+PlanetQuadtree::~PlanetQuadtree() {}
 
 
-void FPlanetQuadtree::Update(const FPlanetViewContext &Context)
+void PlanetQuadtree::Update(const FPlanetViewContext &Context)
 {
-    DesiredLeaves.Empty();
+    m_desiredLeaves.Empty();
 
-    for (const auto &Root : RootNodes)
+    for (const auto &Root : m_rootNodes)
     {
         UpdateNode(Root.Get(), Context);
     }
 }
 
 
-void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &Context)
+void PlanetQuadtree::UpdateNode(QuadtreeNode *Node, const FPlanetViewContext &Context)
 {
-    FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
+    FVector Center = FMathUtils::GetChunkCenter(Node->Id, m_planetConfig.PlanetRadius);
 
     // --- 1. Horizon Culling ---
     float ObserverDist = Context.ObserverLocation.Size();
-    if (ObserverDist > Config.PlanetRadius)
+    if (ObserverDist > m_planetConfig.PlanetRadius)
     {
-        float HorizonCos = Config.PlanetRadius / ObserverDist;  // cos(horizon angle) = PlanetRadius / ObserverDist
+        float HorizonCos = m_planetConfig.PlanetRadius / ObserverDist;  // cos(horizon angle) = PlanetRadius / ObserverDist
         float ChunkDot = FVector::DotProduct(Context.ObserverLocation.GetSafeNormal(), Center.GetSafeNormal());
         if (ChunkDot < -HorizonCos)
         {
-            DesiredLeaves.Add(Node->Id);
+            m_desiredLeaves.Add(Node->Id);
             return;
         }
     }
@@ -52,7 +52,7 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
     bool bInFrustum = true;
     if (!Context.ObserverForward.IsNearlyZero())
     {
-        float NodeSize = (Config.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
+        float NodeSize = (m_planetConfig.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
         float SphereRadius = NodeSize * 0.75f;
         bInFrustum = Context.ViewFrustum.IntersectSphere(Center, SphereRadius);
     }
@@ -64,13 +64,13 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
         // but don't split further. This prevents stale deep trees outside the frustum.
         if (Node->IsLeaf())
         {
-            DesiredLeaves.Add(Node->Id);
+            m_desiredLeaves.Add(Node->Id);
         }
         else
         {
             // Collapse children — outside frustum, no need to maintain deep structure
             Node->Children.Empty();
-            DesiredLeaves.Add(Node->Id);
+            m_desiredLeaves.Add(Node->Id);
         }
         return;
     }
@@ -87,10 +87,10 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
             const int32 Y = Node->Id.Coords.Y;
             const uint8 Face = Node->Id.FaceIndex;
 
-            Node->Children.Add(MakeUnique<FQuadtreeNode>(FChunkId(Face, FIntVector(X * 2, Y * 2, 0), NextLOD), Node));
-            Node->Children.Add(MakeUnique<FQuadtreeNode>(FChunkId(Face, FIntVector(X * 2 + 1, Y * 2, 0), NextLOD), Node));
-            Node->Children.Add(MakeUnique<FQuadtreeNode>(FChunkId(Face, FIntVector(X * 2, Y * 2 + 1, 0), NextLOD), Node));
-            Node->Children.Add(MakeUnique<FQuadtreeNode>(FChunkId(Face, FIntVector(X * 2 + 1, Y * 2 + 1, 0), NextLOD), Node));
+            Node->Children.Add(MakeUnique<QuadtreeNode>(FChunkId(Face, FIntVector(X * 2, Y * 2, 0), NextLOD), Node));
+            Node->Children.Add(MakeUnique<QuadtreeNode>(FChunkId(Face, FIntVector(X * 2 + 1, Y * 2, 0), NextLOD), Node));
+            Node->Children.Add(MakeUnique<QuadtreeNode>(FChunkId(Face, FIntVector(X * 2, Y * 2 + 1, 0), NextLOD), Node));
+            Node->Children.Add(MakeUnique<QuadtreeNode>(FChunkId(Face, FIntVector(X * 2 + 1, Y * 2 + 1, 0), NextLOD), Node));
         }
 
         // Recurse regardless — children may themselves split or merge
@@ -101,14 +101,14 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
     {
         // Collapse children — this node becomes a leaf again
         Node->Children.Empty();  // dont care if those children have loaded chunks — that's the manager's problem.
-        DesiredLeaves.Add(Node->Id);
+        m_desiredLeaves.Add(Node->Id);
     }
     else
     {
         // Hysteresis band — hold current structure
         if (Node->IsLeaf())
         {
-            DesiredLeaves.Add(Node->Id);
+            m_desiredLeaves.Add(Node->Id);
         }
         else
         {
@@ -119,14 +119,14 @@ void FPlanetQuadtree::UpdateNode(FQuadtreeNode *Node, const FPlanetViewContext &
 }
 
 
-bool FPlanetQuadtree::ShouldSplit(const FQuadtreeNode *Node, const FPlanetViewContext &Context) const
+bool PlanetQuadtree::ShouldSplit(const QuadtreeNode *Node, const FPlanetViewContext &Context) const
 {
-    if (Node->Id.LODLevel >= Config.MaxLOD)
+    if (Node->Id.LODLevel >= m_planetConfig.MaxLOD)
         return false;
 
-    FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
+    FVector Center = FMathUtils::GetChunkCenter(Node->Id, m_planetConfig.PlanetRadius);
     float Dist = FVector::Dist(Center, Context.ObserverLocation);
-    float NodeSize = (Config.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
+    float NodeSize = (m_planetConfig.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
 
     // Angular size: how large does this chunk appear in radians
     float AngularSize = FMath::Atan2(NodeSize, FMath::Max(Dist, 1.f));
@@ -135,18 +135,18 @@ bool FPlanetQuadtree::ShouldSplit(const FQuadtreeNode *Node, const FPlanetViewCo
     // A value of 1.0 means the chunk fills the entire vertical screen height
     float ScreenFraction = AngularSize / FMath::Max(Context.VerticalFOVRadians, KINDA_SMALL_NUMBER);
 
-    return ScreenFraction > Config.LODSplitScreenFraction;
+    return ScreenFraction > m_planetConfig.LODSplitScreenFraction;
 }
 
 
-bool FPlanetQuadtree::ShouldMerge(const FQuadtreeNode *Node, const FPlanetViewContext &Context) const
+bool PlanetQuadtree::ShouldMerge(const QuadtreeNode *Node, const FPlanetViewContext &Context) const
 {
-    if (Node->Id.LODLevel >= Config.MaxLOD)
+    if (Node->Id.LODLevel >= m_planetConfig.MaxLOD)
         return true;
 
-    FVector Center = FMathUtils::GetChunkCenter(Node->Id, Config.PlanetRadius);
+    FVector Center = FMathUtils::GetChunkCenter(Node->Id, m_planetConfig.PlanetRadius);
     float Dist = FVector::Dist(Center, Context.ObserverLocation);
-    float NodeSize = (Config.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
+    float NodeSize = (m_planetConfig.PlanetRadius * PI * 0.5f) / (float)(1 << Node->Id.LODLevel);
 
     float AngularSize = FMath::Atan2(NodeSize, FMath::Max(Dist, 1.f));
     float ScreenFraction = AngularSize / FMath::Max(Context.VerticalFOVRadians, KINDA_SMALL_NUMBER);
@@ -154,16 +154,16 @@ bool FPlanetQuadtree::ShouldMerge(const FQuadtreeNode *Node, const FPlanetViewCo
     // Merge when screen fraction drops below the split threshold scaled by hysteresis.
     // HysteresisRatio < 1.0 means merge triggers at a smaller screen fraction than split,
     // preventing oscillation at the boundary.
-    return ScreenFraction < (Config.LODSplitScreenFraction * Config.LODMergeHysteresisRatio);
+    return ScreenFraction < (m_planetConfig.LODSplitScreenFraction * m_planetConfig.LODMergeHysteresisRatio);
 }
 
 
-void FPlanetQuadtree::DrawDebugGrid(const UWorld *World, const FTransform &PlanetTransform) const
+void PlanetQuadtree::DrawDebugGrid(const UWorld *World, const FTransform &PlanetTransform) const
 {
     if (!World)
         return;
 
-    float Radius = Config.PlanetRadius * FPlanetStatics::GridDebugRadiusScale;
+    float Radius = m_planetConfig.PlanetRadius * FPlanetStatics::GridDebugRadiusScale;
 
     for (uint8 Face = 0; Face < 6; ++Face)
     {

@@ -42,7 +42,7 @@ class ChunkManager
         const DensityGenerator *m_densityGen;         // Reference to the density generator (owned by APlanet)
         TUniquePtr<ChunkRenderer> m_chunkRenderer;    // Handles visual components
         TUniquePtr<ChunkGenerator> m_chunkGenerator;  // Handles async generation
-        TUniquePtr<FPlanetQuadtree> m_quadtree;       // Handles LOD and Culling logic
+        TUniquePtr<PlanetQuadtree> m_quadtree;       // Handles LOD and Culling logic
 
         TMap<FChunkId, TUniquePtr<FChunk>> m_chunksMap;         // The central registry of all chunks
         TSet<FChunkId> m_renderSet;                             // ground truth of what is rendered
