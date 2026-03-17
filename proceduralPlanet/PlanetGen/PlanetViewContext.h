@@ -4,9 +4,8 @@
 
 
 // Context provided to the Manager to evaluate LODs and visibility
-struct FPlanetViewContext
+struct PlanetViewContext
 {
-
         FVector ObserverLocation;
         FVector ObserverForward;
         FVector ObserverVelocity;

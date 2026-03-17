@@ -146,10 +146,10 @@ void ChunkManager::DeferHideChunk(Chunk *Chunk, const ChunkId &Id)
 }
 
 
-void ChunkManager::Update(const FPlanetViewContext &Context)
+void ChunkManager::Update(const PlanetViewContext &Context)
 {
     const float DistToSurface = Context.ObserverLocation.Size() - m_planetConfig.PlanetRadius;
-    const bool bShouldGenerateChunks = DistToSurface < (m_planetConfig.FarDistanceThreshold * FPlanetStatics::FarDistanceSafetyMargin);
+    const bool bShouldGenerateChunks = DistToSurface < (m_planetConfig.FarDistanceThreshold * PlanetStatics::FarDistanceSafetyMargin);
 
     m_lastObserverLocalPos = Context.ObserverLocation;
 
@@ -773,7 +773,7 @@ void ChunkManager::DrawDebugChunkBounds(const UWorld *World) const
                 // Use LOD color if available, otherwise fallback to white
                 const FColor BoxColor = (LOD >= 0 && LOD < LODColorsDebug.Num()) ? LODColorsDebug[LOD] : FColor::White;
                 const FBox Box = Comp->Bounds.GetBox();
-                DrawDebugBox(World, Box.GetCenter(), Box.GetExtent(), BoxColor, false, 0.f, 0, FPlanetStatics::DebugBoxLifetime);
+                DrawDebugBox(World, Box.GetCenter(), Box.GetExtent(), BoxColor, false, 0.f, 0, PlanetStatics::DebugBoxLifetime);
             }
         }
     }

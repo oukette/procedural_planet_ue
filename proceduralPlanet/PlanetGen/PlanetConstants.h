@@ -4,7 +4,7 @@
 
 
 // Global constants for easy tuning and static access
-struct FPlanetStatics
+struct PlanetStatics
 {
         // Ratio of RenderDistance where the Far Model takes over.
         // 1.0 = Exactly at RenderDistance.

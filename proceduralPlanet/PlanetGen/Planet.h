@@ -67,12 +67,12 @@ class PROCEDURALPLANET_API APlanet : public AActor
         void CalculateAutoGrid(int32 &OutChunksPerFace, float &OutVoxelSize, int32 &OutResolution) const;
 
         // Tick Helpers
-        FPlanetViewContext BuildViewContext() const;
-        void BuildViewFrustum(APlayerCameraManager *PCM, FPlanetViewContext &Context) const;
-        void BuildVerticalFOV(APlayerCameraManager *PCM, FPlanetViewContext &Context) const;  // ADD
-        void UpdateChunkManager(const FPlanetViewContext &Context);
-        void UpdateFarModelVisibility(const FPlanetViewContext &Context);
-        void DrawDebugInfo(const FPlanetViewContext &Context) const;
+        PlanetViewContext BuildViewContext() const;
+        void BuildViewFrustum(APlayerCameraManager *PCM, PlanetViewContext &Context) const;
+        void BuildVerticalFOV(APlayerCameraManager *PCM, PlanetViewContext &Context) const;  // ADD
+        void UpdateChunkManager(const PlanetViewContext &Context);
+        void UpdateFarModelVisibility(const PlanetViewContext &Context);
+        void DrawDebugInfo(const PlanetViewContext &Context) const;
 
     public:
         APlanet();

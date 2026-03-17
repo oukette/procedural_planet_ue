@@ -8,7 +8,6 @@
 #include "PlanetQuadtree.h"
 
 
-
 // Chunks hidden after a merge, waiting to be released after a delay
 struct DeferredRelease
 {
@@ -43,14 +42,14 @@ class ChunkManager
         const DensityGenerator *m_densityGen;         // Reference to the density generator (owned by APlanet)
         TUniquePtr<ChunkRenderer> m_chunkRenderer;    // Handles visual components
         TUniquePtr<ChunkGenerator> m_chunkGenerator;  // Handles async generation
-        TUniquePtr<PlanetQuadtree> m_quadtree;       // Handles LOD and Culling logic
+        TUniquePtr<PlanetQuadtree> m_quadtree;        // Handles LOD and Culling logic
 
-        TMap<ChunkId, TUniquePtr<Chunk>> m_chunksMap;         // The central registry of all chunks
+        TMap<ChunkId, TUniquePtr<Chunk>> m_chunksMap;          // The central registry of all chunks
         TSet<ChunkId> m_renderSet;                             // ground truth of what is rendered
         TSet<ChunkId> m_loadSet;                               // All chunk IDs that must be kept alive this frame
         TMap<ChunkId, LODTransition> m_pendingTransitionsMap;  // keyed on parent ID
         TSet<ChunkId> m_pendingChildSet;                       // O(1) mirror of all children in m_pendingTransitionsMap
-        TArray<DeferredRelease> m_deferredReleaseQueue;         // queue of chunks to release after a delay
+        TArray<DeferredRelease> m_deferredReleaseQueue;        // queue of chunks to release after a delay
         TSet<ChunkId> m_deferredReleaseIdsMap;                 // O(1) mirror of m_deferredReleaseQueue
 
         FVector m_lastObserverLocalPos = FVector::ZeroVector;
@@ -75,7 +74,7 @@ class ChunkManager
         void Initialize(AActor *Owner, UMaterialInterface *Material);
 
         // Main update loop called by APlanet::Tick
-        void Update(const FPlanetViewContext &Context);
+        void Update(const PlanetViewContext &Context);
 
         // Debug: Draws the logical grid boundaries on the sphere.
         void DrawDebugGrid(const UWorld *World) const;
@@ -84,7 +83,6 @@ class ChunkManager
         void DrawDebugChunkBounds(const UWorld *World) const;
 
     private:
-
         // Helper to create a new chunk entry
         Chunk *CreateChunk(const ChunkId &Id);
 

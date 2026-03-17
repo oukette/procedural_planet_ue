@@ -32,12 +32,12 @@ void APlanet::BeginPlay()
             DrawDebugSphere(GetWorld(),
                             GetActorLocation(),
                             GenSettings.PlanetRadius,
-                            FPlanetStatics::DebugSphereSegments,
+                            PlanetStatics::DebugSphereSegments,
                             FColor::Red,
                             false,
-                            FPlanetStatics::DebugSphereLifetime,
+                            PlanetStatics::DebugSphereLifetime,
                             0,
-                            FPlanetStatics::DebugSphereThickness);
+                            PlanetStatics::DebugSphereThickness);
 
         initPlanet();
     }
@@ -49,12 +49,12 @@ void APlanet::Tick(float DeltaTime)
     Super::Tick(DeltaTime);
 
     // Build View Context in WORLD space
-    FPlanetViewContext WorldContext = BuildViewContext();
+    PlanetViewContext WorldContext = BuildViewContext();
 
     // Create a LOCAL space context for the ChunkManager
     // The ChunkManager and its subsystems (Quadtree, etc.) operate in the Planet's local space.
     // This allows the entire planet actor to be moved in the world without breaking the generation logic.
-    FPlanetViewContext LocalContext;
+    PlanetViewContext LocalContext;
     const FTransform PlanetTransform = GetActorTransform();
     LocalContext.ObserverLocation = PlanetTransform.InverseTransformPosition(WorldContext.ObserverLocation);
     LocalContext.ObserverForward = PlanetTransform.InverseTransformVector(WorldContext.ObserverForward);
@@ -130,7 +130,7 @@ void APlanet::initPlanet()
     // Update Far Model scale if needed (logic from PrepareGeneration)
     if (GenSettings.FarPlanetModel && bIsFarModelAutoCreated)
     {
-        GenSettings.FarPlanetModel->SetActorScale3D(FVector(GenSettings.PlanetRadius / FPlanetStatics::DefaultEngineSphereRadius));
+        GenSettings.FarPlanetModel->SetActorScale3D(FVector(GenSettings.PlanetRadius / PlanetStatics::DefaultEngineSphereRadius));
     }
 
     // Calculate "Auto" Settings (Configuration)
@@ -216,7 +216,7 @@ void APlanet::CreateFarModel()
 
         // The default sphere has a diameter of 100 units (radius 50).
         // We need to scale it to match our PlanetRadius.
-        float SphereScale = GenSettings.PlanetRadius / FPlanetStatics::DefaultEngineSphereRadius;
+        float SphereScale = GenSettings.PlanetRadius / PlanetStatics::DefaultEngineSphereRadius;
         SphereActor->SetActorScale3D(FVector(SphereScale));
 
         // Disable performance-intensive features
@@ -253,9 +253,9 @@ FVector APlanet::GetObserverPosition() const
 }
 
 
-FPlanetViewContext APlanet::BuildViewContext() const
+PlanetViewContext APlanet::BuildViewContext() const
 {
-    FPlanetViewContext Context;
+    PlanetViewContext Context;
     Context.ObserverLocation = GetObserverPosition();
     Context.ObserverForward = FVector::ZeroVector;  // If we can't find a camera (e.g. Editor Viewport), disable frustum culling to avoid "blind spots".
     Context.ObserverVelocity = FVector::ZeroVector;
@@ -281,7 +281,7 @@ FPlanetViewContext APlanet::BuildViewContext() const
 }
 
 
-void APlanet::BuildViewFrustum(APlayerCameraManager *PCM, FPlanetViewContext &Context) const
+void APlanet::BuildViewFrustum(APlayerCameraManager *PCM, PlanetViewContext &Context) const
 {
     if (!PCM || !GEngine || !GEngine->GameViewport || !GEngine->GameViewport->Viewport)
         return;
@@ -322,7 +322,7 @@ void APlanet::BuildViewFrustum(APlayerCameraManager *PCM, FPlanetViewContext &Co
 }
 
 
-void APlanet::BuildVerticalFOV(APlayerCameraManager *PCM, FPlanetViewContext &Context) const
+void APlanet::BuildVerticalFOV(APlayerCameraManager *PCM, PlanetViewContext &Context) const
 {
     if (!PCM)
         return;
@@ -341,7 +341,7 @@ void APlanet::BuildVerticalFOV(APlayerCameraManager *PCM, FPlanetViewContext &Co
 }
 
 
-void APlanet::UpdateChunkManager(const FPlanetViewContext &Context)
+void APlanet::UpdateChunkManager(const PlanetViewContext &Context)
 {
     if (m_chunkManager.IsValid())
     {
@@ -360,7 +360,7 @@ void APlanet::UpdateChunkManager(const FPlanetViewContext &Context)
 }
 
 
-void APlanet::UpdateFarModelVisibility(const FPlanetViewContext &Context)
+void APlanet::UpdateFarModelVisibility(const PlanetViewContext &Context)
 {
     // We do this here because the Actor owns the FarModel component/actor.
     if (GenSettings.FarPlanetModel)
@@ -370,11 +370,11 @@ void APlanet::UpdateFarModelVisibility(const FPlanetViewContext &Context)
 
         // Hysteresis logic for Far Model
         // ShowThreshold: Distance to SHOW the far model (getting farther)
-        float ShowThreshold = m_planetConfig.FarDistanceThreshold * FPlanetStatics::FarModelDistanceRatio;
+        float ShowThreshold = m_planetConfig.FarDistanceThreshold * PlanetStatics::FarModelDistanceRatio;
 
         // HideThreshold: Distance to HIDE the far model (getting closer)
         // We keep it visible a bit longer to ensure chunks have fully spawned underneath.
-        float HideThreshold = m_planetConfig.FarDistanceThreshold * FPlanetStatics::FarModelHideRatio;
+        float HideThreshold = m_planetConfig.FarDistanceThreshold * PlanetStatics::FarModelHideRatio;
 
         bool bIsVisible = !GenSettings.FarPlanetModel->IsHidden();
 
@@ -398,7 +398,7 @@ void APlanet::UpdateFarModelVisibility(const FPlanetViewContext &Context)
 }
 
 
-void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
+void APlanet::DrawDebugInfo(const PlanetViewContext &Context) const
 {
     if (!GEngine)
         return;
@@ -409,7 +409,7 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
 
     // --- onscreen debug line 1: Altitude and speed ---
     const FString StatusStr = (DistToSurface < 0.f) ? TEXT("UNDERGROUND") : TEXT("SURFACE");
-    GEngine->AddOnScreenDebugMessage(FPlanetStatics::DebugKey_DistanceInfo,
+    GEngine->AddOnScreenDebugMessage(PlanetStatics::DebugKey_DistanceInfo,
                                      0.f,
                                      FColor::Cyan,
                                      FString::Printf(TEXT("[Planet] %s | Alt: %.0f m | Speed: %.0f km/h"), *StatusStr, DistToSurface / 100.f, SpeedKmh));
@@ -423,7 +423,7 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
         // --- onscreen debug line 2: Chunk counts per state ---
         const FColor ChunkColor = (Vis == 0) ? FColor::Red : FColor::Green;
         GEngine->AddOnScreenDebugMessage(
-            FPlanetStatics::DebugKey_ManagerStats, 0.f, ChunkColor, FString::Printf(TEXT("[Chunks] Visible: %d | Total: %d | Pending: %d"), Vis, Mem, Pending));
+            PlanetStatics::DebugKey_ManagerStats, 0.f, ChunkColor, FString::Printf(TEXT("[Chunks] Visible: %d | Total: %d | Pending: %d"), Vis, Mem, Pending));
 
         // --- onscreen debug line 3: Per-LOD visible chunk breakdown ---
         TArray<int32> PerLODCount;
@@ -438,7 +438,7 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
                 LODStr += FString::Printf(TEXT("L%d:%d  "), i, PerLODCount[i]);
             }
         }
-        GEngine->AddOnScreenDebugMessage(FPlanetStatics::DebugKey_LODBreakdown, 0.f, FColor::White, LODStr);
+        GEngine->AddOnScreenDebugMessage(PlanetStatics::DebugKey_LODBreakdown, 0.f, FColor::White, LODStr);
 
         // --- onscreen debug line 4: Next split distance for current LOD ---
         // Show how far the observer is from the next LOD transition
@@ -453,7 +453,7 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
         float ClosestChunkDist = DistToSurface;  // approximation
 
         GEngine->AddOnScreenDebugMessage(
-            FPlanetStatics::DebugKey_LODThreshold,
+            PlanetStatics::DebugKey_LODThreshold,
             0.f,
             FColor::Yellow,
             FString::Printf(
