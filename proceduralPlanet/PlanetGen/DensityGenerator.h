@@ -5,7 +5,7 @@
 #include "CoreMinimal.h"
 #include "MathUtils.h"
 #include "IPlanetNoise.h"
-#include "DataTypes.h"
+#include "PlanetConfig.h"
 
 
 // Encapsulates all density field generation logic for procedural planets.

@@ -1,7 +1,8 @@
 #include "ChunkManager.h"
 #include "DrawDebugHelpers.h"
 #include "MathUtils.h"
-#include "DataTypes.h"
+#include "PlanetConfig.h"
+#include "PlanetConstants.h"
 
 
 ChunkManager::ChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen) :

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DataTypes.h"
+#include "PlanetConfig.h"
 #include "ChunkId.h"
 
 

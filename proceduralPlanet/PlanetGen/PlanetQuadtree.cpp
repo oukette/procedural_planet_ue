@@ -1,5 +1,6 @@
 #include "PlanetQuadtree.h"
 #include "MathUtils.h"
+#include "PlanetConstants.h"
 #include "DrawDebugHelpers.h"
 
 

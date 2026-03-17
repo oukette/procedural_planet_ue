@@ -2,7 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "ChunkId.h"
-#include "DataTypes.h"
+#include "PlanetViewContext.h"
+#include "PlanetConfig.h"
 
 
 // A logical node in the Quadtree.

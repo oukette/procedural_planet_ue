@@ -5,7 +5,8 @@
 #include "SeedUtils.h"
 #include "MathUtils.h"
 #include "ChunkManager.h"
-#include "DataTypes.h"
+#include "PlanetConfig.h"
+#include "PlanetConstants.h"
 #include "SimpleNoise.h"
 #include "Planet.generated.h"
 
