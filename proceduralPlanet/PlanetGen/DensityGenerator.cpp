@@ -4,12 +4,12 @@
 
 
 DensityGenerator::DensityGenerator(const DensityConfig &InConfig, const IPlanetNoise *InNoiseProvider) :
-    Config(InConfig),
-    NoiseProvider(InNoiseProvider)
+    m_densityConfig(InConfig),
+    m_noiseProvider(InNoiseProvider)
 {
     // Validation
-    ensure(Config.PlanetRadius > 0.f);
-    ensure(Config.VoxelSize > 0.f);
+    ensure(m_densityConfig.PlanetRadius > 0.f);
+    ensure(m_densityConfig.VoxelSize > 0.f);
 }
 
 
@@ -73,10 +73,10 @@ FVector DensityGenerator::GetProjectedPosition(int32 x, int32 y, int32 z, int32 
 
     // 5. Calculate altitude (Z is radial height from surface). Z = Resolution/2 represents the planet surface
     float SurfaceLevel = Resolution / 2.0f;
-    float AltitudeOffset = (z - SurfaceLevel) * Config.VoxelSize;
+    float AltitudeOffset = (z - SurfaceLevel) * m_densityConfig.VoxelSize;
 
     // 6. Final position: sphere direction * (radius + altitude)
-    return UnitSpherePos * (Config.PlanetRadius + AltitudeOffset);
+    return UnitSpherePos * (m_densityConfig.PlanetRadius + AltitudeOffset);
 }
 
 
@@ -120,37 +120,37 @@ float DensityGenerator::SampleSphereDensity(const FVector &PlanetRelativePositio
 
     // Density is positive inside, negative outside
     // Normalized by VoxelSize for smoother marching cubes
-    return (Config.PlanetRadius - DistanceToCenter) / Config.VoxelSize;
+    return (m_densityConfig.PlanetRadius - DistanceToCenter) / m_densityConfig.VoxelSize;
 }
 
 
 float DensityGenerator::SampleFBM(const FVector &Position) const
 {
     // Safety check: if no provider is set, return 0
-    if (!NoiseProvider)
+    if (!m_noiseProvider)
     {
         return 0.0f;
     }
 
     float Total = 0.0f;
-    float Frequency = Config.Noise.Frequency;
+    float Frequency = m_densityConfig.Noise.Frequency;
     float Amplitude = 1.0f;
     float MaxValue = 0.0f;  // Used for normalizing result to [-1, 1]
 
-    for (int32 i = 0; i < Config.Noise.Octaves; i++)
+    for (int32 i = 0; i < m_densityConfig.Noise.Octaves; i++)
     {
         // OLD CODE:
-        // Total += FNoiseUtils::SimplexNoise(Position * Frequency, Config.Seed + i) * Amplitude;
+        // Total += FNoiseUtils::SimplexNoise(Position * Frequency, m_densityConfig.Seed + i) * Amplitude;
 
         // NEW CODE (Interface Call):
         // We pass the modified seed (BaseSeed + OctaveIndex) just like before
-        float Signal = NoiseProvider->getNoise(Position * Frequency, Config.Seed + i);
+        float Signal = m_noiseProvider->getNoise(Position * Frequency, m_densityConfig.Seed + i);
 
         Total += Signal * Amplitude;
 
         MaxValue += Amplitude;
-        Amplitude *= Config.Noise.Persistence;
-        Frequency *= Config.Noise.Lacunarity;
+        Amplitude *= m_densityConfig.Noise.Persistence;
+        Frequency *= m_densityConfig.Noise.Lacunarity;
     }
 
     // Normalize result to ensure it stays within expected range [-1, 1]
@@ -171,5 +171,5 @@ float DensityGenerator::SampleNoise(const FVector &Position) const
     // 2. The noise value represents a displacement in world units. We scale it by the desired amplitude.
     // 3. We then divide by VoxelSize to convert this world-space displacement into a "density unit"
     //    displacement, which is what Marching Cubes expects to see.
-    return FbmValue * Config.Noise.Amplitude / Config.VoxelSize;
+    return FbmValue * m_densityConfig.Noise.Amplitude / m_densityConfig.VoxelSize;
 }

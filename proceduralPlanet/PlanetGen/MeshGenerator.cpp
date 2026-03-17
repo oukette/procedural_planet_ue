@@ -2,10 +2,10 @@
 #include "MarchingCubesTables.h"
 
 
-FChunkMeshData MeshGenerator::GenerateMesh(const GenData &GenData, int32 Resolution, const FTransform &ChunkTransform, const FTransform &PlanetTransform,
-                                           int32 LODLevel, const DensityGenerator &DensityGen)
+ChunkMeshData MeshGenerator::GenerateMesh(const GenData &GenData, int32 Resolution, const FTransform &ChunkTransform, const FTransform &PlanetTransform,
+                                          int32 LODLevel, const DensityGenerator &DensityGen)
 {
-    FChunkMeshData MeshData;
+    ChunkMeshData MeshData;
 
     // Use the SampleCount from the generated data.
     const int32 SampleCount = GenData.SampleCount;

@@ -5,104 +5,6 @@
 #include "DataTypes.generated.h"
 
 
-// The state of a chunk in its lifecycle
-UENUM(BlueprintType)
-enum class EChunkState : uint8
-{
-    None,        // Initial state
-    Pending,     // In the generation queue
-    Generating,  // Currently being processed by an async task
-    DataReady,   // Mesh data is in RAM but not yet in the GPU
-    MeshReady,   // Mesh is assigned to a component
-    Visible      // Mesh is visible in the world
-};
-
-
-enum class ELeafTransitionType : uint8
-{
-    Split,
-    Merge
-};
-
-
-// Unique identifier for a Chunk on the CubeSphere
-USTRUCT(BlueprintType)
-struct FChunkId
-{
-        GENERATED_BODY()
-        UPROPERTY(EditAnywhere, BlueprintReadWrite)
-        uint8 FaceIndex = 0;  // 0-5
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite)
-        FIntVector Coords = FIntVector::ZeroValue;  // Face-local grid coordinates (X, Y)
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite)
-        int32 LODLevel = 0;  // 0 = Root, Higher = Smaller/More Detailed
-
-        FChunkId() = default;
-
-        FChunkId(uint8 InFace, FIntVector InCoords, int32 InLOD) :
-            FaceIndex(InFace),
-            Coords(InCoords),
-            LODLevel(InLOD)
-        {
-        }
-
-        bool operator==(const FChunkId &Other) const { return FaceIndex == Other.FaceIndex && Coords == Other.Coords && LODLevel == Other.LODLevel; }
-
-        friend uint32 GetTypeHash(const FChunkId &Other)
-        {
-            return HashCombine(HashCombine(GetTypeHash(Other.FaceIndex), GetTypeHash(Other.Coords)), GetTypeHash(Other.LODLevel));
-        }
-};
-
-
-// All data required for a single Mesh Section
-USTRUCT(BlueprintType)
-struct FChunkMeshData
-{
-        GENERATED_BODY()
-
-        UPROPERTY() TArray<FVector> Vertices;
-        UPROPERTY() TArray<int32> Triangles;
-        UPROPERTY() TArray<FVector> Normals;
-        UPROPERTY() TArray<FVector2D> UV0;
-        UPROPERTY() TArray<FColor> Colors;
-
-        void Empty()
-        {
-            Vertices.Empty();
-            Triangles.Empty();
-            Normals.Empty();
-            UV0.Empty();
-            Colors.Empty();
-        }
-};
-
-
-// Represents the physical placement of a chunk in planet-space.
-USTRUCT(BlueprintType)
-struct FChunkTransform
-{
-        GENERATED_BODY()
-
-        UPROPERTY() FVector Location = FVector::ZeroVector;  // Center of the chunk in Planet Space
-        UPROPERTY() float Scale = 1.0f;                      // Uniform scale (derived from LOD)
-        UPROPERTY() FVector FaceNormal = FVector::UpVector;  // Which cube face this belongs to
-        UPROPERTY() FQuat Rotation = FQuat::Identity;        // Orientation on the sphere surface
-
-        FChunkTransform() = default;
-
-        FChunkTransform(FVector InLoc, float InScale, FVector InNormal, FQuat InRot = FQuat::Identity) :
-            Location(InLoc),
-            Scale(InScale),
-            FaceNormal(InNormal),
-            Rotation(InRot)
-        {
-        }
-};
-
-
 // Context provided to the Manager to evaluate LODs and visibility
 USTRUCT(BlueprintType)
 struct FPlanetViewContext
@@ -333,13 +235,6 @@ struct GenData
 };
 
 
-struct FLODTransition
-{
-        FChunkId Parent;
-        TArray<FChunkId> Children;  // Always 4 for a quadtree split
-        ELeafTransitionType Type;
-        bool bReadyToCommit = false;
-};
 
 
 // Automatic Debug Colors for multiple LODs.

@@ -3,8 +3,8 @@
 
 
 ChunkRenderer::ChunkRenderer(AActor *InOwner, UMaterialInterface *InMaterial) :
-    OwnerActor(InOwner),
-    Material(InMaterial)
+    m_ownerActor(InOwner),
+    m_material(InMaterial)
 {
 }
 
@@ -25,10 +25,10 @@ UProceduralMeshComponent *ChunkRenderer::GetFreeComponent()
 {
     // FIX: Loop until we find a valid live component or empty the pool.
     // Components in the pool might have been GC'd or destroyed by the engine.
-    while (FreeComponentPool.Num() > 0)
+    while (m_freeComponentPool.Num() > 0)
     {
         // Pop the weak pointer
-        TWeakObjectPtr<UProceduralMeshComponent> WeakComp = FreeComponentPool.Pop();
+        TWeakObjectPtr<UProceduralMeshComponent> WeakComp = m_freeComponentPool.Pop();
 
         // .Get() returns nullptr if the object is stale/dead. Safe!
         if (UProceduralMeshComponent *Comp = WeakComp.Get())
@@ -39,11 +39,11 @@ UProceduralMeshComponent *ChunkRenderer::GetFreeComponent()
     }
 
     // Create new component if pool is empty
-    if (OwnerActor)
+    if (m_ownerActor)
     {
-        UProceduralMeshComponent *NewComp = NewObject<UProceduralMeshComponent>(OwnerActor);
+        UProceduralMeshComponent *NewComp = NewObject<UProceduralMeshComponent>(m_ownerActor);
         NewComp->RegisterComponent();
-        NewComp->AttachToComponent(OwnerActor->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
+        NewComp->AttachToComponent(m_ownerActor->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
         NewComp->bUseAsyncCooking = true;         // Important for performance
         NewComp->SetComponentTickEnabled(false);  // Critical: Disable ticking to save performance
         NewComp->SetVisibility(false);            // always start hidden
@@ -55,9 +55,9 @@ UProceduralMeshComponent *ChunkRenderer::GetFreeComponent()
 }
 
 
-void ChunkRenderer::PrepareChunk(FChunk *Chunk, bool bEnableCollision = false)
+void ChunkRenderer::PrepareChunk(Chunk *Chunk, bool bEnableCollision = false)
 {
-    if (!Chunk || !Chunk->MeshData)
+    if (!Chunk || !Chunk->m_meshData)
     {
         return;
     }
@@ -85,46 +85,46 @@ void ChunkRenderer::PrepareChunk(FChunk *Chunk, bool bEnableCollision = false)
 
     // Upload Mesh Data
     Comp->CreateMeshSection(0,
-                            Chunk->MeshData->Vertices,
-                            Chunk->MeshData->Triangles,
-                            Chunk->MeshData->Normals,
-                            Chunk->MeshData->UV0,
-                            Chunk->MeshData->Colors,
+                            Chunk->m_meshData->Vertices,
+                            Chunk->m_meshData->Triangles,
+                            Chunk->m_meshData->Normals,
+                            Chunk->m_meshData->UV0,
+                            Chunk->m_meshData->Colors,
                             TArray<FProcMeshTangent>(),
                             false);
 
     // Apply Material
-    Comp->SetMaterial(0, Material);
+    Comp->SetMaterial(0, m_material);
 
     // Set Transform (Location and Rotation on the sphere)
-    Comp->SetRelativeLocationAndRotation(Chunk->Transform.Location, Chunk->Transform.Rotation);
+    Comp->SetRelativeLocationAndRotation(Chunk->m_transform.Location, Chunk->m_transform.Rotation);
 
     // Stay hidden until ShowChunk is called
     Comp->SetVisibility(false);
 
     // Link
-    Chunk->RenderProxy = Comp;
+    Chunk->m_renderProxy = Comp;
 }
 
 
-void ChunkRenderer::ShowChunk(FChunk *Chunk)
+void ChunkRenderer::ShowChunk(Chunk *Chunk)
 {
     if (!Chunk)
         return;
 
-    if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
+    if (UProceduralMeshComponent *Comp = Chunk->m_renderProxy.Get())
     {
         Comp->SetVisibility(true);
     }
 }
 
 
-void ChunkRenderer::HideChunk(FChunk *Chunk)
+void ChunkRenderer::HideChunk(Chunk *Chunk)
 {
     if (!Chunk)
         return;
 
-    if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
+    if (UProceduralMeshComponent *Comp = Chunk->m_renderProxy.Get())
     {
         Comp->SetVisibility(false);
     }
@@ -145,12 +145,12 @@ void ChunkRenderer::DiscardComponent(UProceduralMeshComponent *Comp)
     }
 }
 
-void ChunkRenderer::ReleaseChunk(FChunk *Chunk)
+void ChunkRenderer::ReleaseChunk(Chunk *Chunk)
 {
     if (!Chunk)
         return;
 
-    if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
+    if (UProceduralMeshComponent *Comp = Chunk->m_renderProxy.Get())
     {
         if (IsValid(Comp))
         {
@@ -165,9 +165,9 @@ void ChunkRenderer::ReleaseChunk(FChunk *Chunk)
 
             Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 
-            FreeComponentPool.Add(Comp);
+            m_freeComponentPool.Add(Comp);
         }
-        Chunk->RenderProxy.Reset();
+        Chunk->m_renderProxy.Reset();
     }
 }
 
@@ -176,7 +176,7 @@ void ChunkRenderer::ReleaseAllComponents()
 {
     // This function is the central point for destroying all pooled mesh components.
     // It ensures we don't leak components that the renderer created.
-    for (auto WeakComp : FreeComponentPool)
+    for (auto WeakComp : m_freeComponentPool)
     {
         // FIX: Resolve the weak pointer safely.
         // If the component was already destroyed (stale), .Get() returns null and we skip the body.
@@ -189,5 +189,5 @@ void ChunkRenderer::ReleaseAllComponents()
             }
         }
     }
-    FreeComponentPool.Empty();
+    m_freeComponentPool.Empty();
 }

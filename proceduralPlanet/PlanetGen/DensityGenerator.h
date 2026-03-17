@@ -16,6 +16,10 @@
 //   Zero = Surface
 class PROCEDURALPLANET_API DensityGenerator
 {
+    private:
+        DensityConfig m_densityConfig;
+        const IPlanetNoise *m_noiseProvider;
+
     public:
         // Constructor
         explicit DensityGenerator(const DensityConfig &InConfig, const IPlanetNoise *InNoiseProvider = nullptr);
@@ -28,7 +32,7 @@ class PROCEDURALPLANET_API DensityGenerator
                                      const FVector2D &UVMax) const;
 
         // Accessors for validation/debugging
-        const DensityConfig &GetConfig() const { return Config; }
+        const DensityConfig &GetConfig() const { return m_densityConfig; }
 
         // Calculate warped position on sphere surface (cube-to-sphere projection)
         FVector GetProjectedPosition(int32 x, int32 y, int32 z, int32 Resolution, const FVector &FaceNormal, const FVector &FaceRight, const FVector &FaceUp,
@@ -39,9 +43,6 @@ class PROCEDURALPLANET_API DensityGenerator
         FVector GetNormalAtPos(const FVector &LocalPos) const;
 
     private:
-        DensityConfig Config;
-        const IPlanetNoise *NoiseProvider;
-
         // Base sphere density (distance to center)
         float SampleSphereDensity(const FVector &PlanetRelativePosition) const;
 

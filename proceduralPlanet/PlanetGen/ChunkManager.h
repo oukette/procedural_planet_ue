@@ -9,20 +9,54 @@
 
 
 // Chunks hidden after a merge, waiting to be released after a delay
-struct FDeferredRelease
+struct DeferredRelease
 {
-        FChunkId Id;
+        ChunkId Id;
         int32 FrameCountdown;
+};
+
+
+enum class LeafTransitionType : uint8
+{
+    Split,
+    Merge
+};
+
+
+// Represent a transition from a parent to one or more children.
+struct LODTransition
+{
+        ChunkId Parent;
+        TArray<ChunkId> Children;  // Always 4 for a quadtree split
+        LeafTransitionType Type;
+        bool isReadyToCommit = false;
 };
 
 
 // Manages the lifecycle of all chunks (Quadtree logic, LOD selection, Async requests).
 // Owned strictly by the APlanet actor.
-class FChunkManager
+class ChunkManager
 {
+    private:
+        FPlanetConfig m_planetConfig;
+        const DensityGenerator *m_densityGen;         // Reference to the density generator (owned by APlanet)
+        TUniquePtr<ChunkRenderer> m_chunkRenderer;    // Handles visual components
+        TUniquePtr<ChunkGenerator> m_chunkGenerator;  // Handles async generation
+        TUniquePtr<PlanetQuadtree> m_quadtree;       // Handles LOD and Culling logic
+
+        TMap<ChunkId, TUniquePtr<Chunk>> m_chunksMap;         // The central registry of all chunks
+        TSet<ChunkId> m_renderSet;                             // ground truth of what is rendered
+        TSet<ChunkId> m_loadSet;                               // All chunk IDs that must be kept alive this frame
+        TMap<ChunkId, LODTransition> m_pendingTransitionsMap;  // keyed on parent ID
+        TSet<ChunkId> m_pendingChildSet;                       // O(1) mirror of all children in m_pendingTransitionsMap
+        TArray<DeferredRelease> m_deferredReleaseQueue;         // queue of chunks to release after a delay
+        TSet<ChunkId> m_deferredReleaseIdsMap;                 // O(1) mirror of m_deferredReleaseQueue
+
+        FVector m_lastObserverLocalPos = FVector::ZeroVector;
+
     public:
-        FChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen);
-        ~FChunkManager();
+        ChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen);
+        ~ChunkManager();
 
         // Returns the total number of chunks in memory.
         int32 GetTotalChunkCount() const;
@@ -48,66 +82,45 @@ class FChunkManager
         // Debug: Draws the bounding box of the actual generated meshes.
         void DrawDebugChunkBounds(const UWorld *World) const;
 
-
     private:
-        FPlanetConfig Config;
-        const DensityGenerator *Generator;           // Reference to the density generator (owned by APlanet)
-        TUniquePtr<ChunkRenderer> Renderer;          // Handles visual components
-        TUniquePtr<FChunkGenerator> ChunkGenerator;  // Handles async generation
-        TUniquePtr<FPlanetQuadtree> Quadtree;        // Handles LOD and Culling logic
-
-        TMap<FChunkId, TUniquePtr<FChunk>> ChunkMap;        // The central registry of all chunks
-        TSet<FChunkId> RenderSet;                           // ground truth of what is rendered
-        TSet<FChunkId> LoadSet;                             // All chunk IDs that must be kept alive this frame
-        TMap<FChunkId, FLODTransition> PendingTransitions;  // keyed on parent ID
-        TSet<FChunkId> PendingChildSet;                     // O(1) mirror of all children in PendingTransitions
-        TArray<FDeferredRelease> DeferredReleaseQueue;      // queue of chunks to release after a delay
-        TSet<FChunkId> DeferredReleaseIds;                  // O(1) mirror of DeferredReleaseQueue
-
-        FVector LastObserverLocalPos = FVector::ZeroVector;
 
         // Helper to create a new chunk entry
-        FChunk *CreateChunk(const FChunkId &Id);
+        Chunk *CreateChunk(const ChunkId &Id);
 
         // Helper to get a chunk from the map if it exists, otherwise create it
-        FChunk *GetChunk(const FChunkId &Id);
+        Chunk *GetChunk(const ChunkId &Id);
 
         int32 GetDeferredReleaseDelay() const;
 
-        // Derives LoadSet from RenderSet, PendingTransitions, and desired roots.
-        void BuildLoadSet(const TSet<FChunkId> &DesiredLeaves, const bool bShouldGenerateChunks);
+        // Derives m_loadSet from m_renderSet, m_pendingTransitionsMap, and desired roots.
+        void BuildLoadSet(const TSet<ChunkId> &DesiredLeaves, const bool bShouldGenerateChunks);
 
-        // Explicit initialization of the 6 root chunks directly into RenderSet
+        // Explicit initialization of the 6 root chunks directly into m_renderSet
         void InitializeRoots();
 
-        // Quadtree reconciliation, diff desired vs committed, build PendingTransitions
-        void ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves);
+        // Quadtree reconciliation, diff desired vs committed, build m_pendingTransitionsMap
+        void ReconcileTransitions(const TSet<ChunkId> &DesiredLeaves);
 
         // Ensure all needed chunks are generating/uploading
-        void AdvanceLoading(const TMap<FChunkId, float> &DistanceSqCache);
+        void AdvanceLoading(const TMap<ChunkId, float> &DistanceSqCache);
 
         // Atomic show/hide for complete groups
-        void CommitReadyTransitions(const bool bShouldGenerateChunks, const TMap<FChunkId, float> &DistanceSqCache);
+        void CommitReadyTransitions(const bool bShouldGenerateChunks, const TMap<ChunkId, float> &DistanceSqCache);
 
         // Atomic release of deferred chunks
         void ProcessDeferredReleases();
 
-        // Safety net: any chunk in ChunkMap not in LoadSet and not in flight gets deferred
+        // Safety net: any chunk in m_chunksMap not in m_loadSet and not in flight gets deferred
         void PruneOrphans();
 
-        // Pure math helpers
-        static FChunkId GetParentId(const FChunkId &Child);
-        static TArray<FChunkId> GetChildrenIds(const FChunkId &Parent);
-        static bool IsRootNode(const FChunkId &Id);
-
         // Helper to check if a chunk is in memory and has mesh data
-        bool IsChunkReady(const FChunkId &Id) const;
+        bool IsChunkReady(const ChunkId &Id) const;
 
         // Helper to defer hide a chunk
-        void DeferHideChunk(FChunk *Chunk, const FChunkId &Id);
+        void DeferHideChunk(Chunk *Chunk, const ChunkId &Id);
 
         // Callback executed on Game Thread when async generation finishes
-        void OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData);
+        void OnGenerationComplete(const ChunkId &Id, uint32 GenId, TUniquePtr<ChunkMeshData> MeshData);
 
         void DebugRootNodes();
 };
