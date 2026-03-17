@@ -6,12 +6,12 @@
 
 
 ChunkGenerator::ChunkGenerator(const FPlanetConfig &InConfig, const DensityGenerator *InDensityGen) :
-    Config(InConfig),
-    DensityGen(InDensityGen)
+    m_planetConfig(InConfig),
+    m_densityGen(InDensityGen)
 {
-    bIsStopping = false;
-    AliveToken = MakeShared<bool, ESPMode::ThreadSafe>(true);
-    ActiveThreadsCounter = MakeShared<FThreadSafeCounter, ESPMode::ThreadSafe>(0);
+    m_isStopping = false;
+    m_aliveToken = MakeShared<bool, ESPMode::ThreadSafe>(true);
+    m_activeThreadsCounter = MakeShared<FThreadSafeCounter, ESPMode::ThreadSafe>(0);
 }
 
 
@@ -26,18 +26,18 @@ ChunkGenerator::~ChunkGenerator()
                 "if seen during gameplay."));
 
     // Mark the token as false so any pending async tasks know we are dead.
-    if (AliveToken.IsValid())
+    if (m_aliveToken.IsValid())
     {
-        *AliveToken = false;
+        *m_aliveToken = false;
     }
 
     // Wait for background threads to finish.
     // If we destroy this object (and subsequently the APlanet's NoiseProvider),
     // any running threads accessing the noise provider will crash.
-    if (ActiveThreadsCounter.IsValid())
+    if (m_activeThreadsCounter.IsValid())
     {
         const double StartWaitTime = FPlatformTime::Seconds();
-        while (ActiveThreadsCounter->GetValue() > 0)
+        while (m_activeThreadsCounter->GetValue() > 0)
         {
             FPlatformProcess::Sleep(0.01f);  // Sleep 10ms to avoid hogging CPU
 
@@ -53,24 +53,24 @@ ChunkGenerator::~ChunkGenerator()
 
 void ChunkGenerator::RequestChunk(const FChunkId &Id, uint32 GenerationId, float PriorityScore)
 {
-    if (ActiveTasks.Contains(Id) || QueuedIds.Contains(Id))
+    if (m_activeTasks.Contains(Id) || m_queuedIds.Contains(Id))
         return;  // Already in queue
 
-    QueuedIds.Add(Id);
+    m_queuedIds.Add(Id);
     // Use a Min-Heap (Lowest Score at Top).
     // We use the 'Greater' predicate (>), which causes Heap functions to prioritize smaller values as 'Top'.
-    RequestsQueue.HeapPush({Id, GenerationId, PriorityScore}, [](const FChunkRequest &A, const FChunkRequest &B) { return A.PrioScore > B.PrioScore; });
+    m_requestsQueue.HeapPush({Id, GenerationId, PriorityScore}, [](const ChunkRequest &A, const ChunkRequest &B) { return A.PrioScore > B.PrioScore; });
 }
 
 
 void ChunkGenerator::Stop()
 {
-    bIsStopping = true;
-    RequestsQueue.Empty();
-    QueuedIds.Empty();
+    m_isStopping = true;
+    m_requestsQueue.Empty();
+    m_queuedIds.Empty();
 
     // Clear active tasks set immediately so no new tasks can be added or processed by logic relying on this set.
-    ActiveTasks.Empty();
+    m_activeTasks.Empty();
 }
 
 
@@ -79,60 +79,60 @@ void ChunkGenerator::CancelRequest(const FChunkId &Id)
     // Mark as cancelled regardless of whether it's queued or actively running.
     // - If queued: it will be popped and skipped in Update()
     // - If active: it will be caught in the game thread callback
-    CancelledTasks.Add(Id);
-    QueuedIds.Remove(Id);  // Keep QueuedIds consistent so RequestChunk can re-queue it later if needed
+    m_cancelledTasks.Add(Id);
+    m_queuedIds.Remove(Id);  // Keep m_queuedIds consistent so RequestChunk can re-queue it later if needed
 }
 
 
 void ChunkGenerator::Update()
 {
     // If stopping, don't start any new tasks.
-    if (bIsStopping)
+    if (m_isStopping)
     {
         return;
     }
 
     // Prune any cancelled IDs that are no longer active.
     // This handles the case where a task was cancelled and the chunk was destroyed before the async callback ever fired — meaning the callback never will,
-    // and the ID would otherwise leak in CancelledTasks indefinitely.
-    if (CancelledTasks.Num() > 0)
+    // and the ID would otherwise leak in m_cancelledTasks indefinitely.
+    if (m_cancelledTasks.Num() > 0)
     {
         TArray<FChunkId> StaleCancellations;
-        for (const FChunkId &Id : CancelledTasks)
+        for (const FChunkId &Id : m_cancelledTasks)
         {
-            if (!ActiveTasks.Contains(Id))
+            if (!m_activeTasks.Contains(Id))
                 StaleCancellations.Add(Id);
         }
         for (const FChunkId &Id : StaleCancellations)
-            CancelledTasks.Remove(Id);
+            m_cancelledTasks.Remove(Id);
     }
 
     // Check limits
-    if (ActiveTasks.Num() >= Config.MaxConcurrentGenerations)
+    if (m_activeTasks.Num() >= m_planetConfig.MaxConcurrentGenerations)
         return;
 
     int32 StartedThisTick = 0;
 
     // Process Queue
-    while (RequestsQueue.Num() > 0 && StartedThisTick < Config.ChunkGenerationRate)
+    while (m_requestsQueue.Num() > 0 && StartedThisTick < m_planetConfig.ChunkGenerationRate)
     {
-        if (ActiveTasks.Num() >= Config.MaxConcurrentGenerations)
+        if (m_activeTasks.Num() >= m_planetConfig.MaxConcurrentGenerations)
             break;
 
         // Efficiently pop the highest priority (lowest score) request from the heap (O(log n))
-        FChunkRequest Request;
-        RequestsQueue.HeapPop(Request, [](const FChunkRequest &A, const FChunkRequest &B) { return A.PrioScore > B.PrioScore; });
-        QueuedIds.Remove(Request.Id);
+        ChunkRequest Request;
+        m_requestsQueue.HeapPop(Request, [](const ChunkRequest &A, const ChunkRequest &B) { return A.PrioScore > B.PrioScore; });
+        m_queuedIds.Remove(Request.Id);
 
         // Skip if cancelled while sitting in the queue
-        if (CancelledTasks.Contains(Request.Id))
+        if (m_cancelledTasks.Contains(Request.Id))
         {
-            CancelledTasks.Remove(Request.Id);
+            m_cancelledTasks.Remove(Request.Id);
             continue;
         }
 
         // If not already active (double check)
-        if (!ActiveTasks.Contains(Request.Id))
+        if (!m_activeTasks.Contains(Request.Id))
         {
             StartAsyncTask(Request);
             StartedThisTick++;
@@ -141,25 +141,25 @@ void ChunkGenerator::Update()
 }
 
 
-void ChunkGenerator::SetOnChunkGeneratedCallback(FOnChunkGenerated InCallback) { OnGeneratedCallback = InCallback; }
+void ChunkGenerator::SetOnChunkGeneratedCallback(OnChunkGenerated InCallback) { m_onChunkGeneratedCallback = InCallback; }
 
 
-int32 ChunkGenerator::GetPendingCount() const { return RequestsQueue.Num() + ActiveTasks.Num(); }
+int32 ChunkGenerator::GetPendingCount() const { return m_requestsQueue.Num() + m_activeTasks.Num(); }
 
 
-void ChunkGenerator::StartAsyncTask(const FChunkRequest &Request)
+void ChunkGenerator::StartAsyncTask(const ChunkRequest &Request)
 {
-    ActiveTasks.Add(Request.Id);
+    m_activeTasks.Add(Request.Id);
 
     // Capture data by value for thread safety
     FChunkId Id = Request.Id;
     uint32 GenId = Request.GenerationId;
-    int32 Resolution = Config.GridResolution;
+    int32 Resolution = m_planetConfig.GridResolution;
     int32 LODLevel = Id.LODLevel;
-    float PlanetRadius = Config.PlanetRadius;
+    float PlanetRadius = m_planetConfig.PlanetRadius;
 
     // Copy DensityGenerator (it's lightweight config + pointer to noise)
-    DensityGenerator ThreadGen = *DensityGen;
+    DensityGenerator ThreadGen = *m_densityGen;
 
     // Calculate Transform (Stateless math via MathUtils)
     FChunkTransform ChunkTransform = FMathUtils::ComputeChunkTransform(Id, PlanetRadius);
@@ -178,11 +178,11 @@ void ChunkGenerator::StartAsyncTask(const FChunkRequest &Request)
 
     // Capture the lifecycle token. This shared pointer keeps the bool alive
     // even if 'this' generator is destroyed.
-    TSharedPtr<bool, ESPMode::ThreadSafe> Token = AliveToken;
+    TSharedPtr<bool, ESPMode::ThreadSafe> Token = m_aliveToken;
 
     // Capture the thread counter to keep it alive and modify it safely
-    ActiveThreadsCounter->Increment();
-    TSharedPtr<FThreadSafeCounter, ESPMode::ThreadSafe> CounterRef = ActiveThreadsCounter;
+    m_activeThreadsCounter->Increment();
+    TSharedPtr<FThreadSafeCounter, ESPMode::ThreadSafe> CounterRef = m_activeThreadsCounter;
 
     // RAII Guard: Ensure the counter is decremented when the lambda is destroyed,
     // whether the task finished naturally or was aborted/destroyed by the thread pool on exit.
@@ -211,7 +211,7 @@ void ChunkGenerator::StartAsyncTask(const FChunkRequest &Request)
                         {
                             // Safety Check: Is the generator still alive?
                             // If *Token is false, the generator destructor has already run.
-                            // accessing 'this' (e.g. bIsStopping) would crash.
+                            // accessing 'this' (e.g. m_isStopping) would crash.
                             if (!Token.IsValid() || !(*Token))
                             {
                                 return;
@@ -219,23 +219,23 @@ void ChunkGenerator::StartAsyncTask(const FChunkRequest &Request)
 
                             // If the generator is stopping, discard the result immediately.
                             // This prevents callbacks to a potentially destroyed ChunkManager.
-                            if (bIsStopping)
+                            if (m_isStopping)
                             {
                                 return;
                             }
 
-                            ActiveTasks.Remove(Id);
+                            m_activeTasks.Remove(Id);
 
                             // Check if this task was cancelled while it was running
-                            if (CancelledTasks.Contains(Id))
+                            if (m_cancelledTasks.Contains(Id))
                             {
-                                CancelledTasks.Remove(Id);  // Clean up the cancellation request
-                                return;                     // Do not call the callback
+                                m_cancelledTasks.Remove(Id);  // Clean up the cancellation request
+                                return;                       // Do not call the callback
                             }
 
-                            if (OnGeneratedCallback)
+                            if (m_onChunkGeneratedCallback)
                             {
-                                OnGeneratedCallback(Id, GenId, MakeUnique<FChunkMeshData>(MoveTemp(MeshData)));
+                                m_onChunkGeneratedCallback(Id, GenId, MakeUnique<FChunkMeshData>(MoveTemp(MeshData)));
                             }
                         });
           });

@@ -20,11 +20,35 @@ class PROCEDURALPLANET_API APlanet : public AActor
         USceneComponent *Root;
 
         TUniquePtr<ChunkManager> m_chunkManager;
-        TUniquePtr<SimpleNoise> NoiseProvider;
-        TUniquePtr<DensityGenerator> Generator;
+        TUniquePtr<SimpleNoise> m_noiseProvider;
+        TUniquePtr<DensityGenerator> m_densityGen;
 
         // Stores the finalized configuration after initPlanet() runs.
-        FPlanetConfig RuntimeConfig;
+        FPlanetConfig m_planetConfig;
+
+    public:
+        // Generation Control
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Generation")
+        bool bGenerateOnBeginPlay = true;
+
+        // General Settings
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        FPlanetGenSettings GenSettings;
+
+        // Grid & Voxel Settings
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        FPlanetGridSettings GridSettings;
+
+        // Noise
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        FNoiseSettings NoiseSettings;
+
+        // Performance
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        FPlanetPerformanceSettings PerformanceSettings;
+
+        // Internal State
+        bool bIsFarModelAutoCreated = false;
 
     protected:
         virtual void OnConstruction(const FTransform &Transform) override;
@@ -57,36 +81,10 @@ class PROCEDURALPLANET_API APlanet : public AActor
         virtual bool ShouldTickIfViewportsOnly() const override;
 
         // Editor Tools
-        UFUNCTION(CallInEditor, Category = "Planet|Generation")
-        void GeneratePlanet();
-
-        UFUNCTION(CallInEditor, Category = "Planet|Generation")
-        void ClearPlanet();
+        UFUNCTION(CallInEditor, Category = "Planet|Generation") void GeneratePlanet();
+        UFUNCTION(CallInEditor, Category = "Planet|Generation") void ClearPlanet();
 
         // Returns the normalized direction of gravity (pointing towards planet center) at a specific location.
         UFUNCTION(BlueprintCallable, Category = "Planet|Physics")
         FVector GetGravityDirection(const FVector &WorldLocation) const;
-
-        // Generation Control
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Generation")
-        bool bGenerateOnBeginPlay = true;
-
-        // General Settings
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-        FPlanetGenSettings GenSettings;
-
-        // Grid & Voxel Settings
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-        FPlanetGridSettings GridSettings;
-
-        // Noise
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-        FNoiseSettings NoiseSettings;
-
-        // Performance
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
-        FPlanetPerformanceSettings PerformanceSettings;
-
-        // Internal State
-        bool bIsFarModelAutoCreated = false;
 };

@@ -95,8 +95,8 @@ void APlanet::ClearPlanet()
 {
     // Reset Managers (Destroys ChunkManager, Renderer, and Chunks)
     m_chunkManager.Reset();
-    Generator.Reset();
-    NoiseProvider.Reset();
+    m_densityGen.Reset();
+    m_noiseProvider.Reset();
 
     // Destroy Far Model if we created it
     if (bIsFarModelAutoCreated && GenSettings.FarPlanetModel)
@@ -141,26 +141,26 @@ void APlanet::initPlanet()
     CalculateAutoGrid(FinalChunksPerFace, FinalVoxelSize, FinalResolution);
 
     // Initialize the planet config struct to feed the ChunkManager
-    RuntimeConfig = FPlanetConfig();
-    RuntimeConfig.PlanetRadius = GenSettings.PlanetRadius;
-    RuntimeConfig.ChunksPerFace = FinalChunksPerFace;  // The calculated value!
-    RuntimeConfig.Seed = GenSettings.Seed;
-    RuntimeConfig.bEnableCollision = GenSettings.bEnableCollision;
-    RuntimeConfig.bCastShadows = GenSettings.bCastShadows;
-    RuntimeConfig.VoxelSize = FinalVoxelSize;
-    RuntimeConfig.GridResolution = FinalResolution;
-    RuntimeConfig.MaxConcurrentGenerations = PerformanceSettings.MaxConcurrentGenerations;
-    RuntimeConfig.ChunkGenerationRate = PerformanceSettings.ChunksToSpawnPerFrame;
-    RuntimeConfig.MeshUpdatesPerFrame = PerformanceSettings.MeshUpdatesPerFrame;
-    RuntimeConfig.FarDistanceThreshold = GenSettings.PlanetRadius * GenSettings.RenderDistanceMultiplier;
-    RuntimeConfig.LODSplitScreenFraction = GridSettings.LODSplitScreenFraction;
-    RuntimeConfig.LODMergeHysteresisRatio = GridSettings.LODMergeHysteresisRatio;
-    RuntimeConfig.MaxLookAheadTime = PerformanceSettings.MaxLookAheadTime;
-    RuntimeConfig.MinLookAheadTime = PerformanceSettings.MinLookAheadTime;
-    RuntimeConfig.LookAheadAltitudeScale = PerformanceSettings.LookAheadAltitudeRadiusFactor * GenSettings.PlanetRadius;
+    m_planetConfig = FPlanetConfig();
+    m_planetConfig.PlanetRadius = GenSettings.PlanetRadius;
+    m_planetConfig.ChunksPerFace = FinalChunksPerFace;  // The calculated value!
+    m_planetConfig.Seed = GenSettings.Seed;
+    m_planetConfig.bEnableCollision = GenSettings.bEnableCollision;
+    m_planetConfig.bCastShadows = GenSettings.bCastShadows;
+    m_planetConfig.VoxelSize = FinalVoxelSize;
+    m_planetConfig.GridResolution = FinalResolution;
+    m_planetConfig.MaxConcurrentGenerations = PerformanceSettings.MaxConcurrentGenerations;
+    m_planetConfig.ChunkGenerationRate = PerformanceSettings.ChunksToSpawnPerFrame;
+    m_planetConfig.MeshUpdatesPerFrame = PerformanceSettings.MeshUpdatesPerFrame;
+    m_planetConfig.FarDistanceThreshold = GenSettings.PlanetRadius * GenSettings.RenderDistanceMultiplier;
+    m_planetConfig.LODSplitScreenFraction = GridSettings.LODSplitScreenFraction;
+    m_planetConfig.LODMergeHysteresisRatio = GridSettings.LODMergeHysteresisRatio;
+    m_planetConfig.MaxLookAheadTime = PerformanceSettings.MaxLookAheadTime;
+    m_planetConfig.MinLookAheadTime = PerformanceSettings.MinLookAheadTime;
+    m_planetConfig.LookAheadAltitudeScale = PerformanceSettings.LookAheadAltitudeRadiusFactor * GenSettings.PlanetRadius;
 
     // Create Noise Provider
-    NoiseProvider = MakeUnique<SimpleNoise>();
+    m_noiseProvider = MakeUnique<SimpleNoise>();
 
     // Create density config and init the generator
     DensityConfig densityConfig;
@@ -168,10 +168,10 @@ void APlanet::initPlanet()
     densityConfig.Seed = GenSettings.Seed;
     densityConfig.VoxelSize = FinalVoxelSize;
     densityConfig.Noise = NoiseSettings;
-    Generator = MakeUnique<DensityGenerator>(densityConfig, NoiseProvider.Get());
+    m_densityGen = MakeUnique<DensityGenerator>(densityConfig, m_noiseProvider.Get());
 
     // Finally, init the ChunkManager
-    m_chunkManager = MakeUnique<ChunkManager>(RuntimeConfig, Generator.Get());
+    m_chunkManager = MakeUnique<ChunkManager>(m_planetConfig, m_densityGen.Get());
     m_chunkManager->Initialize(this, GenSettings.DebugMaterial);  // Pass context for rendering
 }
 
@@ -370,11 +370,11 @@ void APlanet::UpdateFarModelVisibility(const FPlanetViewContext &Context)
 
         // Hysteresis logic for Far Model
         // ShowThreshold: Distance to SHOW the far model (getting farther)
-        float ShowThreshold = RuntimeConfig.FarDistanceThreshold * FPlanetStatics::FarModelDistanceRatio;
+        float ShowThreshold = m_planetConfig.FarDistanceThreshold * FPlanetStatics::FarModelDistanceRatio;
 
         // HideThreshold: Distance to HIDE the far model (getting closer)
         // We keep it visible a bit longer to ensure chunks have fully spawned underneath.
-        float HideThreshold = RuntimeConfig.FarDistanceThreshold * FPlanetStatics::FarModelHideRatio;
+        float HideThreshold = m_planetConfig.FarDistanceThreshold * FPlanetStatics::FarModelHideRatio;
 
         bool bIsVisible = !GenSettings.FarPlanetModel->IsHidden();
 
@@ -427,11 +427,11 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
 
         // --- onscreen debug line 3: Per-LOD visible chunk breakdown ---
         TArray<int32> PerLODCount;
-        PerLODCount.Init(0, RuntimeConfig.MaxLOD + 1);
+        PerLODCount.Init(0, m_planetConfig.MaxLOD + 1);
         m_chunkManager->GetVisibleCountPerLOD(PerLODCount);
 
         FString LODStr = TEXT("[LOD] ");
-        for (int32 i = 0; i <= RuntimeConfig.MaxLOD; ++i)
+        for (int32 i = 0; i <= m_planetConfig.MaxLOD; ++i)
         {
             if (PerLODCount[i] > 0)
             {
@@ -443,13 +443,13 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
         // --- onscreen debug line 4: Next split distance for current LOD ---
         // Show how far the observer is from the next LOD transition
         int32 CurrentMaxLOD = 0;
-        for (int32 i = 0; i <= RuntimeConfig.MaxLOD; ++i)
+        for (int32 i = 0; i <= m_planetConfig.MaxLOD; ++i)
             if (PerLODCount[i] > 0)
                 CurrentMaxLOD = i;
 
-        float NextSplitNodeSize = (RuntimeConfig.PlanetRadius * PI * 0.5f) / (float)(1 << CurrentMaxLOD);
-        float NextSplitDist = NextSplitNodeSize * RuntimeConfig.LODSplitScreenFraction;
-        float NextMergeDist = NextSplitNodeSize * RuntimeConfig.LODSplitScreenFraction * RuntimeConfig.LODMergeHysteresisRatio;
+        float NextSplitNodeSize = (m_planetConfig.PlanetRadius * PI * 0.5f) / (float)(1 << CurrentMaxLOD);
+        float NextSplitDist = NextSplitNodeSize * m_planetConfig.LODSplitScreenFraction;
+        float NextMergeDist = NextSplitNodeSize * m_planetConfig.LODSplitScreenFraction * m_planetConfig.LODMergeHysteresisRatio;
         float ClosestChunkDist = DistToSurface;  // approximation
 
         GEngine->AddOnScreenDebugMessage(
