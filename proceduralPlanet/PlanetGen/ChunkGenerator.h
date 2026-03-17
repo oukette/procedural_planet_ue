@@ -17,11 +17,11 @@ struct FChunkRequest
         float PrioScore;  // Lower score = Higher priority (e.g. Distance)
 };
 
-class FChunkGenerator
+class ChunkGenerator
 {
     public:
-        FChunkGenerator(const FPlanetConfig &InConfig, const DensityGenerator *InDensityGen);
-        ~FChunkGenerator();
+        ChunkGenerator(const FPlanetConfig &InConfig, const DensityGenerator *InDensityGen);
+        ~ChunkGenerator();
 
         // Adds a chunk to the generation queue
         void RequestChunk(const FChunkId &Id, uint32 GenerationId, float PriorityScore);

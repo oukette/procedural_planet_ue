@@ -94,7 +94,7 @@ void APlanet::GeneratePlanet()
 void APlanet::ClearPlanet()
 {
     // Reset Managers (Destroys ChunkManager, Renderer, and Chunks)
-    ChunkManager.Reset();
+    m_chunkManager.Reset();
     Generator.Reset();
     NoiseProvider.Reset();
 
@@ -171,8 +171,8 @@ void APlanet::initPlanet()
     Generator = MakeUnique<DensityGenerator>(densityConfig, NoiseProvider.Get());
 
     // Finally, init the ChunkManager
-    ChunkManager = MakeUnique<FChunkManager>(RuntimeConfig, Generator.Get());
-    ChunkManager->Initialize(this, GenSettings.DebugMaterial);  // Pass context for rendering
+    m_chunkManager = MakeUnique<ChunkManager>(RuntimeConfig, Generator.Get());
+    m_chunkManager->Initialize(this, GenSettings.DebugMaterial);  // Pass context for rendering
 }
 
 
@@ -327,7 +327,7 @@ void APlanet::BuildVerticalFOV(APlayerCameraManager *PCM, FPlanetViewContext &Co
     if (!PCM)
         return;
 
-    float AspectRatio = 1.777f; // fallback 16:9
+    float AspectRatio = 1.777f;  // fallback 16:9
     if (GEngine && GEngine->GameViewport && GEngine->GameViewport->Viewport)
     {
         FIntPoint Size = GEngine->GameViewport->Viewport->GetSizeXY();
@@ -343,18 +343,18 @@ void APlanet::BuildVerticalFOV(APlayerCameraManager *PCM, FPlanetViewContext &Co
 
 void APlanet::UpdateChunkManager(const FPlanetViewContext &Context)
 {
-    if (ChunkManager.IsValid())
+    if (m_chunkManager.IsValid())
     {
-        ChunkManager->Update(Context);
+        m_chunkManager->Update(Context);
 
         if (GenSettings.bShowDebugChunkGrid)
         {
-            ChunkManager->DrawDebugGrid(GetWorld());
+            m_chunkManager->DrawDebugGrid(GetWorld());
         }
 
         if (GenSettings.bShowDebugChunkBounds)
         {
-            ChunkManager->DrawDebugChunkBounds(GetWorld());
+            m_chunkManager->DrawDebugChunkBounds(GetWorld());
         }
     }
 }
@@ -414,11 +414,11 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
                                      FColor::Cyan,
                                      FString::Printf(TEXT("[Planet] %s | Alt: %.0f m | Speed: %.0f km/h"), *StatusStr, DistToSurface / 100.f, SpeedKmh));
 
-    if (ChunkManager.IsValid())
+    if (m_chunkManager.IsValid())
     {
-        const int32 Vis = ChunkManager->GetVisibleChunkCount();
-        const int32 Mem = ChunkManager->GetTotalChunkCount();
-        const int32 Pending = ChunkManager->GetPendingCount();
+        const int32 Vis = m_chunkManager->GetVisibleChunkCount();
+        const int32 Mem = m_chunkManager->GetTotalChunkCount();
+        const int32 Pending = m_chunkManager->GetPendingCount();
 
         // --- onscreen debug line 2: Chunk counts per state ---
         const FColor ChunkColor = (Vis == 0) ? FColor::Red : FColor::Green;
@@ -428,7 +428,7 @@ void APlanet::DrawDebugInfo(const FPlanetViewContext &Context) const
         // --- onscreen debug line 3: Per-LOD visible chunk breakdown ---
         TArray<int32> PerLODCount;
         PerLODCount.Init(0, RuntimeConfig.MaxLOD + 1);
-        ChunkManager->GetVisibleCountPerLOD(PerLODCount);
+        m_chunkManager->GetVisibleCountPerLOD(PerLODCount);
 
         FString LODStr = TEXT("[LOD] ");
         for (int32 i = 0; i <= RuntimeConfig.MaxLOD; ++i)

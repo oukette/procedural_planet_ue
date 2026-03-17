@@ -5,7 +5,7 @@
 #include "MathUtils.h"
 
 
-FChunkGenerator::FChunkGenerator(const FPlanetConfig &InConfig, const DensityGenerator *InDensityGen) :
+ChunkGenerator::ChunkGenerator(const FPlanetConfig &InConfig, const DensityGenerator *InDensityGen) :
     Config(InConfig),
     DensityGen(InDensityGen)
 {
@@ -15,13 +15,13 @@ FChunkGenerator::FChunkGenerator(const FPlanetConfig &InConfig, const DensityGen
 }
 
 
-FChunkGenerator::~FChunkGenerator()
+ChunkGenerator::~ChunkGenerator()
 {
     // Log a warning if Stop() was not called before destruction.
     // This is a lifecycle hint for debugging.
     UE_LOG(LogTemp,
            Warning,
-           TEXT("FChunkGenerator destroyed without Stop() being called. "
+           TEXT("ChunkGenerator destroyed without Stop() being called. "
                 "This is acceptable during normal shutdown but may indicate a lifecycle issue "
                 "if seen during gameplay."));
 
@@ -51,7 +51,7 @@ FChunkGenerator::~FChunkGenerator()
 }
 
 
-void FChunkGenerator::RequestChunk(const FChunkId &Id, uint32 GenerationId, float PriorityScore)
+void ChunkGenerator::RequestChunk(const FChunkId &Id, uint32 GenerationId, float PriorityScore)
 {
     if (ActiveTasks.Contains(Id) || QueuedIds.Contains(Id))
         return;  // Already in queue
@@ -63,7 +63,7 @@ void FChunkGenerator::RequestChunk(const FChunkId &Id, uint32 GenerationId, floa
 }
 
 
-void FChunkGenerator::Stop()
+void ChunkGenerator::Stop()
 {
     bIsStopping = true;
     RequestsQueue.Empty();
@@ -74,7 +74,7 @@ void FChunkGenerator::Stop()
 }
 
 
-void FChunkGenerator::CancelRequest(const FChunkId &Id)
+void ChunkGenerator::CancelRequest(const FChunkId &Id)
 {
     // Mark as cancelled regardless of whether it's queued or actively running.
     // - If queued: it will be popped and skipped in Update()
@@ -84,7 +84,7 @@ void FChunkGenerator::CancelRequest(const FChunkId &Id)
 }
 
 
-void FChunkGenerator::Update()
+void ChunkGenerator::Update()
 {
     // If stopping, don't start any new tasks.
     if (bIsStopping)
@@ -141,13 +141,13 @@ void FChunkGenerator::Update()
 }
 
 
-void FChunkGenerator::SetOnChunkGeneratedCallback(FOnChunkGenerated InCallback) { OnGeneratedCallback = InCallback; }
+void ChunkGenerator::SetOnChunkGeneratedCallback(FOnChunkGenerated InCallback) { OnGeneratedCallback = InCallback; }
 
 
-int32 FChunkGenerator::GetPendingCount() const { return RequestsQueue.Num() + ActiveTasks.Num(); }
+int32 ChunkGenerator::GetPendingCount() const { return RequestsQueue.Num() + ActiveTasks.Num(); }
 
 
-void FChunkGenerator::StartAsyncTask(const FChunkRequest &Request)
+void ChunkGenerator::StartAsyncTask(const FChunkRequest &Request)
 {
     ActiveTasks.Add(Request.Id);
 
