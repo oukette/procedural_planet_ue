@@ -30,14 +30,14 @@ ChunkManager::~ChunkManager()
     {
         for (auto &Pair : m_chunksMap)
         {
-            FChunk *Chunk = Pair.Value.Get();
+            Chunk *Chunk = Pair.Value.Get();
 
-            if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
+            if (UProceduralMeshComponent *Comp = Chunk->m_renderProxy.Get())
             {
                 // Hand the component back to the renderer for immediate safe disposal.
                 // We do NOT use ReleaseChunk (which pools it) because we are shutting down.
                 m_chunkRenderer->DiscardComponent(Comp);
-                Chunk->RenderProxy.Reset();
+                Chunk->m_renderProxy.Reset();
             }
         }
 
@@ -57,10 +57,10 @@ void ChunkManager::GetVisibleCountPerLOD(TArray<int32> &OutCounts) const
 {
     for (const auto &Pair : m_chunksMap)
     {
-        const FChunk *Chunk = Pair.Value.Get();
-        if (Chunk->State == EChunkState::Visible)
+        const Chunk *Chunk = Pair.Value.Get();
+        if (Chunk->m_state == ChunkState::Visible)
         {
-            const int32 LOD = Chunk->Id.LODLevel;
+            const int32 LOD = Chunk->m_ID.LODLevel;
             if (OutCounts.IsValidIndex(LOD))
                 OutCounts[LOD]++;
         }
@@ -76,7 +76,7 @@ void ChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
     m_chunkRenderer = MakeUnique<ChunkRenderer>(Owner, Material);
 
     m_chunkGenerator = MakeUnique<ChunkGenerator>(m_planetConfig, m_densityGen);
-    m_chunkGenerator->SetOnChunkGeneratedCallback([this](const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData)
+    m_chunkGenerator->SetOnChunkGeneratedCallback([this](const ChunkId &Id, uint32 GenId, TUniquePtr<ChunkMeshData> MeshData)
                                                   { OnGenerationComplete(Id, GenId, MoveTemp(MeshData)); });
 
     m_quadtree = MakeUnique<PlanetQuadtree>(m_planetConfig);
@@ -88,22 +88,22 @@ void ChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
 }
 
 
-FChunk *ChunkManager::CreateChunk(const FChunkId &Id)
+Chunk *ChunkManager::CreateChunk(const ChunkId &Id)
 {
-    if (TUniquePtr<FChunk> *Existing = m_chunksMap.Find(Id))
+    if (TUniquePtr<Chunk> *Existing = m_chunksMap.Find(Id))
         return Existing->Get();  // security to prevent overwriting an existing entry if called twice for the same ID
 
-    TUniquePtr<FChunk> NewChunk = MakeUnique<FChunk>(Id);
-    FChunk *Ptr = NewChunk.Get();
+    TUniquePtr<Chunk> NewChunk = MakeUnique<Chunk>(Id);
+    Chunk *Ptr = NewChunk.Get();
     m_chunksMap.Add(Id, MoveTemp(NewChunk));
     return Ptr;
 }
 
 
-FChunk *ChunkManager::GetChunk(const FChunkId &Id)
+Chunk *ChunkManager::GetChunk(const ChunkId &Id)
 {
     // If it exists, return it
-    if (TUniquePtr<FChunk> *Found = m_chunksMap.Find(Id))
+    if (TUniquePtr<Chunk> *Found = m_chunksMap.Find(Id))
         return Found->Get();
 
     return nullptr;
@@ -123,23 +123,23 @@ int32 ChunkManager::GetDeferredReleaseDelay() const
 }
 
 
-bool ChunkManager::IsChunkReady(const FChunkId &Id) const
+bool ChunkManager::IsChunkReady(const ChunkId &Id) const
 {
-    if (const TUniquePtr<FChunk> *Found = m_chunksMap.Find(Id))
+    if (const TUniquePtr<Chunk> *Found = m_chunksMap.Find(Id))
     {
-        const EChunkState S = Found->Get()->State;
-        return (S == EChunkState::MeshReady || S == EChunkState::Visible) && !m_deferredReleaseIdsMap.Contains(Id);
+        const ChunkState S = Found->Get()->m_state;
+        return (S == ChunkState::MeshReady || S == ChunkState::Visible) && !m_deferredReleaseIdsMap.Contains(Id);
     }
 
     return false;
 }
 
 
-void ChunkManager::DeferHideChunk(FChunk *Chunk, const FChunkId &Id)
+void ChunkManager::DeferHideChunk(Chunk *Chunk, const ChunkId &Id)
 {
     check(Chunk != nullptr);  // replaces a classic if nullptr
     m_chunkRenderer->HideChunk(Chunk);
-    Chunk->State = EChunkState::MeshReady;
+    Chunk->m_state = ChunkState::MeshReady;
     m_deferredReleaseQueue.Add({Id, GetDeferredReleaseDelay()});
     m_deferredReleaseIdsMap.Add(Id);
 }
@@ -155,14 +155,14 @@ void ChunkManager::Update(const FPlanetViewContext &Context)
     if (bShouldGenerateChunks && m_quadtree)
         m_quadtree->Update(Context);
 
-    const TSet<FChunkId> &DesiredLeaves = (bShouldGenerateChunks && m_quadtree) ? m_quadtree->GetDesiredLeaves() : TSet<FChunkId>();
+    const TSet<ChunkId> &DesiredLeaves = (bShouldGenerateChunks && m_quadtree) ? m_quadtree->GetDesiredLeaves() : TSet<ChunkId>();
 
     // Build distance cache once — reused by AdvanceLoading and CommitReadyTransitions
-    TMap<FChunkId, float> DistanceSqCache;
+    TMap<ChunkId, float> DistanceSqCache;
     DistanceSqCache.Reserve(m_chunksMap.Num());
     for (const auto &Pair : m_chunksMap)
     {
-        const FChunkId &Id = Pair.Key;
+        const ChunkId &Id = Pair.Key;
         DistanceSqCache.Add(Id, FVector::DistSquared(FMathUtils::GetChunkCenter(Id, m_planetConfig.PlanetRadius), m_lastObserverLocalPos));
     }
 
@@ -180,12 +180,12 @@ void ChunkManager::Update(const FPlanetViewContext &Context)
 }
 
 
-void ChunkManager::BuildLoadSet(const TSet<FChunkId> &DesiredLeaves, const bool bShouldGenerateChunks)
+void ChunkManager::BuildLoadSet(const TSet<ChunkId> &DesiredLeaves, const bool bShouldGenerateChunks)
 {
     m_loadSet.Reset();
 
     // Everything currently rendered must stay alive
-    for (const FChunkId &Id : m_renderSet)
+    for (const ChunkId &Id : m_renderSet)
         m_loadSet.Add(Id);
 
     // Both sides of every pending transition must stay alive
@@ -194,7 +194,7 @@ void ChunkManager::BuildLoadSet(const TSet<FChunkId> &DesiredLeaves, const bool 
         const LODTransition &T = Pair.Value;
         m_loadSet.Add(T.Parent);
 
-        for (const FChunkId &ChildId : T.Children)
+        for (const ChunkId &ChildId : T.Children)
             m_loadSet.Add(ChildId);
     }
 
@@ -204,14 +204,14 @@ void ChunkManager::BuildLoadSet(const TSet<FChunkId> &DesiredLeaves, const bool 
     {
         for (uint8 Face = 0; Face < 6; ++Face)
         {
-            FChunkId RootId(Face, FIntVector(0, 0, 0), 0);
+            ChunkId RootId(Face, FIntVector(0, 0, 0), 0);
 
             if (m_renderSet.Contains(RootId))
                 continue;  // Already rendered, normal lifecycle handles it
 
             // Check whether any rendered chunk belongs to this face
             bool bFaceAlreadyCovered = false;
-            for (const FChunkId &RenderedId : m_renderSet)
+            for (const ChunkId &RenderedId : m_renderSet)
             {
                 if (RenderedId.FaceIndex == Face)
                 {
@@ -231,7 +231,7 @@ void ChunkManager::InitializeRoots()
 {
     for (uint8 Face = 0; Face < 6; ++Face)
     {
-        FChunkId RootId(Face, FIntVector(0, 0, 0), 0);
+        ChunkId RootId(Face, FIntVector(0, 0, 0), 0);
         CreateChunk(RootId);
         // FIX: Do not add to m_renderSet yet. They are not visible.
         // CommitReadyTransitions will promote them when they are MeshReady.
@@ -239,10 +239,10 @@ void ChunkManager::InitializeRoots()
 }
 
 
-void ChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
+void ChunkManager::ReconcileTransitions(const TSet<ChunkId> &DesiredLeaves)
 {
     // --- A1. Desired but not rendered → find committed ancestor → register Split ---
-    for (const FChunkId &Id : DesiredLeaves)
+    for (const ChunkId &Id : DesiredLeaves)
     {
         if (m_renderSet.Contains(Id))
             continue;  // Already rendered, nothing to do
@@ -251,7 +251,7 @@ void ChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
             continue;  // Parent already has a pending transition
 
         // Walk up to find the closest ancestor that is currently rendered
-        FChunkId AncestorId = Id;
+        ChunkId AncestorId = Id;
         while (!IsRootNode(AncestorId))
         {
             AncestorId = GetParentId(AncestorId);
@@ -264,7 +264,7 @@ void ChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
                     T.Type = LeafTransitionType::Split;
                     T.Parent = AncestorId;
                     T.Children = GetChildrenIds(AncestorId);
-                    for (const FChunkId &ChildId : T.Children)
+                    for (const ChunkId &ChildId : T.Children)
                         m_pendingChildSet.Add(ChildId);
 
                     m_pendingTransitionsMap.Add(AncestorId, MoveTemp(T));
@@ -276,9 +276,9 @@ void ChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
     }
 
     // --- A2. Rendered but not desired → find desired ancestor → register Merge ---
-    TArray<FChunkId> ToUnrender;
+    TArray<ChunkId> ToUnrender;
 
-    for (const FChunkId &Id : m_renderSet)
+    for (const ChunkId &Id : m_renderSet)
     {
         if (DesiredLeaves.Contains(Id))
             continue;  // Still desired, nothing to do
@@ -291,7 +291,7 @@ void ChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
             continue;
 
         // Walk up to find the closest desired ancestor, including the root itself
-        FChunkId AncestorId = Id;
+        ChunkId AncestorId = Id;
         bool bFoundDesiredAncestor = false;
 
         while (true)
@@ -305,7 +305,7 @@ void ChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
                     T.Type = LeafTransitionType::Merge;
                     T.Parent = AncestorId;
                     T.Children = GetChildrenIds(AncestorId);
-                    for (const FChunkId &ChildId : T.Children)
+                    for (const ChunkId &ChildId : T.Children)
                         m_pendingChildSet.Add(ChildId);
 
                     m_pendingTransitionsMap.Add(AncestorId, MoveTemp(T));
@@ -327,10 +327,10 @@ void ChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
     }
 
     // Process unrendering (Far Model overlap logic)
-    for (const FChunkId &Id : ToUnrender)
+    for (const ChunkId &Id : ToUnrender)
     {
-        FChunk *Chunk = GetChunk(Id);
-        if (Chunk && (Chunk->State == EChunkState::Visible || Chunk->State == EChunkState::MeshReady))
+        Chunk *Chunk = GetChunk(Id);
+        if (Chunk && (Chunk->m_state == ChunkState::Visible || Chunk->m_state == ChunkState::MeshReady))
         {
             DeferHideChunk(Chunk, Id);
         }
@@ -338,7 +338,7 @@ void ChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
     }
 
     // --- A3. Conflict resolution: cancel Split if Merge now exists for same region, and vice versa ---
-    TArray<FChunkId> ToCancel;
+    TArray<ChunkId> ToCancel;
     for (const auto &Pair : m_pendingTransitionsMap)
     {
         const LODTransition &T = Pair.Value;
@@ -347,7 +347,7 @@ void ChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
             // Cancel only if the desired leaves have moved back UP the tree — i.e. the parent itself or an ancestor is now desired (observer moved away).
             // Do NOT cancel just because children aren't direct leaves — they may themselves need to split further, meaning deeper descendants are desired.
             bool bParentOrAncestorDesired = false;
-            FChunkId WalkId = T.Parent;
+            ChunkId WalkId = T.Parent;
             while (true)
             {
                 if (DesiredLeaves.Contains(WalkId))
@@ -362,10 +362,10 @@ void ChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
 
             // Also check: is any desired leaf a descendant of the transition parent?
             bool bAnyDescendantDesired = false;
-            for (const FChunkId &LeafId : DesiredLeaves)
+            for (const ChunkId &LeafId : DesiredLeaves)
             {
                 // Walk up from each desired leaf — if we hit T.Parent, it's a descendant
-                FChunkId AncestorWalk = LeafId;
+                ChunkId AncestorWalk = LeafId;
                 while (!IsRootNode(AncestorWalk))
                 {
                     AncestorWalk = GetParentId(AncestorWalk);
@@ -391,11 +391,11 @@ void ChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
         }
     }
 
-    for (const FChunkId &Id : ToCancel)
+    for (const ChunkId &Id : ToCancel)
     {
         // UE_LOG(LogTemp, Log, TEXT("Transition cancelled — LOD:%d Face:%d"), Id.LODLevel, Id.FaceIndex);
         const LODTransition &T = m_pendingTransitionsMap[Id];
-        for (const FChunkId &ChildId : T.Children)
+        for (const ChunkId &ChildId : T.Children)
             m_pendingChildSet.Remove(ChildId);
 
         m_pendingTransitionsMap.Remove(Id);
@@ -403,20 +403,20 @@ void ChunkManager::ReconcileTransitions(const TSet<FChunkId> &DesiredLeaves)
 }
 
 
-void ChunkManager::AdvanceLoading(const TMap<FChunkId, float> &DistanceSqCache)
+void ChunkManager::AdvanceLoading(const TMap<ChunkId, float> &DistanceSqCache)
 {
     // Cancel generation for any Pending/Generating chunk no longer needed
     // This is the primary fix for cache growth at high speed
     for (auto &Pair : m_chunksMap)
     {
-        const FChunkId &Id = Pair.Key;
-        FChunk *Chunk = Pair.Value.Get();
+        const ChunkId &Id = Pair.Key;
+        Chunk *Chunk = Pair.Value.Get();
 
-        if (!m_loadSet.Contains(Id) && (Chunk->State == EChunkState::Pending || Chunk->State == EChunkState::Generating))
+        if (!m_loadSet.Contains(Id) && (Chunk->m_state == ChunkState::Pending || Chunk->m_state == ChunkState::Generating))
         {
             m_chunkGenerator->CancelRequest(Id);
-            Chunk->GenerationId++;  // invalidate any in-flight task for this chunk
-            Chunk->State = EChunkState::None;
+            Chunk->m_generationId++;  // invalidate any in-flight task for this chunk
+            Chunk->m_state = ChunkState::None;
             // Now PruneOrphans can collect it this frame
         }
     }
@@ -424,34 +424,34 @@ void ChunkManager::AdvanceLoading(const TMap<FChunkId, float> &DistanceSqCache)
     int32 MeshUploadsThisFrame = 0;
 
     // First pass: request generation for all None-state chunks (order doesn't matter, priority is handled inside m_chunkGenerator's heap)
-    for (const FChunkId &Id : m_loadSet)
+    for (const ChunkId &Id : m_loadSet)
     {
-        FChunk *Chunk = GetChunk(Id);
+        Chunk *Chunk = GetChunk(Id);
         if (!Chunk)
             Chunk = CreateChunk(Id);
 
-        if (Chunk->State == EChunkState::None)
+        if (Chunk->m_state == ChunkState::None)
         {
-            Chunk->GenerationId++;
-            Chunk->State = EChunkState::Pending;
+            Chunk->m_generationId++;
+            Chunk->m_state = ChunkState::Pending;
             float DistSq = DistanceSqCache.Contains(Id)
                                ? DistanceSqCache[Id]
                                : FVector::DistSquared(FMathUtils::GetChunkCenter(Id, m_planetConfig.PlanetRadius), m_lastObserverLocalPos);
-            m_chunkGenerator->RequestChunk(Id, Chunk->GenerationId, DistSq);
+            m_chunkGenerator->RequestChunk(Id, Chunk->m_generationId, DistSq);
         }
     }
 
     // Second pass: upload meshes in distance order — closest chunk gets GPU memory first
-    TArray<FChunkId> DataReadyChunks;
-    for (const FChunkId &Id : m_loadSet)
+    TArray<ChunkId> DataReadyChunks;
+    for (const ChunkId &Id : m_loadSet)
     {
-        FChunk *Chunk = GetChunk(Id);
-        if (Chunk && Chunk->State == EChunkState::DataReady)
+        Chunk *Chunk = GetChunk(Id);
+        if (Chunk && Chunk->m_state == ChunkState::DataReady)
             DataReadyChunks.Add(Id);
     }
 
     DataReadyChunks.Sort(
-        [&DistanceSqCache, this](const FChunkId &A, const FChunkId &B)
+        [&DistanceSqCache, this](const ChunkId &A, const ChunkId &B)
         {
             const float DistA = DistanceSqCache.Contains(A) ? DistanceSqCache[A] : 0.f;
             const float DistB = DistanceSqCache.Contains(B) ? DistanceSqCache[B] : 0.f;
@@ -459,47 +459,47 @@ void ChunkManager::AdvanceLoading(const TMap<FChunkId, float> &DistanceSqCache)
         });
 
 
-    for (const FChunkId &Id : DataReadyChunks)
+    for (const ChunkId &Id : DataReadyChunks)
     {
         if (MeshUploadsThisFrame >= m_planetConfig.MeshUpdatesPerFrame)
             break;
 
-        FChunk *Chunk = GetChunk(Id);
+        Chunk *Chunk = GetChunk(Id);
         if (Chunk)
         {
             m_chunkRenderer->PrepareChunk(Chunk, m_planetConfig.bEnableCollision);
-            Chunk->State = EChunkState::MeshReady;
+            Chunk->m_state = ChunkState::MeshReady;
             MeshUploadsThisFrame++;
         }
     }
 }
 
 
-void ChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks, const TMap<FChunkId, float> &DistanceSqCache)
+void ChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks, const TMap<ChunkId, float> &DistanceSqCache)
 {
     // Promote root chunks first. Only bootstrap-promote roots when L0 chunks are supposed to be visible.
     if (bShouldGenerateChunks)
     {
         for (const auto &Pair : m_chunksMap)
         {
-            const FChunkId &Id = Pair.Key;
+            const ChunkId &Id = Pair.Key;
             if (IsRootNode(Id) && !m_renderSet.Contains(Id) && IsChunkReady(Id))
             {
-                FChunk *Root = GetChunk(Id);
+                Chunk *Root = GetChunk(Id);
                 m_chunkRenderer->ShowChunk(Root);
-                Root->State = EChunkState::Visible;
+                Root->m_state = ChunkState::Visible;
                 m_renderSet.Add(Id);
             }
         }
     }
 
     // Collect and sort pending transitions by distance — closest commits first
-    TArray<FChunkId> SortedTransitionKeys;
+    TArray<ChunkId> SortedTransitionKeys;
     for (const auto &Pair : m_pendingTransitionsMap)
         SortedTransitionKeys.Add(Pair.Key);
 
     SortedTransitionKeys.Sort(
-        [&DistanceSqCache, this](const FChunkId &A, const FChunkId &B)
+        [&DistanceSqCache, this](const ChunkId &A, const ChunkId &B)
         {
             const float DistA = DistanceSqCache.Contains(A) ? DistanceSqCache[A] : 0.f;
             const float DistB = DistanceSqCache.Contains(B) ? DistanceSqCache[B] : 0.f;
@@ -507,8 +507,8 @@ void ChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks, cons
         });
 
     // Update pending transitions (split and merge) and mark unwanted ones for removal
-    TArray<FChunkId> ToRemove;
-    for (const FChunkId &Key : SortedTransitionKeys)
+    TArray<ChunkId> ToRemove;
+    for (const ChunkId &Key : SortedTransitionKeys)
     {
         LODTransition &T = m_pendingTransitionsMap[Key];
 
@@ -516,7 +516,7 @@ void ChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks, cons
         {
             // Gate: all 4 children must be MeshReady (or already Visible)
             bool bAllReady = true;
-            for (const FChunkId &ChildId : T.Children)
+            for (const ChunkId &ChildId : T.Children)
             {
                 if (!IsChunkReady(ChildId))
                 {
@@ -529,13 +529,13 @@ void ChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks, cons
                 continue;
 
             // Atomic swap: show all children, hide parent
-            for (const FChunkId &ChildId : T.Children)
+            for (const ChunkId &ChildId : T.Children)
             {
-                FChunk *Child = GetChunk(ChildId);
+                Chunk *Child = GetChunk(ChildId);
                 if (Child)
                 {
                     m_chunkRenderer->ShowChunk(Child);
-                    Child->State = EChunkState::Visible;
+                    Child->m_state = ChunkState::Visible;
                     m_renderSet.Add(ChildId);
                 }
             }
@@ -543,8 +543,8 @@ void ChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks, cons
             // Hide and defer parent
             if (!IsRootNode(T.Parent))
             {
-                FChunk *Parent = GetChunk(T.Parent);
-                if (Parent && (Parent->State == EChunkState::Visible || Parent->State == EChunkState::MeshReady))
+                Chunk *Parent = GetChunk(T.Parent);
+                if (Parent && (Parent->m_state == ChunkState::Visible || Parent->m_state == ChunkState::MeshReady))
                 {
                     DeferHideChunk(Parent, T.Parent);
                 }
@@ -560,22 +560,22 @@ void ChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks, cons
                 continue;
 
             // Atomic swap: show parent, hide all children
-            FChunk *Parent = GetChunk(T.Parent);
+            Chunk *Parent = GetChunk(T.Parent);
             if (Parent)
             {
                 m_chunkRenderer->ShowChunk(Parent);
-                Parent->State = EChunkState::Visible;
+                Parent->m_state = ChunkState::Visible;
                 m_renderSet.Add(T.Parent);
             }
 
             // Collect all committed descendants of T.Parent (depth-first from CommittedLeaves)
-            TArray<FChunkId> ToCleanup;
-            for (const FChunkId &RenderedId : m_renderSet)
+            TArray<ChunkId> ToCleanup;
+            for (const ChunkId &RenderedId : m_renderSet)
             {
                 if (RenderedId == T.Parent)
                     continue;
 
-                FChunkId AncestorId = RenderedId;
+                ChunkId AncestorId = RenderedId;
                 while (!IsRootNode(AncestorId))
                 {
                     AncestorId = GetParentId(AncestorId);
@@ -588,12 +588,12 @@ void ChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks, cons
             }
 
             // Hide and defer-release every collected descendant
-            for (const FChunkId &ChildId : ToCleanup)
+            for (const ChunkId &ChildId : ToCleanup)
             {
-                FChunk *Child = GetChunk(ChildId);
+                Chunk *Child = GetChunk(ChildId);
                 if (Child)
                 {
-                    if (Child->State == EChunkState::Visible || Child->State == EChunkState::MeshReady)
+                    if (Child->m_state == ChunkState::Visible || Child->m_state == ChunkState::MeshReady)
                     {
                         DeferHideChunk(Child, ChildId);
                     }
@@ -606,10 +606,10 @@ void ChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks, cons
     }
 
     // Removal from pending transitions
-    for (const FChunkId &Id : ToRemove)
+    for (const ChunkId &Id : ToRemove)
     {
         const LODTransition &T = m_pendingTransitionsMap[Id];
-        for (const FChunkId &ChildId : T.Children)
+        for (const ChunkId &ChildId : T.Children)
             m_pendingChildSet.Remove(ChildId);
         m_pendingTransitionsMap.Remove(Id);
     }
@@ -648,14 +648,14 @@ void ChunkManager::ProcessDeferredReleases()
             continue;
         }
 
-        FChunk *Chunk = GetChunk(Entry.Id);
-        if (Chunk && Chunk->State == EChunkState::MeshReady)
+        Chunk *Chunk = GetChunk(Entry.Id);
+        if (Chunk && Chunk->m_state == ChunkState::MeshReady)
         {
             // Guard against GC'd render proxy on shutdown
-            if (Chunk->RenderProxy.IsValid())
+            if (Chunk->m_renderProxy.IsValid())
                 m_chunkRenderer->ReleaseChunk(Chunk);
             else
-                Chunk->RenderProxy.Reset();
+                Chunk->m_renderProxy.Reset();
 
             m_deferredReleaseIdsMap.Remove(Entry.Id);
             m_chunksMap.Remove(Entry.Id);
@@ -668,12 +668,12 @@ void ChunkManager::ProcessDeferredReleases()
 
 void ChunkManager::PruneOrphans()
 {
-    TArray<FChunkId> ToRemove;
+    TArray<ChunkId> ToRemove;
 
     for (const auto &Pair : m_chunksMap)
     {
-        const FChunkId &Id = Pair.Key;
-        const FChunk *Chunk = Pair.Value.Get();
+        const ChunkId &Id = Pair.Key;
+        const Chunk *Chunk = Pair.Value.Get();
 
         if (m_loadSet.Contains(Id))
             continue;  // Actively needed
@@ -682,28 +682,28 @@ void ChunkManager::PruneOrphans()
             continue;  // Already on its way out
 
         // Only prune chunks that are not in flight
-        if (Chunk->State == EChunkState::Pending || Chunk->State == EChunkState::Generating)
+        if (Chunk->m_state == ChunkState::Pending || Chunk->m_state == ChunkState::Generating)
             continue;
 
-        // UE_LOG(LogTemp, Warning, TEXT("PruneOrphans: removing LOD:%d Face:%d State:%d"), Id.LODLevel, Id.FaceIndex, (int32)Chunk->State);
+        // UE_LOG(LogTemp, Warning, TEXT("PruneOrphans: removing LOD:%d Face:%d State:%d"), Id.LODLevel, Id.FaceIndex, (int32)Chunk->m_state);
 
         ToRemove.Add(Id);
     }
 
-    for (const FChunkId &Id : ToRemove)
+    for (const ChunkId &Id : ToRemove)
     {
-        FChunk *Chunk = GetChunk(Id);
+        Chunk *Chunk = GetChunk(Id);
         if (!Chunk)
             continue;
 
-        if (Chunk->State == EChunkState::MeshReady)
+        if (Chunk->m_state == ChunkState::MeshReady)
         {
             // Has GPU resources — must go through deferred release, not immediate destroy
             DeferHideChunk(Chunk, Id);  // calls HideChunk which is safe even if not currently Visible
         }
         else
         {
-            // State is None or DataReady — no RenderProxy, safe to destroy immediately
+            // m_state is None or DataReady — no m_renderProxy, safe to destroy immediately
             m_chunksMap.Remove(Id);
         }
     }
@@ -713,26 +713,26 @@ void ChunkManager::PruneOrphans()
 // ---------------------------------------------------------------------------
 // Callback for async generation
 // ---------------------------------------------------------------------------
-void ChunkManager::OnGenerationComplete(const FChunkId &Id, uint32 GenId, TUniquePtr<FChunkMeshData> MeshData)
+void ChunkManager::OnGenerationComplete(const ChunkId &Id, uint32 GenId, TUniquePtr<ChunkMeshData> MeshData)
 {
     // UE_LOG(LogTemp, Warning, TEXT("OnGenerationComplete: LOD:%d Face:%d"), Id.LODLevel, Id.FaceIndex);
 
-    FChunk *Chunk = GetChunk(Id);
+    Chunk *Chunk = GetChunk(Id);
     if (!Chunk)
         return;  // Chunk was unloaded while generating
 
-    if (Chunk->GenerationId != GenId)
+    if (Chunk->m_generationId != GenId)
         return;  // Stale task (Chunk was reset/regenerated)
 
     // Only accept the result if the chunk is still in the generation pipeline.
     // MeshReady or Visible chunks must not be overwritten by a late callback.
-    if (Chunk->State == EChunkState::MeshReady || Chunk->State == EChunkState::Visible)
+    if (Chunk->m_state == ChunkState::MeshReady || Chunk->m_state == ChunkState::Visible)
         return;
 
     // Store Data
-    Chunk->MeshData = MoveTemp(MeshData);
-    Chunk->Transform = FMathUtils::ComputeChunkTransform(Id, m_planetConfig.PlanetRadius);
-    Chunk->State = EChunkState::DataReady;
+    Chunk->m_meshData = MoveTemp(MeshData);
+    Chunk->m_transform = FMathUtils::ComputeChunkTransform(Id, m_planetConfig.PlanetRadius);
+    Chunk->m_state = ChunkState::DataReady;
 }
 
 
@@ -762,13 +762,13 @@ void ChunkManager::DrawDebugChunkBounds(const UWorld *World) const
 
     for (const auto &Pair : m_chunksMap)
     {
-        const FChunk *Chunk = Pair.Value.Get();
+        const Chunk *Chunk = Pair.Value.Get();
         // Only draw bounds for chunks that have a visible mesh component
-        if (Chunk && Chunk->State == EChunkState::Visible && Chunk->RenderProxy.IsValid())
+        if (Chunk && Chunk->m_state == ChunkState::Visible && Chunk->m_renderProxy.IsValid())
         {
-            if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
+            if (UProceduralMeshComponent *Comp = Chunk->m_renderProxy.Get())
             {
-                const int32 LOD = Chunk->Id.LODLevel;
+                const int32 LOD = Chunk->m_ID.LODLevel;
                 // Use LOD color if available, otherwise fallback to white
                 const FColor BoxColor = (LOD >= 0 && LOD < LODColorsDebug.Num()) ? LODColorsDebug[LOD] : FColor::White;
                 const FBox Box = Comp->Bounds.GetBox();
@@ -783,7 +783,7 @@ void ChunkManager::DebugRootNodes()
 {
     for (uint8 Face = 0; Face < 6; ++Face)
     {
-        FChunkId RootId(Face, FIntVector(0, 0, 0), 0);
+        ChunkId RootId(Face, FIntVector(0, 0, 0), 0);
 
         const bool bInChunkMap = m_chunksMap.Contains(RootId);
         const bool bInRenderSet = m_renderSet.Contains(RootId);
@@ -792,9 +792,9 @@ void ChunkManager::DebugRootNodes()
         const bool bInTransition = m_pendingTransitionsMap.Contains(RootId);
         const bool bInDesiredLeaves = m_quadtree && m_quadtree->GetDesiredLeaves().Contains(RootId);
 
-        EChunkState State = EChunkState::None;
+        ChunkState State = ChunkState::None;
         if (bInChunkMap)
-            State = m_chunksMap[RootId]->State;
+            State = m_chunksMap[RootId]->m_state;
 
         UE_LOG(LogTemp,
                Warning,

@@ -9,7 +9,7 @@ PlanetQuadtree::PlanetQuadtree(const FPlanetConfig &InConfig) :
     // Initialize Roots (LOD 0)
     for (uint8 i = 0; i < 6; ++i)
     {
-        FChunkId RootId(i, FIntVector(0, 0, 0), 0);
+        ChunkId RootId(i, FIntVector(0, 0, 0), 0);
         m_rootNodes.Add(MakeUnique<QuadtreeNode>(RootId, nullptr));
     }
 
@@ -87,10 +87,10 @@ void PlanetQuadtree::UpdateNode(QuadtreeNode *Node, const FPlanetViewContext &Co
             const int32 Y = Node->Id.Coords.Y;
             const uint8 Face = Node->Id.FaceIndex;
 
-            Node->Children.Add(MakeUnique<QuadtreeNode>(FChunkId(Face, FIntVector(X * 2, Y * 2, 0), NextLOD), Node));
-            Node->Children.Add(MakeUnique<QuadtreeNode>(FChunkId(Face, FIntVector(X * 2 + 1, Y * 2, 0), NextLOD), Node));
-            Node->Children.Add(MakeUnique<QuadtreeNode>(FChunkId(Face, FIntVector(X * 2, Y * 2 + 1, 0), NextLOD), Node));
-            Node->Children.Add(MakeUnique<QuadtreeNode>(FChunkId(Face, FIntVector(X * 2 + 1, Y * 2 + 1, 0), NextLOD), Node));
+            Node->Children.Add(MakeUnique<QuadtreeNode>(ChunkId(Face, FIntVector(X * 2, Y * 2, 0), NextLOD), Node));
+            Node->Children.Add(MakeUnique<QuadtreeNode>(ChunkId(Face, FIntVector(X * 2 + 1, Y * 2, 0), NextLOD), Node));
+            Node->Children.Add(MakeUnique<QuadtreeNode>(ChunkId(Face, FIntVector(X * 2, Y * 2 + 1, 0), NextLOD), Node));
+            Node->Children.Add(MakeUnique<QuadtreeNode>(ChunkId(Face, FIntVector(X * 2 + 1, Y * 2 + 1, 0), NextLOD), Node));
         }
 
         // Recurse regardless — children may themselves split or merge

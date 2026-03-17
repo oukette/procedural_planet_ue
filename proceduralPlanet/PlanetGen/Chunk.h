@@ -6,7 +6,7 @@
 
 
 // All data required for a single Mesh Section
-struct FChunkMeshData
+struct ChunkMeshData
 {
         TArray<FVector> Vertices;
         TArray<int32> Triangles;
@@ -26,16 +26,16 @@ struct FChunkMeshData
 
 
 // Represents the physical placement of a chunk in planet-space.
-struct FChunkTransform
+struct ChunkTransform
 {
         FVector Location = FVector::ZeroVector;  // Center of the chunk in Planet Space
         float Scale = 1.0f;                      // Uniform scale (derived from LOD)
         FVector FaceNormal = FVector::UpVector;  // Which cube face this belongs to
         FQuat Rotation = FQuat::Identity;        // Orientation on the sphere surface
 
-        FChunkTransform() = default;
+        ChunkTransform() = default;
 
-        FChunkTransform(FVector InLoc, float InScale, FVector InNormal, FQuat InRot = FQuat::Identity) :
+        ChunkTransform(FVector InLoc, float InScale, FVector InNormal, FQuat InRot = FQuat::Identity) :
             Location(InLoc),
             Scale(InScale),
             FaceNormal(InNormal),
@@ -47,43 +47,41 @@ struct FChunkTransform
 
 // A pure C++ representation of a terrain chunk.
 // This class is not an Actor. It manages the state and data of a single quadtree node.
-class FChunk
+class Chunk
 {
     public:
-        FChunkId Id;          // Identity
-        EChunkState State;    // Lifecycle State
-        uint32 GenerationId;  // To handle async cancellations (if GenerationId changes, ignore old task results)
+        ChunkId m_ID;         // Identity
+        ChunkState m_state;   // Lifecycle State
+        uint32 m_generationId;  // To handle async cancellations (if m_generationId changes, ignore old task results)
 
-        FChunkTransform Transform;  // Spatial Info
+        ChunkTransform m_transform;  // Spatial Info
 
-        GenData DensityField;                  // This holds the actual density field
-        bool bIsDensityDataGenerated = false;  // Is the data ready to be turned into a mesh?
+        GenData m_densityField;                  // This holds the actual density field
+        bool m_isDensityDataGenerated = false;  // Is the data ready to be turned into a mesh?
 
-        TUniquePtr<FChunkMeshData> MeshData;  // The generated mesh data (Valid only when State >= DataReady)
+        TUniquePtr<ChunkMeshData> m_meshData;  // The generated mesh data (Valid only when m_state >= DataReady)
 
-        TWeakObjectPtr<UProceduralMeshComponent> RenderProxy;  // Reference to the actual component rendering this chunk (Valid only when State == MeshReady)
+        TWeakObjectPtr<UProceduralMeshComponent> m_renderProxy;  // Reference to the actual component rendering this chunk (Valid only when m_state == MeshReady)
 
         // Constructor
-        FChunk(const FChunkId &InId) :
-            Id(InId),
-            State(EChunkState::None),
-            GenerationId(0)
+        Chunk(const ChunkId &InId) :
+            m_ID(InId),
+            m_state(ChunkState::None),
+            m_generationId(0)
         {
         }
 
         // Non-copyable (to prevent accidental deep copies of mesh data)
-        FChunk(const FChunk &) = delete;
-        FChunk &operator=(const FChunk &) = delete;
+        Chunk(const Chunk &) = delete;
+        Chunk &operator=(const Chunk &) = delete;
 
         // Move-only
-        FChunk(FChunk &&) = default;
-        FChunk &operator=(FChunk &&) = default;
+        Chunk(Chunk &&) = default;
+        Chunk &operator=(Chunk &&) = default;
 
-        ~FChunk()
+        ~Chunk()
         {
-            // TUniquePtr automatically cleans up MeshData
+            // TUniquePtr automatically cleans up m_meshData
             // WeakObjectPtr handles itself (doesn't destroy the component)
         }
 };
-
-

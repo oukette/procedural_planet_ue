@@ -51,7 +51,7 @@ ChunkGenerator::~ChunkGenerator()
 }
 
 
-void ChunkGenerator::RequestChunk(const FChunkId &Id, uint32 GenerationId, float PriorityScore)
+void ChunkGenerator::RequestChunk(const ChunkId &Id, uint32 GenerationId, float PriorityScore)
 {
     if (m_activeTasks.Contains(Id) || m_queuedIds.Contains(Id))
         return;  // Already in queue
@@ -74,7 +74,7 @@ void ChunkGenerator::Stop()
 }
 
 
-void ChunkGenerator::CancelRequest(const FChunkId &Id)
+void ChunkGenerator::CancelRequest(const ChunkId &Id)
 {
     // Mark as cancelled regardless of whether it's queued or actively running.
     // - If queued: it will be popped and skipped in Update()
@@ -97,13 +97,13 @@ void ChunkGenerator::Update()
     // and the ID would otherwise leak in m_cancelledTasks indefinitely.
     if (m_cancelledTasks.Num() > 0)
     {
-        TArray<FChunkId> StaleCancellations;
-        for (const FChunkId &Id : m_cancelledTasks)
+        TArray<ChunkId> StaleCancellations;
+        for (const ChunkId &Id : m_cancelledTasks)
         {
             if (!m_activeTasks.Contains(Id))
                 StaleCancellations.Add(Id);
         }
-        for (const FChunkId &Id : StaleCancellations)
+        for (const ChunkId &Id : StaleCancellations)
             m_cancelledTasks.Remove(Id);
     }
 
@@ -152,7 +152,7 @@ void ChunkGenerator::StartAsyncTask(const ChunkRequest &Request)
     m_activeTasks.Add(Request.Id);
 
     // Capture data by value for thread safety
-    FChunkId Id = Request.Id;
+    ChunkId Id = Request.Id;
     uint32 GenId = Request.GenerationId;
     int32 Resolution = m_planetConfig.GridResolution;
     int32 LODLevel = Id.LODLevel;
@@ -162,7 +162,7 @@ void ChunkGenerator::StartAsyncTask(const ChunkRequest &Request)
     DensityGenerator ThreadGen = *m_densityGen;
 
     // Calculate Transform (Stateless math via MathUtils)
-    FChunkTransform ChunkTransform = FMathUtils::ComputeChunkTransform(Id, PlanetRadius);
+    ChunkTransform ChunkTransform = FMathUtils::ComputeChunkTransform(Id, PlanetRadius);
     FTransform Transform(ChunkTransform.Rotation, ChunkTransform.Location);
 
     // Calculate Geometry
@@ -203,7 +203,7 @@ void ChunkGenerator::StartAsyncTask(const ChunkRequest &Request)
               GenData GeneratedData = ThreadGen.GenerateDensityField(Resolution, FaceNormal, FaceRight, FaceUp, CubeMin, CubeMax);
 
               // B. Generate Mesh
-              FChunkMeshData MeshData = MeshGenerator::GenerateMesh(GeneratedData, Resolution, Transform, FTransform::Identity, LODLevel, ThreadGen);
+              ChunkMeshData MeshData = MeshGenerator::GenerateMesh(GeneratedData, Resolution, Transform, FTransform::Identity, LODLevel, ThreadGen);
 
               // C. Return to Game Thread
               AsyncTask(ENamedThreads::GameThread,
@@ -235,7 +235,7 @@ void ChunkGenerator::StartAsyncTask(const ChunkRequest &Request)
 
                             if (m_onChunkGeneratedCallback)
                             {
-                                m_onChunkGeneratedCallback(Id, GenId, MakeUnique<FChunkMeshData>(MoveTemp(MeshData)));
+                                m_onChunkGeneratedCallback(Id, GenId, MakeUnique<ChunkMeshData>(MoveTemp(MeshData)));
                             }
                         });
           });

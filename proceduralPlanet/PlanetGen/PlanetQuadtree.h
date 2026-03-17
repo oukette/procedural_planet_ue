@@ -8,11 +8,11 @@
 // A logical node in the Quadtree.
 struct QuadtreeNode
 {
-        FChunkId Id;
+        ChunkId Id;
         QuadtreeNode *Parent = nullptr;
         TArray<TUniquePtr<QuadtreeNode>> Children;
 
-        QuadtreeNode(const FChunkId &InId, QuadtreeNode *InParent) :
+        QuadtreeNode(const ChunkId &InId, QuadtreeNode *InParent) :
             Id(InId),
             Parent(InParent)
         {
@@ -29,7 +29,7 @@ class PlanetQuadtree
     private:
         FPlanetConfig m_planetConfig;
         TArray<TUniquePtr<QuadtreeNode>> m_rootNodes;
-        TSet<FChunkId> m_desiredLeaves;
+        TSet<ChunkId> m_desiredLeaves;
 
     public:
         PlanetQuadtree(const FPlanetConfig &InConfig);
@@ -40,7 +40,7 @@ class PlanetQuadtree
         void Update(const FPlanetViewContext &Context);
 
         // The ideal set of leaf IDs this frame. Manager diffs this against RenderSet.
-        const TSet<FChunkId> &GetDesiredLeaves() const { return m_desiredLeaves; }
+        const TSet<ChunkId> &GetDesiredLeaves() const { return m_desiredLeaves; }
 
         // Debug drawing for the logical grid
         void DrawDebugGrid(const UWorld *World, const FTransform &PlanetTransform) const;

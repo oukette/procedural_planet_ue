@@ -55,9 +55,9 @@ UProceduralMeshComponent *ChunkRenderer::GetFreeComponent()
 }
 
 
-void ChunkRenderer::PrepareChunk(FChunk *Chunk, bool bEnableCollision = false)
+void ChunkRenderer::PrepareChunk(Chunk *Chunk, bool bEnableCollision = false)
 {
-    if (!Chunk || !Chunk->MeshData)
+    if (!Chunk || !Chunk->m_meshData)
     {
         return;
     }
@@ -85,11 +85,11 @@ void ChunkRenderer::PrepareChunk(FChunk *Chunk, bool bEnableCollision = false)
 
     // Upload Mesh Data
     Comp->CreateMeshSection(0,
-                            Chunk->MeshData->Vertices,
-                            Chunk->MeshData->Triangles,
-                            Chunk->MeshData->Normals,
-                            Chunk->MeshData->UV0,
-                            Chunk->MeshData->Colors,
+                            Chunk->m_meshData->Vertices,
+                            Chunk->m_meshData->Triangles,
+                            Chunk->m_meshData->Normals,
+                            Chunk->m_meshData->UV0,
+                            Chunk->m_meshData->Colors,
                             TArray<FProcMeshTangent>(),
                             false);
 
@@ -97,34 +97,34 @@ void ChunkRenderer::PrepareChunk(FChunk *Chunk, bool bEnableCollision = false)
     Comp->SetMaterial(0, m_material);
 
     // Set Transform (Location and Rotation on the sphere)
-    Comp->SetRelativeLocationAndRotation(Chunk->Transform.Location, Chunk->Transform.Rotation);
+    Comp->SetRelativeLocationAndRotation(Chunk->m_transform.Location, Chunk->m_transform.Rotation);
 
     // Stay hidden until ShowChunk is called
     Comp->SetVisibility(false);
 
     // Link
-    Chunk->RenderProxy = Comp;
+    Chunk->m_renderProxy = Comp;
 }
 
 
-void ChunkRenderer::ShowChunk(FChunk *Chunk)
+void ChunkRenderer::ShowChunk(Chunk *Chunk)
 {
     if (!Chunk)
         return;
 
-    if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
+    if (UProceduralMeshComponent *Comp = Chunk->m_renderProxy.Get())
     {
         Comp->SetVisibility(true);
     }
 }
 
 
-void ChunkRenderer::HideChunk(FChunk *Chunk)
+void ChunkRenderer::HideChunk(Chunk *Chunk)
 {
     if (!Chunk)
         return;
 
-    if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
+    if (UProceduralMeshComponent *Comp = Chunk->m_renderProxy.Get())
     {
         Comp->SetVisibility(false);
     }
@@ -145,12 +145,12 @@ void ChunkRenderer::DiscardComponent(UProceduralMeshComponent *Comp)
     }
 }
 
-void ChunkRenderer::ReleaseChunk(FChunk *Chunk)
+void ChunkRenderer::ReleaseChunk(Chunk *Chunk)
 {
     if (!Chunk)
         return;
 
-    if (UProceduralMeshComponent *Comp = Chunk->RenderProxy.Get())
+    if (UProceduralMeshComponent *Comp = Chunk->m_renderProxy.Get())
     {
         if (IsValid(Comp))
         {
@@ -167,7 +167,7 @@ void ChunkRenderer::ReleaseChunk(FChunk *Chunk)
 
             m_freeComponentPool.Add(Comp);
         }
-        Chunk->RenderProxy.Reset();
+        Chunk->m_renderProxy.Reset();
     }
 }
 

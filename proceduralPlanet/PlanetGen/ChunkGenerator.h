@@ -8,11 +8,11 @@
 
 
 // Callback signature: ChunkId, GenerationId (for validation), MeshData
-using OnChunkGenerated = TFunction<void(const FChunkId &, uint32, TUniquePtr<FChunkMeshData>)>;
+using OnChunkGenerated = TFunction<void(const ChunkId &, uint32, TUniquePtr<ChunkMeshData>)>;
 
 struct ChunkRequest
 {
-        FChunkId Id;
+        ChunkId Id;
         uint32 GenerationId;
         float PrioScore;  // Lower score = Higher priority (e.g. Distance)
 };
@@ -25,9 +25,9 @@ class ChunkGenerator
         const DensityGenerator *m_densityGen;  // Owned by Planet/Manager, we just hold ref
 
         TArray<ChunkRequest> m_requestsQueue;
-        TSet<FChunkId> m_activeTasks;     // Set of IDs currently processing to prevent duplicates
-        TSet<FChunkId> m_queuedIds;       // mirrors heap contents for O(1) duplicate detection
-        TSet<FChunkId> m_cancelledTasks;  // Set of IDs that were cancelled while active
+        TSet<ChunkId> m_activeTasks;     // Set of IDs currently processing to prevent duplicates
+        TSet<ChunkId> m_queuedIds;       // mirrors heap contents for O(1) duplicate detection
+        TSet<ChunkId> m_cancelledTasks;  // Set of IDs that were cancelled while active
 
         OnChunkGenerated m_onChunkGeneratedCallback;
 
@@ -46,10 +46,10 @@ class ChunkGenerator
         ~ChunkGenerator();
 
         // Adds a chunk to the generation queue
-        void RequestChunk(const FChunkId &Id, uint32 GenerationId, float PriorityScore);
+        void RequestChunk(const ChunkId &Id, uint32 GenerationId, float PriorityScore);
 
         // Cancels a pending or active generation request
-        void CancelRequest(const FChunkId &Id);
+        void CancelRequest(const ChunkId &Id);
 
         // Main update loop to process queue and dispatch threads
         void Update();
