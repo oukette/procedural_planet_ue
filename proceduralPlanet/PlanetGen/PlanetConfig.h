@@ -123,7 +123,6 @@ struct FPlanetConfig
         GENERATED_BODY()
         // Basic Dimensions
         float PlanetRadius = 10000.f;
-        int32 ChunksPerFace = 1;
 
         // Generation Settings
         int32 Seed = 1337;

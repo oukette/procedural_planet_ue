@@ -134,21 +134,16 @@ void APlanet::initPlanet()
     }
 
     // Calculate "Auto" Settings (Configuration)
-    int32 FinalChunksPerFace;
     float FinalVoxelSize;
-    int32 FinalResolution;
-
-    CalculateAutoGrid(FinalChunksPerFace, FinalVoxelSize, FinalResolution);
+    ComputeAutoVoxelSize(FinalVoxelSize);
 
     // Initialize the planet config struct to feed the ChunkManager
     m_planetConfig = FPlanetConfig();
     m_planetConfig.PlanetRadius = GenSettings.PlanetRadius;
-    m_planetConfig.ChunksPerFace = FinalChunksPerFace;  // The calculated value!
     m_planetConfig.Seed = GenSettings.Seed;
     m_planetConfig.bEnableCollision = GenSettings.bEnableCollision;
     m_planetConfig.bCastShadows = GenSettings.bCastShadows;
     m_planetConfig.VoxelSize = FinalVoxelSize;
-    m_planetConfig.GridResolution = FinalResolution;
     m_planetConfig.MaxConcurrentGenerations = PerformanceSettings.MaxConcurrentGenerations;
     m_planetConfig.ChunkGenerationRate = PerformanceSettings.ChunksToSpawnPerFrame;
     m_planetConfig.MeshUpdatesPerFrame = PerformanceSettings.MeshUpdatesPerFrame;
@@ -176,17 +171,14 @@ void APlanet::initPlanet()
 }
 
 
-void APlanet::CalculateAutoGrid(int32 &OutChunksPerFace, float &OutVoxelSize, int32 &OutResolution) const
+void APlanet::ComputeAutoVoxelSize(float &OutVoxelSize) const
 {
     // Default to settings
-    OutResolution = FMath::Max(4, GridSettings.Resolution);
-
-    // FORCE 1 Chunk per face for the "Clean State"
-    OutChunksPerFace = 1;
+    auto Resolution = FMath::Max(4, GridSettings.Resolution);
 
     // Recalculate VoxelSize to ensure the grid perfectly covers the face arc.
     const float FaceArcLength = GenSettings.PlanetRadius * HALF_PI;
-    OutVoxelSize = FaceArcLength / (OutChunksPerFace * OutResolution);
+    OutVoxelSize = FaceArcLength / Resolution;
 }
 
 
