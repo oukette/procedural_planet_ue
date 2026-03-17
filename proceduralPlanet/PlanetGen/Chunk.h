@@ -2,6 +2,47 @@
 
 #include "CoreMinimal.h"
 #include "DataTypes.h"
+#include "ChunkId.h"
+
+
+// All data required for a single Mesh Section
+struct FChunkMeshData
+{
+        TArray<FVector> Vertices;
+        TArray<int32> Triangles;
+        TArray<FVector> Normals;
+        TArray<FVector2D> UV0;
+        TArray<FColor> Colors;
+
+        void Empty()
+        {
+            Vertices.Empty();
+            Triangles.Empty();
+            Normals.Empty();
+            UV0.Empty();
+            Colors.Empty();
+        }
+};
+
+
+// Represents the physical placement of a chunk in planet-space.
+struct FChunkTransform
+{
+        FVector Location = FVector::ZeroVector;  // Center of the chunk in Planet Space
+        float Scale = 1.0f;                      // Uniform scale (derived from LOD)
+        FVector FaceNormal = FVector::UpVector;  // Which cube face this belongs to
+        FQuat Rotation = FQuat::Identity;        // Orientation on the sphere surface
+
+        FChunkTransform() = default;
+
+        FChunkTransform(FVector InLoc, float InScale, FVector InNormal, FQuat InRot = FQuat::Identity) :
+            Location(InLoc),
+            Scale(InScale),
+            FaceNormal(InNormal),
+            Rotation(InRot)
+        {
+        }
+};
 
 
 // A pure C++ representation of a terrain chunk.
@@ -44,3 +85,5 @@ class FChunk
             // WeakObjectPtr handles itself (doesn't destroy the component)
         }
 };
+
+

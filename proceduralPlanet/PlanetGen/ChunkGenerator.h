@@ -3,7 +3,7 @@
 #include "CoreMinimal.h"
 #include "HAL/ThreadSafeBool.h"
 #include "HAL/ThreadSafeCounter.h"
-#include "DataTypes.h"
+#include "ChunkId.h"
 #include "DensityGenerator.h"
 
 

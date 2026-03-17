@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "ChunkId.h"
 #include "DataTypes.h"
 
 

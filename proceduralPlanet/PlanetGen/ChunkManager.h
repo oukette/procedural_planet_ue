@@ -16,6 +16,23 @@ struct FDeferredRelease
 };
 
 
+enum class ELeafTransitionType : uint8
+{
+    Split,
+    Merge
+};
+
+
+// Represent a transition from a parent to one or more children.
+struct FLODTransition
+{
+        FChunkId Parent;
+        TArray<FChunkId> Children;  // Always 4 for a quadtree split
+        ELeafTransitionType Type;
+        bool bReadyToCommit = false;
+};
+
+
 // Manages the lifecycle of all chunks (Quadtree logic, LOD selection, Async requests).
 // Owned strictly by the APlanet actor.
 class FChunkManager

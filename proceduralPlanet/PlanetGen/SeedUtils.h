@@ -1,7 +1,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DataTypes.h"
+#include "ChunkId.h"
+
 
 // Pure math utilities for generating seeds and hashes.
 class PROCEDURALPLANET_API FSeedUtils

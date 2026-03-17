@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "DataTypes.h"
+#include "Chunk.h"
 
 
 // Pure math utilities for Cube-to-Sphere projection and spatial transformations.
