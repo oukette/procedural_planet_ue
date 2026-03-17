@@ -1,6 +1,8 @@
 #pragma once
 
-#include "CoreMinimal.h"
+#include "Math/Color.h"
+
+#include "Containers/Array.h"
 
 
 // Global constants for easy tuning and static access

@@ -1,7 +1,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "MathUtils.h"
+
+#include "../Utils/MathUtils.h"
 #include "DensityGenerator.h"
 
 

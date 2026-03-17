@@ -1,7 +1,8 @@
 #pragma once
 
-#include "CoreMinimal.h"
-
+#include "Math/IntVector.h"
+#include "Containers/Array.h"
+#include "Templates/TypeHash.h"
 
 // The state of a chunk in its lifecycle
 enum class ChunkState : uint8

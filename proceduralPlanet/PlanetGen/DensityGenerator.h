@@ -2,9 +2,10 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
-#include "MathUtils.h"
-#include "IPlanetNoise.h"
+#include "Math/Vector.h"
+
+#include "../Utils/MathUtils.h"
+#include "../Utils/INoise.h"
 #include "PlanetConfig.h"
 
 
@@ -18,11 +19,11 @@ class PROCEDURALPLANET_API DensityGenerator
 {
     private:
         DensityConfig m_densityConfig;
-        const IPlanetNoise *m_noiseProvider;
+        const INoise *m_noiseProvider;
 
     public:
         // Constructor
-        explicit DensityGenerator(const DensityConfig &InConfig, const IPlanetNoise *InNoiseProvider = nullptr);
+        explicit DensityGenerator(const DensityConfig &InConfig, const INoise *InNoiseProvider = nullptr);
 
         // Sample density at a world position (relative to planet center)
         float SampleDensity(const FVector &PlanetRelativePosition) const;

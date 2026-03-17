@@ -1,12 +1,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "IPlanetNoise.h"
-
+#include "../Utils/INoise.h"
 
 
 // Concrete implementation using Simplex Noise.
-class SimpleNoise : public IPlanetNoise
+class SimpleNoise : public INoise
 {
     public:
         virtual float getNoise(const FVector &_position, int32 _seed) const override;

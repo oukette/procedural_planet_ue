@@ -1,8 +1,9 @@
 #include "ChunkGenerator.h"
+#include "MeshGenerator.h"
+#include "../Utils/MathUtils.h"
+
 #include "Async/Async.h"
 #include "HAL/PlatformProcess.h"
-#include "MeshGenerator.h"
-#include "MathUtils.h"
 
 
 ChunkGenerator::ChunkGenerator(const FPlanetConfig &InConfig, const DensityGenerator *InDensityGen) :

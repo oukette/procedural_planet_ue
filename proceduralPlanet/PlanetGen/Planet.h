@@ -2,8 +2,9 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "SeedUtils.h"
-#include "MathUtils.h"
+
+#include "../Utils/SeedUtils.h"
+#include "../Utils/MathUtils.h"
 #include "ChunkManager.h"
 #include "PlanetConfig.h"
 #include "PlanetConstants.h"

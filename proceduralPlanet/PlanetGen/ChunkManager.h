@@ -1,11 +1,18 @@
 #pragma once
 
-#include "CoreMinimal.h"
+#include "Containers/Array.h"
+#include "Containers/Map.h"
+#include "Containers/Set.h"
+#include "Templates/UniquePtr.h"
+
 #include "Chunk.h"
 #include "DensityGenerator.h"
 #include "ChunkRenderer.h"
 #include "ChunkGenerator.h"
 #include "PlanetQuadtree.h"
+
+
+class UWorld;
 
 
 // Chunks hidden after a merge, waiting to be released after a delay

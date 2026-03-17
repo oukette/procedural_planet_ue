@@ -3,7 +3,7 @@
 #include "DensityGenerator.h"
 
 
-DensityGenerator::DensityGenerator(const DensityConfig &InConfig, const IPlanetNoise *InNoiseProvider) :
+DensityGenerator::DensityGenerator(const DensityConfig &InConfig, const INoise *InNoiseProvider) :
     m_densityConfig(InConfig),
     m_noiseProvider(InNoiseProvider)
 {
