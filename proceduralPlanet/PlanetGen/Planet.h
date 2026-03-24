@@ -22,7 +22,7 @@ class PROCEDURALPLANET_API APlanet : public AActor
         USceneComponent *Root;
 
         TUniquePtr<ChunkManager> m_chunkManager;
-        TUniquePtr<SimpleNoise> m_noiseProvider;
+        TSharedPtr<INoise, ESPMode::ThreadSafe> m_noiseProvider;
         TUniquePtr<DensityGenerator> m_densityGen;
 
         // Stores the finalized configuration after initPlanet() runs.

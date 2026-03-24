@@ -7,10 +7,13 @@
 #include "DrawDebugHelpers.h"
 
 
-ChunkManager::ChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen) :
+ChunkManager::ChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen, TSharedPtr<INoise, ESPMode::ThreadSafe> noiseProvider) :
     m_planetConfig(planetConfig),
-    m_densityGen(densityGen)
+    m_densityGen(densityGen),
+    m_noiseProvider(noiseProvider)
 {
+    m_chunkGenerator = MakeUnique<ChunkGenerator>(m_planetConfig, m_densityGen, m_noiseProvider);
+
     // DEBUG LOG
     UE_LOG(LogTemp, Warning, TEXT("ChunkManager created."));
     UE_LOG(LogTemp, Warning, TEXT("Collision is globally %s"), m_planetConfig.bEnableCollision ? TEXT("enabled") : TEXT("disabled"));
@@ -78,7 +81,7 @@ void ChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
 {
     m_chunkRenderer = MakeUnique<ChunkRenderer>(Owner, Material);
 
-    m_chunkGenerator = MakeUnique<ChunkGenerator>(m_planetConfig, m_densityGen);
+    // m_chunkGenerator = MakeUnique<ChunkGenerator>(m_planetConfig, m_densityGen);
     m_chunkGenerator->SetOnChunkGeneratedCallback([this](const ChunkId &Id, uint32 GenId, TUniquePtr<ChunkMeshData> MeshData)
                                                   { OnGenerationComplete(Id, GenId, MoveTemp(MeshData)); });
 
