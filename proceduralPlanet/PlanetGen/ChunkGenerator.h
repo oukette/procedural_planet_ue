@@ -3,8 +3,13 @@
 #include "CoreMinimal.h"
 #include "HAL/ThreadSafeBool.h"
 #include "HAL/ThreadSafeCounter.h"
+#include "Templates/SharedPointer.h"
+
 #include "ChunkId.h"
 #include "DensityGenerator.h"
+
+
+class INoise;
 
 
 // Callback signature: ChunkId, GenerationId (for validation), MeshData
@@ -23,6 +28,7 @@ class ChunkGenerator
     private:
         FPlanetConfig m_planetConfig;
         const DensityGenerator *m_densityGen;  // Owned by Planet/Manager, we just hold ref
+        TSharedPtr<INoise, ESPMode::ThreadSafe> m_noiseProviderRef;
 
         TArray<ChunkRequest> m_requestsQueue;
         TSet<ChunkId> m_activeTasks;     // Set of IDs currently processing to prevent duplicates
@@ -42,7 +48,7 @@ class ChunkGenerator
         TSharedPtr<FThreadSafeCounter, ESPMode::ThreadSafe> m_activeThreadsCounter;
 
     public:
-        ChunkGenerator(const FPlanetConfig &InConfig, const DensityGenerator *InDensityGen);
+        ChunkGenerator(const FPlanetConfig &InConfig, const DensityGenerator *InDensityGen, TSharedPtr<INoise, ESPMode::ThreadSafe> InNoise);
         ~ChunkGenerator();
 
         // Adds a chunk to the generation queue

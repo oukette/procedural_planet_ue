@@ -156,7 +156,7 @@ void APlanet::initPlanet()
     m_planetConfig.LookAheadAltitudeScale = PerformanceSettings.LookAheadAltitudeRadiusFactor * GenSettings.PlanetRadius;
 
     // Create Noise Provider
-    m_noiseProvider = MakeUnique<SimpleNoise>();
+    m_noiseProvider = MakeShared<SimpleNoise, ESPMode::ThreadSafe>();
 
     // Create density config and init the generator
     DensityConfig densityConfig;
@@ -167,7 +167,7 @@ void APlanet::initPlanet()
     m_densityGen = MakeUnique<DensityGenerator>(densityConfig, m_noiseProvider.Get());
 
     // Finally, init the ChunkManager
-    m_chunkManager = MakeUnique<ChunkManager>(m_planetConfig, m_densityGen.Get());
+    m_chunkManager = MakeUnique<ChunkManager>(m_planetConfig, m_densityGen.Get(), m_noiseProvider);
     m_chunkManager->Initialize(this, GenSettings.DebugMaterial);  // Pass context for rendering
 }
 

@@ -13,6 +13,7 @@
 
 
 class UWorld;
+class INoise;
 
 
 // Chunks hidden after a merge, waiting to be released after a delay
@@ -46,10 +47,11 @@ class ChunkManager
 {
     private:
         FPlanetConfig m_planetConfig;
-        const DensityGenerator *m_densityGen;         // Reference to the density generator (owned by APlanet)
-        TUniquePtr<ChunkRenderer> m_chunkRenderer;    // Handles visual components
-        TUniquePtr<ChunkGenerator> m_chunkGenerator;  // Handles async generation
-        TUniquePtr<PlanetQuadtree> m_quadtree;        // Handles LOD and Culling logic
+        const DensityGenerator *m_densityGen;                          // Reference to the density generator (owned by APlanet)
+        TSharedPtr<INoise, ESPMode::ThreadSafe> m_noiseProvider;  // Reference to the noise provider (owned by APlanet)
+        TUniquePtr<ChunkRenderer> m_chunkRenderer;                     // Handles visual components
+        TUniquePtr<ChunkGenerator> m_chunkGenerator;                   // Handles async generation
+        TUniquePtr<PlanetQuadtree> m_quadtree;                         // Handles LOD and Culling logic
 
         TMap<ChunkId, TUniquePtr<Chunk>> m_chunksMap;          // The central registry of all chunks
         TSet<ChunkId> m_renderSet;                             // ground truth of what is rendered
@@ -62,7 +64,7 @@ class ChunkManager
         FVector m_lastObserverLocalPos = FVector::ZeroVector;
 
     public:
-        ChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen);
+        ChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen, TSharedPtr<INoise, ESPMode::ThreadSafe> noiseProvider);
         ~ChunkManager();
 
         // Returns the total number of chunks in memory.
