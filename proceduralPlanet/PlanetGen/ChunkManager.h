@@ -38,6 +38,7 @@ struct LODTransition
         TArray<ChunkId> Children;  // Always 4 for a quadtree split
         LeafTransitionType Type;
         bool isReadyToCommit = false;
+        int32 FrameAge = 0;
 };
 
 
@@ -47,11 +48,11 @@ class ChunkManager
 {
     private:
         FPlanetConfig m_planetConfig;
-        const DensityGenerator *m_densityGen;                          // Reference to the density generator (owned by APlanet)
+        const DensityGenerator *m_densityGen;                     // Reference to the density generator (owned by APlanet)
         TSharedPtr<INoise, ESPMode::ThreadSafe> m_noiseProvider;  // Reference to the noise provider (owned by APlanet)
-        TUniquePtr<ChunkRenderer> m_chunkRenderer;                     // Handles visual components
-        TUniquePtr<ChunkGenerator> m_chunkGenerator;                   // Handles async generation
-        TUniquePtr<PlanetQuadtree> m_quadtree;                         // Handles LOD and Culling logic
+        TUniquePtr<ChunkRenderer> m_chunkRenderer;                // Handles visual components
+        TUniquePtr<ChunkGenerator> m_chunkGenerator;              // Handles async generation
+        TUniquePtr<PlanetQuadtree> m_quadtree;                    // Handles LOD and Culling logic
 
         TMap<ChunkId, TUniquePtr<Chunk>> m_chunksMap;          // The central registry of all chunks
         TSet<ChunkId> m_renderSet;                             // ground truth of what is rendered
@@ -62,6 +63,8 @@ class ChunkManager
         TSet<ChunkId> m_deferredReleaseIdsMap;                 // O(1) mirror of m_deferredReleaseQueue
 
         FVector m_lastObserverLocalPos = FVector::ZeroVector;
+        FVector m_lastObserverVelocity = FVector::ZeroVector;
+        FVector m_lastObserverForward = FVector::ZeroVector;
 
     public:
         ChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen, TSharedPtr<INoise, ESPMode::ThreadSafe> noiseProvider);
@@ -117,6 +120,9 @@ class ChunkManager
 
         // Atomic release of deferred chunks
         void ProcessDeferredReleases();
+
+        // Cap based chunk eviction mechanism
+        void EvictChunksOverCap(const FVector& MoveDir);
 
         // Safety net: any chunk in m_chunksMap not in m_loadSet and not in flight gets deferred
         void PruneOrphans();

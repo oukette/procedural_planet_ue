@@ -144,9 +144,13 @@ bool ChunkManager::IsChunkReady(const ChunkId &Id) const
 void ChunkManager::DeferHideChunk(Chunk *Chunk, const ChunkId &Id)
 {
     check(Chunk != nullptr);  // replaces a classic if nullptr
+
+    const bool bWasNeverRendered = !m_renderSet.Contains(Id);
     m_chunkRenderer->HideChunk(Chunk);
     Chunk->m_state = ChunkState::MeshReady;
-    m_deferredReleaseQueue.Add({Id, GetDeferredReleaseDelay()});
+
+    const int32 Delay = bWasNeverRendered ? 1 : GetDeferredReleaseDelay();
+    m_deferredReleaseQueue.Add({Id, Delay});
     m_deferredReleaseIdsMap.Add(Id);
 }
 
@@ -157,6 +161,31 @@ void ChunkManager::Update(const PlanetViewContext &Context)
     const bool bShouldGenerateChunks = DistToSurface < (m_planetConfig.FarDistanceThreshold * PlanetStatics::FarDistanceSafetyMargin);
 
     m_lastObserverLocalPos = Context.ObserverLocation;
+    m_lastObserverVelocity = Context.ObserverVelocity;
+    m_lastObserverForward = Context.ObserverForward;
+
+    // === TEMP DIAGNOSTIC — remove before shipping ===
+    {
+        TMap<ChunkState, int32> StateCounts;
+        for (const auto &Pair : m_chunksMap)
+            StateCounts.FindOrAdd(Pair.Value->m_state)++;
+
+        UE_LOG(LogTemp,
+               Warning,
+               TEXT("ChunkMap:%d | None:%d Pending:%d Generating:%d DataReady:%d MeshReady:%d Visible:%d | Deferred:%d LoadSet:%d RenderSet:%d Transitions:%d"),
+               m_chunksMap.Num(),
+               StateCounts.FindRef(ChunkState::None),
+               StateCounts.FindRef(ChunkState::Pending),
+               StateCounts.FindRef(ChunkState::Generating),
+               StateCounts.FindRef(ChunkState::DataReady),
+               StateCounts.FindRef(ChunkState::MeshReady),
+               StateCounts.FindRef(ChunkState::Visible),
+               m_deferredReleaseQueue.Num(),
+               m_loadSet.Num(),
+               m_renderSet.Num(),
+               m_pendingTransitionsMap.Num());
+    }
+    // === END DIAGNOSTIC ===
 
     if (bShouldGenerateChunks && m_quadtree)
         m_quadtree->Update(Context);
@@ -247,6 +276,45 @@ void ChunkManager::InitializeRoots()
 
 void ChunkManager::ReconcileTransitions(const TSet<ChunkId> &DesiredLeaves)
 {
+    // --- A0. Age all transitions — force-cancel ones that have been pending too long ---
+    {
+        TArray<ChunkId> ToCancel;
+        for (auto &Pair : m_pendingTransitionsMap)
+        {
+            LODTransition &T = Pair.Value;
+            T.FrameAge++;
+
+            if (T.FrameAge >= m_planetConfig.TransitionMaxAge)
+            {
+                UE_LOG(
+                    LogTemp, Log, TEXT("Stale transition force-cancelled — LOD:%d Face:%d Age:%d frames"), Pair.Key.LODLevel, Pair.Key.FaceIndex, T.FrameAge);
+                ToCancel.Add(Pair.Key);
+            }
+        }
+
+        for (const ChunkId &Id : ToCancel)
+        {
+            const LODTransition &T = m_pendingTransitionsMap[Id];
+            for (const ChunkId &ChildId : T.Children)
+            {
+                m_pendingChildSet.Remove(ChildId);
+
+                // Cancel any in-flight generation for stale children
+                if (Chunk *Child = GetChunk(ChildId))
+                {
+                    if (Child->m_state == ChunkState::Pending || Child->m_state == ChunkState::Generating)
+                    {
+                        m_chunkGenerator->CancelRequest(ChildId);
+                        Child->m_generationId++;
+                        Child->m_state = ChunkState::None;
+                    }
+                }
+            }
+
+            m_pendingTransitionsMap.Remove(Id);
+        }
+    }
+
     // --- A1. Desired but not rendered → find committed ancestor → register Split ---
     for (const ChunkId &Id : DesiredLeaves)
     {
@@ -624,21 +692,26 @@ void ChunkManager::CommitReadyTransitions(const bool bShouldGenerateChunks, cons
 
 void ChunkManager::ProcessDeferredReleases()
 {
-    // Under pressure, collapse countdowns of already-queued entries
-    if (m_chunksMap.Num() > m_planetConfig.CacheSoftCap)
+    // 1. HARD CAP ENFORCEMENT - position, velocity and direction based
+    if (m_chunksMap.Num() > m_planetConfig.CacheHardCap)
     {
-        const int32 Floor = m_planetConfig.DeferredReleaseDelayMin;
-        for (DeferredRelease &Entry : m_deferredReleaseQueue)
-        {
-            if (Entry.FrameCountdown > Floor)
-                Entry.FrameCountdown = Floor;
-        }
+        FVector MoveDir = m_lastObserverVelocity.IsNearlyZero() ? m_lastObserverForward : m_lastObserverVelocity.GetSafeNormal();
+
+        EvictChunksOverCap(MoveDir);
     }
 
+    // 2. NORMAL HYSTERESIS
     TArray<DeferredRelease> StillWaiting;
+
+    // Evaluate pressure for remaining chunks
+    bool bUnderPressure = m_chunksMap.Num() > m_planetConfig.CacheSoftCap;
+    int32 Floor = m_planetConfig.DeferredReleaseDelayMin;
 
     for (DeferredRelease &Entry : m_deferredReleaseQueue)
     {
+        if (bUnderPressure && Entry.FrameCountdown > Floor)
+            Entry.FrameCountdown = Floor;
+
         Entry.FrameCountdown--;
 
         if (Entry.FrameCountdown > 0)
@@ -654,14 +727,13 @@ void ChunkManager::ProcessDeferredReleases()
             continue;
         }
 
+        // Time expired safely release
         Chunk *Chunk = GetChunk(Entry.Id);
         if (Chunk && Chunk->m_state == ChunkState::MeshReady)
         {
             // Guard against GC'd render proxy on shutdown
             if (Chunk->m_renderProxy.IsValid())
                 m_chunkRenderer->ReleaseChunk(Chunk);
-            else
-                Chunk->m_renderProxy.Reset();
 
             m_deferredReleaseIdsMap.Remove(Entry.Id);
             m_chunksMap.Remove(Entry.Id);
@@ -669,6 +741,65 @@ void ChunkManager::ProcessDeferredReleases()
     }
 
     m_deferredReleaseQueue = MoveTemp(StillWaiting);
+}
+
+
+void ChunkManager::EvictChunksOverCap(const FVector &MoveDir)
+{
+    while (m_chunksMap.Num() > m_planetConfig.CacheHardCap && m_deferredReleaseQueue.Num() > 0)
+    {
+        // O(n) single pass — find the worst eviction candidate
+        int32 WorstIdx = -1;
+        float WorstScore = -1.f;
+
+        for (int32 i = 0; i < m_deferredReleaseQueue.Num(); ++i)
+        {
+            const ChunkId &Id = m_deferredReleaseQueue[i].Id;
+            FVector Center = FMathUtils::GetChunkCenter(Id, m_planetConfig.PlanetRadius);
+
+            float DistSq = FVector::DistSquared(Center, m_lastObserverLocalPos);
+            FVector DirToChunk = (Center - m_lastObserverLocalPos).GetSafeNormal();
+            float Dot = FVector::DotProduct(MoveDir, DirToChunk);
+
+            // Behind player = high multiplier = evict first
+            float EvictMult = FMath::GetMappedRangeValueClamped(FVector2D(-1.f, 1.f), FVector2D(10.f, 0.1f), Dot);
+            float Score = DistSq * EvictMult;
+
+            if (Score > WorstScore)
+            {
+                WorstScore = Score;
+                WorstIdx = i;
+            }
+        }
+
+        if (WorstIdx == -1)
+            break;
+
+        // O(1) removal — order doesn't need to be preserved
+        DeferredRelease Target = m_deferredReleaseQueue[WorstIdx];
+        m_deferredReleaseQueue.RemoveAtSwap(WorstIdx);
+
+        Chunk *Chunk = GetChunk(Target.Id);
+        if (Chunk && Chunk->m_state == ChunkState::MeshReady && !m_renderSet.Contains(Target.Id))
+        {
+            if (Chunk->m_renderProxy.IsValid())
+                m_chunkRenderer->ReleaseChunk(Chunk);
+
+            m_deferredReleaseIdsMap.Remove(Target.Id);
+            m_chunksMap.Remove(Target.Id);
+        }
+    }
+
+    // Diagnostic: we're over cap but have nothing left to evict
+    if (m_chunksMap.Num() > m_planetConfig.CacheHardCap)
+    {
+        UE_LOG(LogTemp,
+               Warning,
+               TEXT("Cache over hard cap (%d/%d) but deferred queue is empty — cannot evict. "
+                    "Consider raising CacheHardCap or reducing MaxConcurrentGenerations."),
+               m_chunksMap.Num(),
+               m_planetConfig.CacheHardCap);
+    }
 }
 
 

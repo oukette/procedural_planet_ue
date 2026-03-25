@@ -136,10 +136,11 @@ struct FPlanetConfig
         int32 MaxConcurrentGenerations = 32;
         int32 ChunkGenerationRate = 8;  // Chunks to start generating per tick
         int32 MeshUpdatesPerFrame = 8;
-        int32 CacheSoftCap = 300;
-        int32 CacheHardCap = 512;
+        int32 CacheSoftCap = 512;
+        int32 CacheHardCap = 1024;
         int32 DeferredReleaseDelay = 8;     // Normal frame countdown
         int32 DeferredReleaseDelayMin = 1;  // Minimum under full pressure
+        int32 TransitionMaxAge = 90;        // Maximum number of frames a pending LOD transition can stay alive before being force-cancelled.
 
 
         // LOD Rules
