@@ -168,6 +168,16 @@ struct DensityConfig
         FNoiseSettings Noise;
 
         // Future expansion: biomes, caves, etc.
+
+        static DensityConfig From(const FPlanetConfig &PlanetCfg, const FNoiseSettings &InNoise)
+        {
+            DensityConfig Result;
+            Result.Seed = PlanetCfg.Seed;
+            Result.PlanetRadius = PlanetCfg.PlanetRadius;
+            Result.VoxelSize = PlanetCfg.VoxelSize;
+            Result.Noise = InNoise;
+            return Result;
+        }
 };
 
 
@@ -178,4 +188,3 @@ struct GenData
         TArray<FVector> Positions;
         int32 SampleCount = 0;
 };
-

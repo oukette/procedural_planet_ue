@@ -125,50 +125,24 @@ void APlanet::initPlanet()
 {
     // Handle Visuals (Far Model)
     if (!GenSettings.FarPlanetModel)
-    {
         CreateFarModel();
-    }
+
     // Update Far Model scale if needed (logic from PrepareGeneration)
     if (GenSettings.FarPlanetModel && bIsFarModelAutoCreated)
-    {
         GenSettings.FarPlanetModel->SetActorScale3D(FVector(GenSettings.PlanetRadius / PlanetStatics::DefaultEngineSphereRadius));
-    }
 
     // Calculate "Auto" Settings (Configuration)
-    float FinalVoxelSize;
-    ComputeAutoVoxelSize(FinalVoxelSize);
+    float computedVoxelSize;
+    ComputeAutoVoxelSize(computedVoxelSize);
 
-    // Initialize the planet config struct to feed the ChunkManager
-    m_planetConfig = FPlanetConfig();
-    m_planetConfig.PlanetRadius = GenSettings.PlanetRadius;
-    m_planetConfig.Seed = GenSettings.Seed;
-    m_planetConfig.bEnableCollision = GenSettings.bEnableCollision;
-    m_planetConfig.bCastShadows = GenSettings.bCastShadows;
-    m_planetConfig.VoxelSize = FinalVoxelSize;
-    m_planetConfig.MaxConcurrentGenerations = PerformanceSettings.MaxConcurrentGenerations;
-    m_planetConfig.ChunkGenerationRate = PerformanceSettings.ChunksToSpawnPerFrame;
-    m_planetConfig.MeshUpdatesPerFrame = PerformanceSettings.MeshUpdatesPerFrame;
-    m_planetConfig.FarDistanceThreshold = GenSettings.PlanetRadius * GenSettings.RenderDistanceMultiplier;
-    m_planetConfig.LODSplitScreenFraction = GridSettings.LODSplitScreenFraction;
-    m_planetConfig.LODMergeHysteresisRatio = GridSettings.LODMergeHysteresisRatio;
-    m_planetConfig.MaxLookAheadTime = PerformanceSettings.MaxLookAheadTime;
-    m_planetConfig.MinLookAheadTime = PerformanceSettings.MinLookAheadTime;
-    m_planetConfig.LookAheadAltitudeScale = PerformanceSettings.LookAheadAltitudeRadiusFactor * GenSettings.PlanetRadius;
+    // Build configs — all assembly logic lives in the builders
+    m_planetConfig = BuildPlanetConfig(computedVoxelSize);
 
-    // Create Noise Provider
+    // Wire up subsystems
     m_noiseProvider = MakeShared<SimpleNoise, ESPMode::ThreadSafe>();
-
-    // Create density config and init the generator
-    DensityConfig densityConfig;
-    densityConfig.PlanetRadius = GenSettings.PlanetRadius;
-    densityConfig.Seed = GenSettings.Seed;
-    densityConfig.VoxelSize = FinalVoxelSize;
-    densityConfig.Noise = NoiseSettings;
-    m_densityGen = MakeUnique<DensityGenerator>(densityConfig, m_noiseProvider.Get());
-
-    // Finally, init the ChunkManager
+    m_densityGen = MakeUnique<DensityGenerator>(DensityConfig::From(m_planetConfig, NoiseSettings), m_noiseProvider.Get());
     m_chunkManager = MakeUnique<ChunkManager>(m_planetConfig, m_densityGen.Get(), m_noiseProvider);
-    m_chunkManager->Initialize(this, GenSettings.DebugMaterial);  // Pass context for rendering
+    m_chunkManager->Initialize(this, GenSettings.DebugMaterial);
 }
 
 
@@ -181,6 +155,31 @@ void APlanet::ComputeAutoVoxelSize(float &OutVoxelSize) const
     const float FaceArcLength = GenSettings.PlanetRadius * HALF_PI;
     OutVoxelSize = FaceArcLength / Resolution;
 }
+
+
+FPlanetConfig APlanet::BuildPlanetConfig(float VoxelSize) const
+{
+    FPlanetConfig Cfg;
+    Cfg.PlanetRadius = GenSettings.PlanetRadius;
+    Cfg.Seed = GenSettings.Seed;
+    Cfg.bEnableCollision = GenSettings.bEnableCollision;
+    Cfg.bCastShadows = GenSettings.bCastShadows;
+    Cfg.VoxelSize = VoxelSize;
+    Cfg.GridResolution = FMath::Max(4, GridSettings.Resolution);
+    Cfg.FarDistanceThreshold = GenSettings.PlanetRadius * GenSettings.RenderDistanceMultiplier;
+    Cfg.LODSplitScreenFraction = GridSettings.LODSplitScreenFraction;
+    Cfg.LODMergeHysteresisRatio = GridSettings.LODMergeHysteresisRatio;
+    Cfg.MaxConcurrentGenerations = PerformanceSettings.MaxConcurrentGenerations;
+    Cfg.ChunkGenerationRate = PerformanceSettings.ChunksToSpawnPerFrame;
+    Cfg.MeshUpdatesPerFrame = PerformanceSettings.MeshUpdatesPerFrame;
+    Cfg.MaxLookAheadTime = PerformanceSettings.MaxLookAheadTime;
+    Cfg.MinLookAheadTime = PerformanceSettings.MinLookAheadTime;
+    Cfg.LookAheadAltitudeScale = PerformanceSettings.LookAheadAltitudeRadiusFactor * GenSettings.PlanetRadius;
+    return Cfg;
+}
+
+
+DensityConfig APlanet::BuildDensityConfig(float VoxelSize) const { return DensityConfig::From(BuildPlanetConfig(VoxelSize), NoiseSettings); }
 
 
 void APlanet::CreateFarModel()

@@ -1,6 +1,9 @@
 #pragma once
 
-#include "CoreMinimal.h"
+#include "Math/Vector.h"
+#include "Math/MathFwd.h"
+#include "GenericPlatform/GenericPlatformMath.h"
+#include "ConvexVolume.h"
 
 
 // Context provided to the Manager to evaluate LODs and visibility
