@@ -8,7 +8,7 @@
 #include "Templates/UniquePtr.h"
 #include "UObject/WeakObjectPtr.h"
 
-#include "PlanetConfig.h"
+#include "GenData.h"
 #include "ChunkId.h"
 
 

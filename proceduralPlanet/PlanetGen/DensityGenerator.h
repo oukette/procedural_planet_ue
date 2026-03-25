@@ -7,6 +7,29 @@
 #include "../Utils/MathUtils.h"
 #include "../Utils/INoise.h"
 #include "PlanetConfig.h"
+#include "GenData.h"
+
+
+// Configuration structure to keep parameters organized
+struct DensityConfig
+{
+        int32 Seed = 1337;
+        float PlanetRadius = 10000.f;
+        float VoxelSize = 100.f;
+        FNoiseSettings Noise;
+
+        // Future expansion: biomes, caves, etc.
+
+        static DensityConfig From(const FPlanetConfig &PlanetCfg, const FNoiseSettings &InNoise)
+        {
+            DensityConfig Result;
+            Result.Seed = PlanetCfg.Seed;
+            Result.PlanetRadius = PlanetCfg.PlanetRadius;
+            Result.VoxelSize = PlanetCfg.VoxelSize;
+            Result.Noise = InNoise;
+            return Result;
+        }
+};
 
 
 // Encapsulates all density field generation logic for procedural planets.

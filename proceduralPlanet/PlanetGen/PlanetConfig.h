@@ -159,32 +159,7 @@ struct FPlanetConfig
 };
 
 
-// Configuration structure to keep parameters organized
-struct DensityConfig
-{
-        int32 Seed = 1337;
-        float PlanetRadius = 10000.f;
-        float VoxelSize = 100.f;
-        FNoiseSettings Noise;
-
-        // Future expansion: biomes, caves, etc.
-
-        static DensityConfig From(const FPlanetConfig &PlanetCfg, const FNoiseSettings &InNoise)
-        {
-            DensityConfig Result;
-            Result.Seed = PlanetCfg.Seed;
-            Result.PlanetRadius = PlanetCfg.PlanetRadius;
-            Result.VoxelSize = PlanetCfg.VoxelSize;
-            Result.Noise = InNoise;
-            return Result;
-        }
-};
 
 
-// Container for generated field data to avoid re-calculating positions
-struct GenData
-{
-        TArray<float> Densities;
-        TArray<FVector> Positions;
-        int32 SampleCount = 0;
-};
+
+
