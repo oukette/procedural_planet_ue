@@ -1,13 +1,19 @@
 #include "ChunkManager.h"
+#include "../Utils/MathUtils.h"
+#include "PlanetConfig.h"
+#include "PlanetConstants.h"
+
+#include "Engine/World.h"
 #include "DrawDebugHelpers.h"
-#include "MathUtils.h"
-#include "DataTypes.h"
 
 
-ChunkManager::ChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen) :
+ChunkManager::ChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen, TSharedPtr<INoise, ESPMode::ThreadSafe> noiseProvider) :
     m_planetConfig(planetConfig),
-    m_densityGen(densityGen)
+    m_densityGen(densityGen),
+    m_noiseProvider(noiseProvider)
 {
+    m_chunkGenerator = MakeUnique<ChunkGenerator>(m_planetConfig, m_densityGen, m_noiseProvider);
+
     // DEBUG LOG
     UE_LOG(LogTemp, Warning, TEXT("ChunkManager created."));
     UE_LOG(LogTemp, Warning, TEXT("Collision is globally %s"), m_planetConfig.bEnableCollision ? TEXT("enabled") : TEXT("disabled"));
@@ -75,7 +81,7 @@ void ChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
 {
     m_chunkRenderer = MakeUnique<ChunkRenderer>(Owner, Material);
 
-    m_chunkGenerator = MakeUnique<ChunkGenerator>(m_planetConfig, m_densityGen);
+    // m_chunkGenerator = MakeUnique<ChunkGenerator>(m_planetConfig, m_densityGen);
     m_chunkGenerator->SetOnChunkGeneratedCallback([this](const ChunkId &Id, uint32 GenId, TUniquePtr<ChunkMeshData> MeshData)
                                                   { OnGenerationComplete(Id, GenId, MoveTemp(MeshData)); });
 
@@ -145,10 +151,10 @@ void ChunkManager::DeferHideChunk(Chunk *Chunk, const ChunkId &Id)
 }
 
 
-void ChunkManager::Update(const FPlanetViewContext &Context)
+void ChunkManager::Update(const PlanetViewContext &Context)
 {
     const float DistToSurface = Context.ObserverLocation.Size() - m_planetConfig.PlanetRadius;
-    const bool bShouldGenerateChunks = DistToSurface < (m_planetConfig.FarDistanceThreshold * FPlanetStatics::FarDistanceSafetyMargin);
+    const bool bShouldGenerateChunks = DistToSurface < (m_planetConfig.FarDistanceThreshold * PlanetStatics::FarDistanceSafetyMargin);
 
     m_lastObserverLocalPos = Context.ObserverLocation;
 
@@ -772,7 +778,7 @@ void ChunkManager::DrawDebugChunkBounds(const UWorld *World) const
                 // Use LOD color if available, otherwise fallback to white
                 const FColor BoxColor = (LOD >= 0 && LOD < LODColorsDebug.Num()) ? LODColorsDebug[LOD] : FColor::White;
                 const FBox Box = Comp->Bounds.GetBox();
-                DrawDebugBox(World, Box.GetCenter(), Box.GetExtent(), BoxColor, false, 0.f, 0, FPlanetStatics::DebugBoxLifetime);
+                DrawDebugBox(World, Box.GetCenter(), Box.GetExtent(), BoxColor, false, 0.f, 0, PlanetStatics::DebugBoxLifetime);
             }
         }
     }

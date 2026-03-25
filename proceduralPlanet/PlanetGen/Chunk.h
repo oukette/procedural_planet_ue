@@ -1,8 +1,18 @@
 #pragma once
 
-#include "CoreMinimal.h"
-#include "DataTypes.h"
+#include "Math/Vector.h"
+#include "Math/Vector2D.h"
+#include "Math/Quat.h"
+#include "Math/Color.h"
+#include "Containers/Array.h"
+#include "Templates/UniquePtr.h"
+#include "UObject/WeakObjectPtr.h"
+
+#include "GenData.h"
 #include "ChunkId.h"
+
+
+class UProceduralMeshComponent;
 
 
 // All data required for a single Mesh Section

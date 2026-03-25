@@ -1,13 +1,16 @@
 #include "ChunkGenerator.h"
+#include "MeshGenerator.h"
+#include "../Utils/MathUtils.h"
+#include "../Utils/INoise.h"
+
 #include "Async/Async.h"
 #include "HAL/PlatformProcess.h"
-#include "MeshGenerator.h"
-#include "MathUtils.h"
 
 
-ChunkGenerator::ChunkGenerator(const FPlanetConfig &InConfig, const DensityGenerator *InDensityGen) :
+ChunkGenerator::ChunkGenerator(const FPlanetConfig &InConfig, const DensityGenerator *InDensityGen, TSharedPtr<INoise, ESPMode::ThreadSafe> InNoise) :
     m_planetConfig(InConfig),
-    m_densityGen(InDensityGen)
+    m_densityGen(InDensityGen),
+    m_noiseProviderRef(InNoise)
 {
     m_isStopping = false;
     m_aliveToken = MakeShared<bool, ESPMode::ThreadSafe>(true);
@@ -158,8 +161,9 @@ void ChunkGenerator::StartAsyncTask(const ChunkRequest &Request)
     int32 LODLevel = Id.LODLevel;
     float PlanetRadius = m_planetConfig.PlanetRadius;
 
-    // Copy DensityGenerator (it's lightweight config + pointer to noise)
-    DensityGenerator ThreadGen = *m_densityGen;
+    // Capture shared ownership of noise for this thread
+    DensityConfig ThreadConfig = m_densityGen->GetConfig();
+    TSharedPtr<INoise, ESPMode::ThreadSafe> NoiseRef = m_noiseProviderRef;
 
     // Calculate Transform (Stateless math via MathUtils)
     ChunkTransform ChunkTransform = FMathUtils::ComputeChunkTransform(Id, PlanetRadius);
@@ -195,17 +199,22 @@ void ChunkGenerator::StartAsyncTask(const ChunkRequest &Request)
                                                           }
                                                       });
 
+    
     // Launch Async
     Async(EAsyncExecution::ThreadPool,
-          [this, Id, GenId, Resolution, FaceNormal, FaceRight, FaceUp, CubeMin, CubeMax, Transform, LODLevel, ThreadGen, Token, ThreadGuard]()
+          [this, Id, GenId, Resolution, FaceNormal, FaceRight, FaceUp, CubeMin, CubeMax, Transform, LODLevel, ThreadConfig, Token, ThreadGuard, NoiseRef]()
           {
-              // A. Generate Density
+              // Build a self-contained DensityGenerator using the shared noise
+              // NoiseRef keeps SimpleNoise alive regardless of APlanet's lifetime
+              DensityGenerator ThreadGen(ThreadConfig, NoiseRef.Get());
+
+              // Generate Density
               GenData GeneratedData = ThreadGen.GenerateDensityField(Resolution, FaceNormal, FaceRight, FaceUp, CubeMin, CubeMax);
 
-              // B. Generate Mesh
+              // Generate Mesh
               ChunkMeshData MeshData = MeshGenerator::GenerateMesh(GeneratedData, Resolution, Transform, FTransform::Identity, LODLevel, ThreadGen);
 
-              // C. Return to Game Thread
+              // Return to Game Thread
               AsyncTask(ENamedThreads::GameThread,
                         [this, Id, GenId, MeshData, Token]() mutable
                         {

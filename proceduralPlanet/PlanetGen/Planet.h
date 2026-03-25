@@ -2,10 +2,12 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "SeedUtils.h"
-#include "MathUtils.h"
+
+#include "../Utils/SeedUtils.h"
+#include "../Utils/MathUtils.h"
 #include "ChunkManager.h"
-#include "DataTypes.h"
+#include "PlanetConfig.h"
+#include "PlanetConstants.h"
 #include "SimpleNoise.h"
 #include "Planet.generated.h"
 
@@ -20,11 +22,10 @@ class PROCEDURALPLANET_API APlanet : public AActor
         USceneComponent *Root;
 
         TUniquePtr<ChunkManager> m_chunkManager;
-        TUniquePtr<SimpleNoise> m_noiseProvider;
+        TSharedPtr<INoise, ESPMode::ThreadSafe> m_noiseProvider;
         TUniquePtr<DensityGenerator> m_densityGen;
 
-        // Stores the finalized configuration after initPlanet() runs.
-        FPlanetConfig m_planetConfig;
+        FPlanetConfig m_planetConfig;   // Store the finalized configuration after initPlanet() runs.
 
     public:
         // Generation Control
@@ -53,25 +54,35 @@ class PROCEDURALPLANET_API APlanet : public AActor
     protected:
         virtual void OnConstruction(const FTransform &Transform) override;
 
-        // Initializes the generation process by populating the spawn queue.
+        // Initialize the generation process by populating the spawn queue.
         void initPlanet();
 
         // Helper to get the camera position in both Editor and Runtime
         FVector GetObserverPosition() const;
 
-        // Creates the planet far model for optimized rendering in far distance.
+        // Create the planet far model for optimized rendering in far distance.
         void CreateFarModel();
 
-        // Calculates the optimal grid size (ChunksPerFace) and VoxelSize based on Planet Radius.
-        void CalculateAutoGrid(int32 &OutChunksPerFace, float &OutVoxelSize, int32 &OutResolution) const;
+        // Compute the optimal VoxelSize based on Planet Radius.
+        void ComputeAutoVoxelSize(float &OutVoxelSize) const;
 
-        // Tick Helpers
-        FPlanetViewContext BuildViewContext() const;
-        void BuildViewFrustum(APlayerCameraManager *PCM, FPlanetViewContext &Context) const;
-        void BuildVerticalFOV(APlayerCameraManager *PCM, FPlanetViewContext &Context) const;  // ADD
-        void UpdateChunkManager(const FPlanetViewContext &Context);
-        void UpdateFarModelVisibility(const FPlanetViewContext &Context);
-        void DrawDebugInfo(const FPlanetViewContext &Context) const;
+        // Build the configurations.
+        FPlanetConfig BuildPlanetConfig(float VoxelSize) const;
+        DensityConfig BuildDensityConfig(float VoxelSize) const;
+
+        // View related logic
+        PlanetViewContext BuildViewContext() const;
+        void BuildViewFrustum(APlayerCameraManager *PCM, PlanetViewContext &Context) const;
+        void BuildVerticalFOV(APlayerCameraManager *PCM, PlanetViewContext &Context) const;
+
+        // Helper to update the chunk manager.
+        void UpdateChunkManager(const PlanetViewContext &Context);
+
+        // Helper to update the far model visibility.
+        void UpdateFarModelVisibility(const PlanetViewContext &Context);
+
+        // Debug methods
+        void DrawDebugInfo(const PlanetViewContext &Context) const;
 
     public:
         APlanet();

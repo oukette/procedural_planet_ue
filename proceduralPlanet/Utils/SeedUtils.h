@@ -1,7 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "ChunkId.h"
+#include "../PlanetGen/ChunkId.h"
 
 
 // Pure math utilities for generating seeds and hashes.

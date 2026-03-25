@@ -1,14 +1,14 @@
 #pragma once
 
-#include "CoreMinimal.h"
+#include "Math/Vector.h"
 
 
-// Interface for any noise algorithm used by the planet.
+// Interface for any noise algorithm.
 // Must be thread-safe (const methods only).
-class IPlanetNoise
+class INoise
 {
     public:
-        virtual ~IPlanetNoise() = default;
+        virtual ~INoise() = default;
 
         /// @brief           Sample a noise value at a specific 3D position.
         /// @param _position The 3D coordinate to sample.

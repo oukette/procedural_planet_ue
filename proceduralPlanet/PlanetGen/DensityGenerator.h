@@ -2,10 +2,34 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
-#include "MathUtils.h"
-#include "IPlanetNoise.h"
-#include "DataTypes.h"
+#include "Math/Vector.h"
+
+#include "../Utils/MathUtils.h"
+#include "../Utils/INoise.h"
+#include "PlanetConfig.h"
+#include "GenData.h"
+
+
+// Configuration structure to keep parameters organized
+struct DensityConfig
+{
+        int32 Seed = 1337;
+        float PlanetRadius = 10000.f;
+        float VoxelSize = 100.f;
+        FNoiseSettings Noise;
+
+        // Future expansion: biomes, caves, etc.
+
+        static DensityConfig From(const FPlanetConfig &PlanetCfg, const FNoiseSettings &InNoise)
+        {
+            DensityConfig Result;
+            Result.Seed = PlanetCfg.Seed;
+            Result.PlanetRadius = PlanetCfg.PlanetRadius;
+            Result.VoxelSize = PlanetCfg.VoxelSize;
+            Result.Noise = InNoise;
+            return Result;
+        }
+};
 
 
 // Encapsulates all density field generation logic for procedural planets.
@@ -18,11 +42,11 @@ class PROCEDURALPLANET_API DensityGenerator
 {
     private:
         DensityConfig m_densityConfig;
-        const IPlanetNoise *m_noiseProvider;
+        const INoise *m_noiseProvider;
 
     public:
         // Constructor
-        explicit DensityGenerator(const DensityConfig &InConfig, const IPlanetNoise *InNoiseProvider = nullptr);
+        explicit DensityGenerator(const DensityConfig &InConfig, const INoise *InNoiseProvider = nullptr);
 
         // Sample density at a world position (relative to planet center)
         float SampleDensity(const FVector &PlanetRelativePosition) const;

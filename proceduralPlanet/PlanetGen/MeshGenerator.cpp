@@ -1,5 +1,6 @@
 #include "MeshGenerator.h"
 #include "MarchingCubesTables.h"
+#include "PlanetConstants.h"
 
 
 ChunkMeshData MeshGenerator::GenerateMesh(const GenData &GenData, int32 Resolution, const FTransform &ChunkTransform, const FTransform &PlanetTransform,

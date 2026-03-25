@@ -2,7 +2,8 @@
 
 #include "CoreMinimal.h"
 #include "ChunkId.h"
-#include "DataTypes.h"
+#include "PlanetViewContext.h"
+#include "PlanetConfig.h"
 
 
 // A logical node in the Quadtree.
@@ -37,7 +38,7 @@ class PlanetQuadtree
 
         // Rebuilds the visibility lists based on the view context.
         // IsChunkReady: A callback to check if a specific chunk ID has mesh data loaded (used for hysteresis).
-        void Update(const FPlanetViewContext &Context);
+        void Update(const PlanetViewContext &Context);
 
         // The ideal set of leaf IDs this frame. Manager diffs this against RenderSet.
         const TSet<ChunkId> &GetDesiredLeaves() const { return m_desiredLeaves; }
@@ -46,7 +47,7 @@ class PlanetQuadtree
         void DrawDebugGrid(const UWorld *World, const FTransform &PlanetTransform) const;
 
     private:
-        void UpdateNode(QuadtreeNode *Node, const FPlanetViewContext &Context);
-        bool ShouldSplit(const QuadtreeNode *Node, const FPlanetViewContext &Context) const;
-        bool ShouldMerge(const QuadtreeNode *Node, const FPlanetViewContext &Context) const;
+        void UpdateNode(QuadtreeNode *Node, const PlanetViewContext &Context);
+        bool ShouldSplit(const QuadtreeNode *Node, const PlanetViewContext &Context) const;
+        bool ShouldMerge(const QuadtreeNode *Node, const PlanetViewContext &Context) const;
 };

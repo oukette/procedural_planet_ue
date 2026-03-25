@@ -1,5 +1,6 @@
 #include "PlanetQuadtree.h"
-#include "MathUtils.h"
+#include "../Utils/MathUtils.h"
+#include "PlanetConstants.h"
 #include "DrawDebugHelpers.h"
 
 
@@ -20,7 +21,7 @@ PlanetQuadtree::PlanetQuadtree(const FPlanetConfig &InConfig) :
 PlanetQuadtree::~PlanetQuadtree() {}
 
 
-void PlanetQuadtree::Update(const FPlanetViewContext &Context)
+void PlanetQuadtree::Update(const PlanetViewContext &Context)
 {
     m_desiredLeaves.Empty();
 
@@ -31,7 +32,7 @@ void PlanetQuadtree::Update(const FPlanetViewContext &Context)
 }
 
 
-void PlanetQuadtree::UpdateNode(QuadtreeNode *Node, const FPlanetViewContext &Context)
+void PlanetQuadtree::UpdateNode(QuadtreeNode *Node, const PlanetViewContext &Context)
 {
     FVector Center = FMathUtils::GetChunkCenter(Node->Id, m_planetConfig.PlanetRadius);
 
@@ -119,7 +120,7 @@ void PlanetQuadtree::UpdateNode(QuadtreeNode *Node, const FPlanetViewContext &Co
 }
 
 
-bool PlanetQuadtree::ShouldSplit(const QuadtreeNode *Node, const FPlanetViewContext &Context) const
+bool PlanetQuadtree::ShouldSplit(const QuadtreeNode *Node, const PlanetViewContext &Context) const
 {
     if (Node->Id.LODLevel >= m_planetConfig.MaxLOD)
         return false;
@@ -139,7 +140,7 @@ bool PlanetQuadtree::ShouldSplit(const QuadtreeNode *Node, const FPlanetViewCont
 }
 
 
-bool PlanetQuadtree::ShouldMerge(const QuadtreeNode *Node, const FPlanetViewContext &Context) const
+bool PlanetQuadtree::ShouldMerge(const QuadtreeNode *Node, const PlanetViewContext &Context) const
 {
     if (Node->Id.LODLevel >= m_planetConfig.MaxLOD)
         return true;
@@ -163,7 +164,7 @@ void PlanetQuadtree::DrawDebugGrid(const UWorld *World, const FTransform &Planet
     if (!World)
         return;
 
-    float Radius = m_planetConfig.PlanetRadius * FPlanetStatics::GridDebugRadiusScale;
+    float Radius = m_planetConfig.PlanetRadius * PlanetStatics::GridDebugRadiusScale;
 
     for (uint8 Face = 0; Face < 6; ++Face)
     {
@@ -177,9 +178,9 @@ void PlanetQuadtree::DrawDebugGrid(const UWorld *World, const FTransform &Planet
         FVector P2 = PlanetTransform.TransformPosition(FMathUtils::projectCubeToSphere(Normal + Right + Up) * Radius);
         FVector P3 = PlanetTransform.TransformPosition(FMathUtils::projectCubeToSphere(Normal - Right + Up) * Radius);
 
-        DrawDebugLine(World, P0, P1, FColor::Cyan, false, -1.0f, 0, FPlanetStatics::DebugLineLifetime);
-        DrawDebugLine(World, P1, P2, FColor::Cyan, false, -1.0f, 0, FPlanetStatics::DebugLineLifetime);
-        DrawDebugLine(World, P2, P3, FColor::Cyan, false, -1.0f, 0, FPlanetStatics::DebugLineLifetime);
-        DrawDebugLine(World, P3, P0, FColor::Cyan, false, -1.0f, 0, FPlanetStatics::DebugLineLifetime);
+        DrawDebugLine(World, P0, P1, FColor::Cyan, false, -1.0f, 0, PlanetStatics::DebugLineLifetime);
+        DrawDebugLine(World, P1, P2, FColor::Cyan, false, -1.0f, 0, PlanetStatics::DebugLineLifetime);
+        DrawDebugLine(World, P2, P3, FColor::Cyan, false, -1.0f, 0, PlanetStatics::DebugLineLifetime);
+        DrawDebugLine(World, P3, P0, FColor::Cyan, false, -1.0f, 0, PlanetStatics::DebugLineLifetime);
     }
 }
