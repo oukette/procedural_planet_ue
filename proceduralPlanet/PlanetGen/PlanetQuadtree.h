@@ -31,6 +31,7 @@ class PlanetQuadtree
         FPlanetConfig m_planetConfig;
         TArray<TUniquePtr<QuadtreeNode>> m_rootNodes;
         TSet<ChunkId> m_desiredLeaves;
+        int32 m_maxLODOverride = -1;
 
     public:
         PlanetQuadtree(const FPlanetConfig &InConfig);
@@ -47,7 +48,9 @@ class PlanetQuadtree
         void DrawDebugGrid(const UWorld *World, const FTransform &PlanetTransform) const;
 
     private:
-        void UpdateNode(QuadtreeNode *Node, const PlanetViewContext &Context);
-        bool ShouldSplit(const QuadtreeNode *Node, const PlanetViewContext &Context) const;
+        PlanetViewContext BuildPredictedContext(const PlanetViewContext &Context) const;
+        void RunPass(const PlanetViewContext &Context, int32 MaxLODOverride);
+        void UpdateNode(QuadtreeNode *Node, const PlanetViewContext &Context, int32 MaxLODOverride);
+        bool ShouldSplit(const QuadtreeNode *Node, const PlanetViewContext &Context, int32 MaxLODOverride) const;
         bool ShouldMerge(const QuadtreeNode *Node, const PlanetViewContext &Context) const;
 };

@@ -25,14 +25,49 @@ void PlanetQuadtree::Update(const PlanetViewContext &Context)
 {
     m_desiredLeaves.Empty();
 
-    for (const auto &Root : m_rootNodes)
-    {
-        UpdateNode(Root.Get(), Context);
-    }
+    RunPass(Context, m_planetConfig.MaxLOD);
+
+    const PlanetViewContext PredictedContext = BuildPredictedContext(Context);
+    if (PredictedContext.ObserverLocation != Context.ObserverLocation)
+        RunPass(PredictedContext, m_planetConfig.PredictiveMaxLOD);
 }
 
 
-void PlanetQuadtree::UpdateNode(QuadtreeNode *Node, const PlanetViewContext &Context)
+PlanetViewContext PlanetQuadtree::BuildPredictedContext(const PlanetViewContext &Context) const
+{
+    const float Speed = Context.ObserverVelocity.Size();
+
+    // Altitude factor: 1.0 well above PredictiveMinAltitude, ramps to 0.0 at surface.
+    // AltitudeAboveSurface is 0 when the player is far from the planet — prediction stays off.
+    const float AltitudeFactor = FMath::Clamp(Context.AltitudeAboveSurface / FMath::Max(m_planetConfig.PredictiveMinAltitude, 1.f), 0.f, 1.f);
+
+    const float LookAheadSeconds =
+        FMath::Clamp(Speed / FMath::Max(m_planetConfig.PredictiveLookAheadScale, 1.f), 0.f, m_planetConfig.PredictiveLookAheadMaxSeconds) * AltitudeFactor;
+
+    // Return unchanged context if prediction is negligible — caller skips the pass
+    if (LookAheadSeconds <= KINDA_SMALL_NUMBER || Context.ObserverVelocity.IsNearlyZero())
+        return Context;
+
+    // Project predicted position onto the sphere at the same radius as the real observer.
+    // This keeps LOD evaluation at the correct altitude regardless of movement direction.
+    const FVector RawPredicted = Context.ObserverLocation + Context.ObserverVelocity * LookAheadSeconds;
+    const FVector PredictedPos = RawPredicted.GetSafeNormal() * Context.ObserverLocation.Size();
+
+    PlanetViewContext Predicted = Context;
+    Predicted.ObserverLocation = PredictedPos;
+    // AltitudeAboveSurface stays the same — same orbital radius, just different surface position
+    return Predicted;
+}
+
+
+void PlanetQuadtree::RunPass(const PlanetViewContext &Context, int32 MaxLODOverride)
+{
+    for (const auto &Root : m_rootNodes)
+        UpdateNode(Root.Get(), Context, MaxLODOverride);
+}
+
+
+void PlanetQuadtree::UpdateNode(QuadtreeNode *Node, const PlanetViewContext &Context, int32 MaxLODOverride)
 {
     FVector Center = FMathUtils::GetChunkCenter(Node->Id, m_planetConfig.PlanetRadius);
 
@@ -78,7 +113,7 @@ void PlanetQuadtree::UpdateNode(QuadtreeNode *Node, const PlanetViewContext &Con
 
 
     // --- LOD logic ---
-    if (ShouldSplit(Node, Context))
+    if (ShouldSplit(Node, Context, MaxLODOverride))
     {
         // Expand children if not already split
         if (Node->IsLeaf())
@@ -96,7 +131,7 @@ void PlanetQuadtree::UpdateNode(QuadtreeNode *Node, const PlanetViewContext &Con
 
         // Recurse regardless — children may themselves split or merge
         for (auto &Child : Node->Children)
-            UpdateNode(Child.Get(), Context);
+            UpdateNode(Child.Get(), Context, MaxLODOverride);
     }
     else if (ShouldMerge(Node, Context))
     {
@@ -114,15 +149,15 @@ void PlanetQuadtree::UpdateNode(QuadtreeNode *Node, const PlanetViewContext &Con
         else
         {
             for (auto &Child : Node->Children)
-                UpdateNode(Child.Get(), Context);
+                UpdateNode(Child.Get(), Context, MaxLODOverride);
         }
     }
 }
 
 
-bool PlanetQuadtree::ShouldSplit(const QuadtreeNode *Node, const PlanetViewContext &Context) const
+bool PlanetQuadtree::ShouldSplit(const QuadtreeNode *Node, const PlanetViewContext &Context, int32 MaxLODOverride) const
 {
-    if (Node->Id.LODLevel >= m_planetConfig.MaxLOD)
+    if (Node->Id.LODLevel >= FMath::Min(m_planetConfig.MaxLOD, MaxLODOverride))
         return false;
 
     FVector Center = FMathUtils::GetChunkCenter(Node->Id, m_planetConfig.PlanetRadius);
