@@ -5,8 +5,7 @@
 
 
 // Planet generation settings.
-USTRUCT(BlueprintType)
-struct FPlanetGenSettings
+USTRUCT(BlueprintType) struct FPlanetGenSettings
 {
         GENERATED_BODY()
 
@@ -30,6 +29,13 @@ struct FPlanetGenSettings
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         AActor *FarPlanetModel = nullptr;
+};
+
+
+// Planet debug settings.
+USTRUCT(BlueprintType) struct FPlanetDebugSettings
+{
+        GENERATED_BODY()
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         bool bShowDebugTrueSphere = false;
@@ -40,14 +46,13 @@ struct FPlanetGenSettings
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         bool bShowDebugChunkBounds = false;
 
-        // UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (DisplayName = "Show Debug Prediction"))
-        // bool bShowDebugPrediction = false;
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        bool bShowDebugPredictivePos = false;
 };
 
 
 // Planet grid settings.
-USTRUCT(BlueprintType)
-struct FPlanetGridSettings
+USTRUCT(BlueprintType) struct FPlanetGridSettings
 {
         GENERATED_BODY()
 
@@ -67,8 +72,7 @@ struct FPlanetGridSettings
 
 
 // Planet perf settings.
-USTRUCT(BlueprintType)
-struct FPlanetPerformanceSettings
+USTRUCT(BlueprintType) struct FPlanetPerformanceSettings
 {
         GENERATED_BODY()
 
@@ -80,21 +84,11 @@ struct FPlanetPerformanceSettings
 
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Performance", meta = (ClampMin = "1", ClampMax = "512"))
         int32 MaxConcurrentGenerations = 32;
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD Look-Ahead", meta = (ClampMin = "0.0", ClampMax = "10.0"))
-        float MaxLookAheadTime = 2.5f;
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD Look-Ahead", meta = (ClampMin = "0.0", ClampMax = "10.0"))
-        float MinLookAheadTime = 0.5f;
-
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|LOD Look-Ahead", meta = (ClampMin = "0.01", ClampMax = "20.0"))
-        float LookAheadAltitudeRadiusFactor = 4.0f;
 };
 
 
 // Grouped Noise Settings for cleaner propagation
-USTRUCT(BlueprintType)
-struct FNoiseSettings
+USTRUCT(BlueprintType) struct FNoiseSettings
 {
         GENERATED_BODY()
 
@@ -116,12 +110,12 @@ struct FNoiseSettings
 
 
 // Static configuration for the planet. Passed to the ChunkManager once at startup.
-USTRUCT(BlueprintType)
-struct FPlanetConfig
+USTRUCT(BlueprintType) struct FPlanetConfig
 {
         GENERATED_BODY()
+
         // Basic Dimensions
-        float PlanetRadius = 10000.f;
+        float PlanetRadius = 20000.f;
 
         // Generation Settings
         int32 Seed = 1337;
@@ -134,33 +128,27 @@ struct FPlanetConfig
 
         // Throttling
         int32 MaxConcurrentGenerations = 32;
-        int32 ChunkGenerationRate = 8;  // Chunks to start generating per tick
+        int32 ChunkGenerationRate = 32;  // Chunks to start generating per tick
         int32 MeshUpdatesPerFrame = 8;
+        int32 ChunkDemotionFrameDelay = 8;  // X frames. A rendered chunk must be absent before hiding
         int32 CacheSoftCap = 512;
         int32 CacheHardCap = 1024;
         int32 DeferredReleaseDelay = 8;     // Normal frame countdown
         int32 DeferredReleaseDelayMin = 1;  // Minimum under full pressure
         int32 TransitionMaxAge = 90;        // Maximum number of frames a pending LOD transition can stay alive before being force-cancelled.
-
-
+        int32 MaxPendingTransitions = 60;
+        
         // LOD Rules
         int32 MaxLOD = 8;
+        int32 PredictiveMaxLOD = 4; // Deepest LOD level the predictive pass is allowed to request.
         float FarDistanceThreshold = 100000.0f;
         float LODSplitScreenFraction = 0.25f;  // Fraction of screen height a chunk must subtend to trigger a split.
                                                // 0.25 means "split when the chunk covers 25% of the vertical screen".
 
         float LODMergeHysteresisRatio = 0.75f;  // Merge threshold = Split threshold * this ratio
 
-        // Look ahead params
-        float MaxLookAheadTime = 2.5f;
-        float MinLookAheadTime = 0.5f;
-        float LookAheadAltitudeScale = 50000.0f;
-
-        int32 ChunkDemotionFrameDelay = 8;  // X frames. A rendered chunk must be absent before hiding
+        // Predictive position pre-loading
+        float PredictiveLookAheadMaxSeconds = 2.0f;  // Maximum lookahead time in seconds at full speed/altitude
+        float PredictiveMinAltitude = 500.0f;        // Below this altitude, prediction blends to zero (no lookahead at surface level)
+        float PredictiveLookAheadScale = 5000.0f;    // Speed divisor to scale lookahead time — higher = less aggressive prediction
 };
-
-
-
-
-
-

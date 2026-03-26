@@ -29,7 +29,7 @@ void APlanet::BeginPlay()
     if (bGenerateOnBeginPlay)
     {
         // DEBUG
-        if (GenSettings.bShowDebugTrueSphere)
+        if (DebugSettings.bShowDebugTrueSphere)
             DrawDebugSphere(GetWorld(),
                             GetActorLocation(),
                             GenSettings.PlanetRadius,
@@ -49,25 +49,20 @@ void APlanet::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
-    // Build View Context in WORLD space
-    PlanetViewContext WorldContext = BuildViewContext();
-
-    // Create a LOCAL space context for the ChunkManager
-    // The ChunkManager and its subsystems (Quadtree, etc.) operate in the Planet's local space.
-    // This allows the entire planet actor to be moved in the world without breaking the generation logic.
-    PlanetViewContext LocalContext;
-    const FTransform PlanetTransform = GetActorTransform();
-    LocalContext.ObserverLocation = PlanetTransform.InverseTransformPosition(WorldContext.ObserverLocation);
-    LocalContext.ObserverForward = PlanetTransform.InverseTransformVector(WorldContext.ObserverForward);
-    LocalContext.ObserverVelocity = PlanetTransform.InverseTransformVector(WorldContext.ObserverVelocity);
-    LocalContext.ViewDistance = WorldContext.ViewDistance;
+    // Build View Context
+    const PlanetViewContext WorldContext = BuildViewContext();
+    const PlanetViewContext LocalContext = BuildLocalContext(WorldContext);
 
     // Update Manager with LOCAL context
     UpdateChunkManager(LocalContext);
 
     // Update Far Model & Debug with WORLD context
     UpdateFarModelVisibility(WorldContext);
+
+    // DEBUG stuff
     DrawDebugInfo(WorldContext);
+    if (DebugSettings.bShowDebugPredictivePos)
+        DrawPredictiveDebug(LocalContext);
 }
 
 
@@ -172,9 +167,6 @@ FPlanetConfig APlanet::BuildPlanetConfig(float VoxelSize) const
     Cfg.MaxConcurrentGenerations = PerformanceSettings.MaxConcurrentGenerations;
     Cfg.ChunkGenerationRate = PerformanceSettings.ChunksToSpawnPerFrame;
     Cfg.MeshUpdatesPerFrame = PerformanceSettings.MeshUpdatesPerFrame;
-    Cfg.MaxLookAheadTime = PerformanceSettings.MaxLookAheadTime;
-    Cfg.MinLookAheadTime = PerformanceSettings.MinLookAheadTime;
-    Cfg.LookAheadAltitudeScale = PerformanceSettings.LookAheadAltitudeRadiusFactor * GenSettings.PlanetRadius;
     return Cfg;
 }
 
@@ -273,6 +265,28 @@ PlanetViewContext APlanet::BuildViewContext() const
 }
 
 
+PlanetViewContext APlanet::BuildLocalContext(const PlanetViewContext &WorldContext) const
+{
+    const FTransform PlanetTransform = GetActorTransform();
+
+    PlanetViewContext Local;
+    Local.ObserverLocation = PlanetTransform.InverseTransformPosition(WorldContext.ObserverLocation);
+    Local.ObserverForward = PlanetTransform.InverseTransformVector(WorldContext.ObserverForward);
+    Local.ObserverVelocity = PlanetTransform.InverseTransformVector(WorldContext.ObserverVelocity);
+    Local.ViewDistance = WorldContext.ViewDistance;
+    Local.VerticalFOVRadians = WorldContext.VerticalFOVRadians;
+    Local.ViewFrustum = WorldContext.ViewFrustum;
+
+    // Altitude is only meaningful when the player is close enough to trigger chunk generation.
+    // Beyond FarDistanceThreshold we leave it at 0 — nothing reads it at that distance.
+    const float DistToCenter = Local.ObserverLocation.Size();
+    const bool bNearPlanet = DistToCenter < (m_planetConfig.FarDistanceThreshold * PlanetStatics::FarDistanceSafetyMargin);
+    Local.AltitudeAboveSurface = bNearPlanet ? (DistToCenter - m_planetConfig.PlanetRadius) : 0.f;
+
+    return Local;
+}
+
+
 void APlanet::BuildViewFrustum(APlayerCameraManager *PCM, PlanetViewContext &Context) const
 {
     if (!PCM || !GEngine || !GEngine->GameViewport || !GEngine->GameViewport->Viewport)
@@ -339,12 +353,12 @@ void APlanet::UpdateChunkManager(const PlanetViewContext &Context)
     {
         m_chunkManager->Update(Context);
 
-        if (GenSettings.bShowDebugChunkGrid)
+        if (DebugSettings.bShowDebugChunkGrid)
         {
             m_chunkManager->DrawDebugGrid(GetWorld());
         }
 
-        if (GenSettings.bShowDebugChunkBounds)
+        if (DebugSettings.bShowDebugChunkBounds)
         {
             m_chunkManager->DrawDebugChunkBounds(GetWorld());
         }
@@ -451,4 +465,38 @@ void APlanet::DrawDebugInfo(const PlanetViewContext &Context) const
             FString::Printf(
                 TEXT("[LOD Threshold] Split < %.0fm | Merge > %.0fm | Dist: %.0fm"), NextSplitDist / 100.f, NextMergeDist / 100.f, ClosestChunkDist / 100.f));
     }
+}
+
+
+void APlanet::DrawPredictiveDebug(const PlanetViewContext &LocalContext) const
+{
+    const UWorld *World = GetWorld();
+    if (!World)
+        return;
+
+    const FTransform PlanetTransform = GetActorTransform();
+    const float Speed = LocalContext.ObserverVelocity.Size();
+    const float AltitudeFactor = FMath::Clamp(LocalContext.AltitudeAboveSurface / FMath::Max(m_planetConfig.PredictiveMinAltitude, 1.f), 0.f, 1.f);
+    const float LookAheadSeconds =
+        FMath::Clamp(Speed / FMath::Max(m_planetConfig.PredictiveLookAheadScale, 1.f), 0.f, m_planetConfig.PredictiveLookAheadMaxSeconds) * AltitudeFactor;
+
+    if (LookAheadSeconds <= KINDA_SMALL_NUMBER || LocalContext.ObserverVelocity.IsNearlyZero())
+        return;
+
+    const FVector RawPredicted = LocalContext.ObserverLocation + LocalContext.ObserverVelocity * LookAheadSeconds;
+    const FVector PredictedLocal = RawPredicted.GetSafeNormal() * LocalContext.ObserverLocation.Size();
+    const FVector PredictedWorld = PlanetTransform.TransformPosition(PredictedLocal);
+    const FVector RealWorld = PlanetTransform.TransformPosition(LocalContext.ObserverLocation);
+
+    // Predicted position — cyan sphere
+    DrawDebugSphere(World, PredictedWorld, 200.f, 8, FColor::Yellow, false, -1.f);
+    // Line from real to predicted
+    DrawDebugLine(World, RealWorld, PredictedWorld, FColor::Yellow, false, -1.f, 0, 50.f);
+    // // Lookahead seconds as a label approximation via sphere size
+    // DrawDebugString(World,
+    //                 PredictedWorld + FVector(0, 0, 300.f),
+    //                 FString::Printf(TEXT("LookAhead: %.2fs | Alt: %.0f"), LookAheadSeconds, LocalContext.AltitudeAboveSurface),
+    //                 nullptr,
+    //                 FColor::White,
+    //                 -1.f);
 }

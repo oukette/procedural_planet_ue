@@ -48,6 +48,10 @@ class PROCEDURALPLANET_API APlanet : public AActor
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         FPlanetPerformanceSettings PerformanceSettings;
 
+        // Debug
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
+        FPlanetDebugSettings DebugSettings;
+
         // Internal State
         bool bIsFarModelAutoCreated = false;
 
@@ -72,6 +76,7 @@ class PROCEDURALPLANET_API APlanet : public AActor
 
         // View related logic
         PlanetViewContext BuildViewContext() const;
+        PlanetViewContext BuildLocalContext(const PlanetViewContext &WorldContext) const;
         void BuildViewFrustum(APlayerCameraManager *PCM, PlanetViewContext &Context) const;
         void BuildVerticalFOV(APlayerCameraManager *PCM, PlanetViewContext &Context) const;
 
@@ -83,6 +88,7 @@ class PROCEDURALPLANET_API APlanet : public AActor
 
         // Debug methods
         void DrawDebugInfo(const PlanetViewContext &Context) const;
+        void DrawPredictiveDebug(const PlanetViewContext &LocalContext) const;
 
     public:
         APlanet();
