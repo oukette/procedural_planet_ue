@@ -276,46 +276,60 @@ void ChunkManager::InitializeRoots()
 
 void ChunkManager::ReconcileTransitions(const TSet<ChunkId> &DesiredLeaves)
 {
-    // --- A0. Age all transitions — force-cancel ones that have been pending too long ---
+    CancelStaleTransitions();
+    RegisterSplitTransitions(DesiredLeaves);
+    RegisterMergeTransitions(DesiredLeaves);
+    CancelConflictingTransitions(DesiredLeaves);
+}
+
+
+void ChunkManager::CancelStaleTransitions()
+{
+    TArray<ChunkId> ToCancel;
+
+    for (auto &Pair : m_pendingTransitionsMap)
     {
-        TArray<ChunkId> ToCancel;
-        for (auto &Pair : m_pendingTransitionsMap)
+        LODTransition &T = Pair.Value;
+        T.FrameAge++;
+
+        // Deeper LOD transitions take longer to generate — give them proportionally more time.
+        // LOD 0-1 → 1× base, LOD 2-3 → 1.5×, LOD 4-5 → 2×, LOD 6+ → 2.5×
+        const float LODAgeMult = 1.0f + (Pair.Key.LODLevel / 2) * 0.5f;
+        const int32 MaxAge = FMath::RoundToInt(m_planetConfig.TransitionMaxAge * LODAgeMult);
+
+        if (T.FrameAge >= MaxAge)
         {
-            LODTransition &T = Pair.Value;
-            T.FrameAge++;
-
-            if (T.FrameAge >= m_planetConfig.TransitionMaxAge)
-            {
-                UE_LOG(
-                    LogTemp, Log, TEXT("Stale transition force-cancelled — LOD:%d Face:%d Age:%d frames"), Pair.Key.LODLevel, Pair.Key.FaceIndex, T.FrameAge);
-                ToCancel.Add(Pair.Key);
-            }
-        }
-
-        for (const ChunkId &Id : ToCancel)
-        {
-            const LODTransition &T = m_pendingTransitionsMap[Id];
-            for (const ChunkId &ChildId : T.Children)
-            {
-                m_pendingChildSet.Remove(ChildId);
-
-                // Cancel any in-flight generation for stale children
-                if (Chunk *Child = GetChunk(ChildId))
-                {
-                    if (Child->m_state == ChunkState::Pending || Child->m_state == ChunkState::Generating)
-                    {
-                        m_chunkGenerator->CancelRequest(ChildId);
-                        Child->m_generationId++;
-                        Child->m_state = ChunkState::None;
-                    }
-                }
-            }
-
-            m_pendingTransitionsMap.Remove(Id);
+            UE_LOG(LogTemp, Log, TEXT("Stale transition force-cancelled — LOD:%d Face:%d Age:%d frames"), Pair.Key.LODLevel, Pair.Key.FaceIndex, T.FrameAge);
+            ToCancel.Add(Pair.Key);
         }
     }
 
-    // --- A1. Desired but not rendered → find committed ancestor → register Split ---
+    for (const ChunkId &Id : ToCancel)
+    {
+        const LODTransition &T = m_pendingTransitionsMap[Id];
+        for (const ChunkId &ChildId : T.Children)
+        {
+            m_pendingChildSet.Remove(ChildId);
+
+            // Cancel any in-flight generation for stale children
+            if (Chunk *Child = GetChunk(ChildId))
+            {
+                if (Child->m_state == ChunkState::Pending || Child->m_state == ChunkState::Generating)
+                {
+                    m_chunkGenerator->CancelRequest(ChildId);
+                    Child->m_generationId++;
+                    Child->m_state = ChunkState::None;
+                }
+            }
+        }
+
+        m_pendingTransitionsMap.Remove(Id);
+    }
+}
+
+
+void ChunkManager::RegisterSplitTransitions(const TSet<ChunkId> &DesiredLeaves)
+{
     for (const ChunkId &Id : DesiredLeaves)
     {
         if (m_renderSet.Contains(Id))
@@ -331,7 +345,6 @@ void ChunkManager::ReconcileTransitions(const TSet<ChunkId> &DesiredLeaves)
             AncestorId = GetParentId(AncestorId);
             if (m_renderSet.Contains(AncestorId))
             {
-                // Only register if no conflicting transition exists
                 if (!m_pendingTransitionsMap.Contains(AncestorId))
                 {
                     LODTransition T;
@@ -342,14 +355,16 @@ void ChunkManager::ReconcileTransitions(const TSet<ChunkId> &DesiredLeaves)
                         m_pendingChildSet.Add(ChildId);
 
                     m_pendingTransitionsMap.Add(AncestorId, MoveTemp(T));
-                    // UE_LOG(LogTemp, Log, TEXT("Split registered — parent LOD:%d Face:%d"), AncestorId.LODLevel, AncestorId.FaceIndex);
                 }
                 break;
             }
         }
     }
+}
 
-    // --- A2. Rendered but not desired → find desired ancestor → register Merge ---
+
+void ChunkManager::RegisterMergeTransitions(const TSet<ChunkId> &DesiredLeaves)
+{
     TArray<ChunkId> ToUnrender;
 
     for (const ChunkId &Id : m_renderSet)
@@ -368,6 +383,10 @@ void ChunkManager::ReconcileTransitions(const TSet<ChunkId> &DesiredLeaves)
         ChunkId AncestorId = Id;
         bool bFoundDesiredAncestor = false;
 
+        // LOD depth guard (in case of a malformed root node)
+        int32 Depth = 0;
+        const int32 MaxDepth = m_planetConfig.MaxLOD + 1;
+
         while (true)
         {
             if (DesiredLeaves.Contains(AncestorId))
@@ -383,78 +402,75 @@ void ChunkManager::ReconcileTransitions(const TSet<ChunkId> &DesiredLeaves)
                         m_pendingChildSet.Add(ChildId);
 
                     m_pendingTransitionsMap.Add(AncestorId, MoveTemp(T));
-                    // UE_LOG(LogTemp, Log, TEXT("Merge registered — parent LOD:%d Face:%d"), AncestorId.LODLevel, AncestorId.FaceIndex);
                 }
                 break;
             }
 
+            // Reached the root and it is still not desired — Far Model has taken over this branch.
             if (IsRootNode(AncestorId))
             {
-                // FIX: We reached the root and even the root is not desired.
-                // This means the Far Model has taken over and we should unrender this branch.
                 ToUnrender.Add(Id);
-                break;  // No desired ancestor exists anywhere up the chain
+                break;
+            }
+
+            if (Depth++ >= MaxDepth)
+            {
+                UE_LOG(LogTemp,
+                       Error,
+                       TEXT("RegisterMergeTransitions: ancestor walk exceeded MaxDepth (%d) — "
+                            "malformed ChunkId? LOD:%d Face:%d. Skipping."),
+                       MaxDepth,
+                       Id.LODLevel,
+                       Id.FaceIndex);
+                break;
             }
 
             AncestorId = GetParentId(AncestorId);
         }
     }
 
-    // Process unrendering (Far Model overlap logic)
+    // Immediate unrender for chunks whose entire branch is no longer desired
     for (const ChunkId &Id : ToUnrender)
     {
         Chunk *Chunk = GetChunk(Id);
         if (Chunk && (Chunk->m_state == ChunkState::Visible || Chunk->m_state == ChunkState::MeshReady))
-        {
             DeferHideChunk(Chunk, Id);
-        }
+
         m_renderSet.Remove(Id);
     }
+}
 
-    // --- A3. Conflict resolution: cancel Split if Merge now exists for same region, and vice versa ---
+
+void ChunkManager::CancelConflictingTransitions(const TSet<ChunkId> &DesiredLeaves)
+{
+    // Build a set of every ancestor of every desired leaf (including the leaves themselves).
+    // This turns the O(|DesiredLeaves| * depth) descendant check below into O(1).
+    TSet<ChunkId> DesiredAncestors;
+    for (const ChunkId &LeafId : DesiredLeaves)
+    {
+        ChunkId WalkId = LeafId;
+        while (true)
+        {
+            bool bAlreadyPresent = false;
+            DesiredAncestors.Add(WalkId, &bAlreadyPresent);
+            if (bAlreadyPresent || IsRootNode(WalkId))
+                break;  // Early-out: if this node was already visited, so were all its ancestors
+            WalkId = GetParentId(WalkId);
+        }
+    }
+
     TArray<ChunkId> ToCancel;
+
     for (const auto &Pair : m_pendingTransitionsMap)
     {
         const LODTransition &T = Pair.Value;
+
         if (T.Type == LeafTransitionType::Split)
         {
-            // Cancel only if the desired leaves have moved back UP the tree — i.e. the parent itself or an ancestor is now desired (observer moved away).
-            // Do NOT cancel just because children aren't direct leaves — they may themselves need to split further, meaning deeper descendants are desired.
-            bool bParentOrAncestorDesired = false;
-            ChunkId WalkId = T.Parent;
-            while (true)
-            {
-                if (DesiredLeaves.Contains(WalkId))
-                {
-                    bParentOrAncestorDesired = true;
-                    break;
-                }
-                if (IsRootNode(WalkId))
-                    break;
-                WalkId = GetParentId(WalkId);
-            }
+            // Cancel only if neither the transition parent/its ancestors, nor any of its
+            // descendants appear in DesiredLeaves — meaning the observer has fully left this region.
 
-            // Also check: is any desired leaf a descendant of the transition parent?
-            bool bAnyDescendantDesired = false;
-            for (const ChunkId &LeafId : DesiredLeaves)
-            {
-                // Walk up from each desired leaf — if we hit T.Parent, it's a descendant
-                ChunkId AncestorWalk = LeafId;
-                while (!IsRootNode(AncestorWalk))
-                {
-                    AncestorWalk = GetParentId(AncestorWalk);
-                    if (AncestorWalk == T.Parent)
-                    {
-                        bAnyDescendantDesired = true;
-                        break;
-                    }
-                }
-                if (bAnyDescendantDesired)
-                    break;
-            }
-
-            // Cancel only if neither the parent's ancestor nor any descendant is desired
-            if (!bParentOrAncestorDesired && !bAnyDescendantDesired)
+            if (!DesiredAncestors.Contains(T.Parent))
                 ToCancel.Add(Pair.Key);
         }
         else  // Merge
@@ -467,7 +483,6 @@ void ChunkManager::ReconcileTransitions(const TSet<ChunkId> &DesiredLeaves)
 
     for (const ChunkId &Id : ToCancel)
     {
-        // UE_LOG(LogTemp, Log, TEXT("Transition cancelled — LOD:%d Face:%d"), Id.LODLevel, Id.FaceIndex);
         const LODTransition &T = m_pendingTransitionsMap[Id];
         for (const ChunkId &ChildId : T.Children)
             m_pendingChildSet.Remove(ChildId);

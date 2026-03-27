@@ -112,6 +112,19 @@ class ChunkManager
         // Quadtree reconciliation, diff desired vs committed, build m_pendingTransitionsMap
         void ReconcileTransitions(const TSet<ChunkId> &DesiredLeaves);
 
+        // A0: Increment FrameAge on all pending transitions; force-cancel any that exceed their LOD-scaled max age.
+        void CancelStaleTransitions();
+
+        // A1: For each desired leaf not yet rendered, walk up to the nearest rendered ancestor and register a Split.
+        void RegisterSplitTransitions(const TSet<ChunkId> &DesiredLeaves);
+
+        // A2: For each rendered chunk no longer desired, walk up to the nearest desired ancestor and register a Merge.
+        //     Chunks with no desired ancestor (Far Model takeover) are unrendered immediately.
+        void RegisterMergeTransitions(const TSet<ChunkId> &DesiredLeaves);
+
+        // A3: Cancel pending transitions that are now contradicted by the updated DesiredLeaves.
+        void CancelConflictingTransitions(const TSet<ChunkId> &DesiredLeaves);
+
         // Ensure all needed chunks are generating/uploading
         void AdvanceLoading(const TMap<ChunkId, float> &DistanceSqCache);
 
@@ -122,7 +135,7 @@ class ChunkManager
         void ProcessDeferredReleases();
 
         // Cap based chunk eviction mechanism
-        void EvictChunksOverCap(const FVector& MoveDir);
+        void EvictChunksOverCap(const FVector &MoveDir);
 
         // Safety net: any chunk in m_chunksMap not in m_loadSet and not in flight gets deferred
         void PruneOrphans();

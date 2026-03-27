@@ -124,23 +124,23 @@ USTRUCT(BlueprintType) struct FPlanetConfig
 
         // Voxel Settings
         float VoxelSize = 100.f;    // true size of a voxel in the UE world
-        int32 GridResolution = 32;  // resolution of the voxel grid in voxels
+        int16 GridResolution = 32;  // resolution of the voxel grid in voxels
 
         // Throttling
-        int32 MaxConcurrentGenerations = 32;
-        int32 ChunkGenerationRate = 32;  // Chunks to start generating per tick
-        int32 MeshUpdatesPerFrame = 8;
-        int32 ChunkDemotionFrameDelay = 8;  // X frames. A rendered chunk must be absent before hiding
-        int32 CacheSoftCap = 512;
-        int32 CacheHardCap = 1024;
-        int32 DeferredReleaseDelay = 8;     // Normal frame countdown
-        int32 DeferredReleaseDelayMin = 1;  // Minimum under full pressure
-        int32 TransitionMaxAge = 90;        // Maximum number of frames a pending LOD transition can stay alive before being force-cancelled.
-        int32 MaxPendingTransitions = 60;
-        
+        int16 MaxConcurrentGenerations = 32;
+        int16 ChunkGenerationRate = 32;  // Chunks to start generating per tick
+        int16 MeshUpdatesPerFrame = 8;
+        int16 ChunkDemotionFrameDelay = 8;  // X frames. A rendered chunk must be absent before hiding
+        int16 CacheSoftCap = 512;
+        int16 CacheHardCap = 1024;
+        int16 DeferredReleaseDelay = 8;     // Normal frame countdown
+        int16 DeferredReleaseDelayMin = 1;  // Minimum under full pressure
+        int16 TransitionMaxAge = 90;        // Maximum number of frames a pending LOD transition can stay alive before being force-cancelled.
+        int16 MaxPendingTransitions = 60;
+
         // LOD Rules
-        int32 MaxLOD = 8;
-        int32 PredictiveMaxLOD = 4; // Deepest LOD level the predictive pass is allowed to request.
+        int16 MaxLOD = 8;
+        int16 PredictiveMaxLOD = 4; // Deepest LOD level the predictive pass is allowed to request.
         float FarDistanceThreshold = 100000.0f;
         float LODSplitScreenFraction = 0.25f;  // Fraction of screen height a chunk must subtend to trigger a split.
                                                // 0.25 means "split when the chunk covers 25% of the vertical screen".

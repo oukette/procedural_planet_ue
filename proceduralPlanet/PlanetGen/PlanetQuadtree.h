@@ -49,8 +49,8 @@ class PlanetQuadtree
 
     private:
         PlanetViewContext BuildPredictedContext(const PlanetViewContext &Context) const;
-        void RunPass(const PlanetViewContext &Context, int32 MaxLODOverride);
-        void UpdateNode(QuadtreeNode *Node, const PlanetViewContext &Context, int32 MaxLODOverride);
-        bool ShouldSplit(const QuadtreeNode *Node, const PlanetViewContext &Context, int32 MaxLODOverride) const;
+        void RunPass(const PlanetViewContext &Context, int16 MaxLODOverride);
+        void UpdateNode(QuadtreeNode *Node, const PlanetViewContext &Context, int16 MaxLODOverride);
+        bool ShouldSplit(const QuadtreeNode *Node, const PlanetViewContext &Context, int16 MaxLODOverride) const;
         bool ShouldMerge(const QuadtreeNode *Node, const PlanetViewContext &Context) const;
 };

@@ -60,14 +60,14 @@ PlanetViewContext PlanetQuadtree::BuildPredictedContext(const PlanetViewContext 
 }
 
 
-void PlanetQuadtree::RunPass(const PlanetViewContext &Context, int32 MaxLODOverride)
+void PlanetQuadtree::RunPass(const PlanetViewContext &Context, int16 MaxLODOverride)
 {
     for (const auto &Root : m_rootNodes)
         UpdateNode(Root.Get(), Context, MaxLODOverride);
 }
 
 
-void PlanetQuadtree::UpdateNode(QuadtreeNode *Node, const PlanetViewContext &Context, int32 MaxLODOverride)
+void PlanetQuadtree::UpdateNode(QuadtreeNode *Node, const PlanetViewContext &Context, int16 MaxLODOverride)
 {
     FVector Center = FMathUtils::GetChunkCenter(Node->Id, m_planetConfig.PlanetRadius);
 
@@ -155,7 +155,7 @@ void PlanetQuadtree::UpdateNode(QuadtreeNode *Node, const PlanetViewContext &Con
 }
 
 
-bool PlanetQuadtree::ShouldSplit(const QuadtreeNode *Node, const PlanetViewContext &Context, int32 MaxLODOverride) const
+bool PlanetQuadtree::ShouldSplit(const QuadtreeNode *Node, const PlanetViewContext &Context, int16 MaxLODOverride) const
 {
     if (Node->Id.LODLevel >= FMath::Min(m_planetConfig.MaxLOD, MaxLODOverride))
         return false;
