@@ -7,6 +7,10 @@
 #include "DrawDebugHelpers.h"
 
 
+static TAutoConsoleVariable<int32> CVarChunkManagerDebug(TEXT("planet.ChunkManagerDebug"), 0, TEXT("Enable per-frame ChunkManager diagnostics. 0=off, 1=on."),
+                                                         ECVF_Default);
+
+
 ChunkManager::ChunkManager(const FPlanetConfig &planetConfig, const DensityGenerator *densityGen, TSharedPtr<INoise, ESPMode::ThreadSafe> noiseProvider) :
     m_planetConfig(planetConfig),
     m_densityGen(densityGen),
@@ -164,14 +168,16 @@ void ChunkManager::Update(const PlanetViewContext &Context)
     m_lastObserverVelocity = Context.ObserverVelocity;
     m_lastObserverForward = Context.ObserverForward;
 
-    // === TEMP DIAGNOSTIC — remove before shipping ===
+// === DEBUG DIAGNOSTIC  ===
+#if !UE_BUILD_SHIPPING
+    if (CVarChunkManagerDebug.GetValueOnGameThread() != 0)
     {
         TMap<ChunkState, int32> StateCounts;
         for (const auto &Pair : m_chunksMap)
             StateCounts.FindOrAdd(Pair.Value->m_state)++;
 
         UE_LOG(LogTemp,
-               Warning,
+               Log,
                TEXT("ChunkMap:%d | None:%d Pending:%d Generating:%d DataReady:%d MeshReady:%d Visible:%d | Deferred:%d LoadSet:%d RenderSet:%d Transitions:%d"),
                m_chunksMap.Num(),
                StateCounts.FindRef(ChunkState::None),
@@ -185,6 +191,7 @@ void ChunkManager::Update(const PlanetViewContext &Context)
                m_renderSet.Num(),
                m_pendingTransitionsMap.Num());
     }
+#endif
     // === END DIAGNOSTIC ===
 
     if (bShouldGenerateChunks && m_quadtree)
