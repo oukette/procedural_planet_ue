@@ -233,31 +233,24 @@ void ChunkManager::BuildLoadSet(const TSet<ChunkId> &DesiredLeaves, const bool b
             m_loadSet.Add(ChildId);
     }
 
-    // Bootstrap: keep unrendered roots in m_loadSet so they can be generated. only do this while NO descendant of that root face is already
-    // rendered. Once a split has committed, the root has served its bootstrap purpose and must be left to the normal deferred-release lifecycle.
-    if (bShouldGenerateChunks)
+    if (!bShouldGenerateChunks)
+        return;
+
+    // Single pass to collect which faces already have a rendered descendant.
+    // Replaces the previous O(6 * |renderSet|) nested scan.
+    TSet<uint8> CoveredFaces;
+    for (const ChunkId &RenderedId : m_renderSet)
+        CoveredFaces.Add(RenderedId.FaceIndex);
+
+    for (uint8 Face = 0; Face < 6; ++Face)
     {
-        for (uint8 Face = 0; Face < 6; ++Face)
-        {
-            ChunkId RootId(Face, FIntVector(0, 0, 0), 0);
+        ChunkId RootId(Face, FIntVector(0, 0, 0), 0);
 
-            if (m_renderSet.Contains(RootId))
-                continue;  // Already rendered, normal lifecycle handles it
+        if (m_renderSet.Contains(RootId))
+            continue;  // Root itself is rendered, normal lifecycle handles it
 
-            // Check whether any rendered chunk belongs to this face
-            bool bFaceAlreadyCovered = false;
-            for (const ChunkId &RenderedId : m_renderSet)
-            {
-                if (RenderedId.FaceIndex == Face)
-                {
-                    bFaceAlreadyCovered = true;
-                    break;
-                }
-            }
-
-            if (!bFaceAlreadyCovered)
-                m_loadSet.Add(RootId);
-        }
+        if (!CoveredFaces.Contains(Face))
+            m_loadSet.Add(RootId);  // No descendant rendered yet — keep root alive for bootstrap
     }
 }
 
