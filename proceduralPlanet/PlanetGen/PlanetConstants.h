@@ -34,11 +34,14 @@ struct PlanetStatics
         static constexpr float DebugSphereThickness = 20.0f;
         static constexpr float DebugLineLifetime = 30.0f;
         static constexpr float DebugBoxLifetime = 20.0f;
-        static constexpr int32 DebugKey_ManagerStats = 10;
-        static constexpr int32 DebugKey_DistanceInfo = 101;
-        static constexpr int32 DebugKey_PredictionInfo = 102;
-        static constexpr int32 DebugKey_LODBreakdown = 103;
-        static constexpr int32 DebugKey_LODThreshold = 104;
+
+        static constexpr int32 DebugKey_DistanceInfo = 100;    // onscreen line 0
+        static constexpr int32 DebugKey_ManagerStats_1 = 101;  // onscreen line 1
+        static constexpr int32 DebugKey_ManagerStats_2 = 102;  // onscreen line 2
+        static constexpr int32 DebugKey_GenTime = 103;         // onscreen line 3
+        static constexpr int32 DebugKey_GeneratorStats = 104;  // onscreen line 4
+        static constexpr int32 DebugKey_LODBreakdown = 105;    // onscreen line 5
+        static constexpr int32 DebugKey_LODThreshold = 106;    // onscreen line 6
 };
 
 

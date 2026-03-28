@@ -78,9 +78,6 @@ void ChunkManager::GetVisibleCountPerLOD(TArray<int32> &OutCounts) const
 }
 
 
-int32 ChunkManager::GetPendingCount() const { return m_chunkGenerator ? m_chunkGenerator->GetPendingCount() : 0; }
-
-
 void ChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
 {
     m_chunkRenderer = MakeUnique<ChunkRenderer>(Owner, Material);
@@ -200,18 +197,21 @@ void ChunkManager::Update(const PlanetViewContext &Context)
     const TSet<ChunkId> &DesiredLeaves = (bShouldGenerateChunks && m_quadtree) ? m_quadtree->GetDesiredLeaves() : TSet<ChunkId>();
 
     // Build distance cache once — reused by AdvanceLoading and CommitReadyTransitions
-    TMap<ChunkId, float> DistanceSqCache;
-    DistanceSqCache.Reserve(m_chunksMap.Num());
+    TMap<ChunkId, float> CurrentDistSqCache;
+    CurrentDistSqCache.Reserve(m_chunksMap.Num());
+    TMap<ChunkId, float> PredictedDistSqCache;
+    PredictedDistSqCache.Reserve(m_chunksMap.Num());
     for (const auto &Pair : m_chunksMap)
     {
         const ChunkId &Id = Pair.Key;
-        DistanceSqCache.Add(Id, FVector::DistSquared(FMathUtils::GetChunkCenter(Id, m_planetConfig.PlanetRadius), m_lastObserverLocalPos));
+        FVector center = FMathUtils::GetChunkCenter(Id, m_planetConfig.PlanetRadius);
+        CurrentDistSqCache.Add(Id, FVector::DistSquared(center, m_lastObserverLocalPos));
     }
 
     BuildLoadSet(DesiredLeaves, bShouldGenerateChunks);
     ReconcileTransitions(DesiredLeaves);
-    AdvanceLoading(DistanceSqCache);
-    CommitReadyTransitions(bShouldGenerateChunks, DistanceSqCache);
+    AdvanceLoading(CurrentDistSqCache, PredictedDistSqCache);
+    CommitReadyTransitions(bShouldGenerateChunks, CurrentDistSqCache);
     ProcessDeferredReleases();
     PruneOrphans();
 
@@ -277,9 +277,9 @@ void ChunkManager::InitializeRoots()
 void ChunkManager::ReconcileTransitions(const TSet<ChunkId> &DesiredLeaves)
 {
     CancelStaleTransitions();
+    CancelConflictingTransitions(DesiredLeaves);
     RegisterSplitTransitions(DesiredLeaves);
     RegisterMergeTransitions(DesiredLeaves);
-    CancelConflictingTransitions(DesiredLeaves);
 }
 
 
@@ -289,17 +289,30 @@ void ChunkManager::CancelStaleTransitions()
 
     for (auto &Pair : m_pendingTransitionsMap)
     {
-        LODTransition &T = Pair.Value;
-        T.FrameAge++;
+        LODTransition &Transition = Pair.Value;
+        Transition.FrameAge++;
 
-        // Deeper LOD transitions take longer to generate — give them proportionally more time.
-        // LOD 0-1 → 1× base, LOD 2-3 → 1.5×, LOD 4-5 → 2×, LOD 6+ → 2.5×
-        const float LODAgeMult = 1.0f + (Pair.Key.LODLevel / 2) * 0.5f;
-        const int32 MaxAge = FMath::RoundToInt(m_planetConfig.TransitionMaxAge * LODAgeMult);
+        const int32 LODLevel = Transition.Parent.LODLevel;
 
-        if (T.FrameAge >= MaxAge)
+        // Inverse scaling: high LOD (close, detailed) = short patience.
+        // Low LOD (distant, coarse) = long patience.
+        //
+        // At LOD 0:   MaxAge = StaleTransitionMaxAge        (full patience)
+        // At MaxLOD:  MaxAge = StaleTransitionMinAge        (minimum patience)
+        //
+        // Both values exposed in FPlanetConfig, e.g. Max=60, Min=10.
+        const float T = (float)LODLevel / (float)FMath::Max((int)m_planetConfig.MaxLOD, 1);
+        const int32 MaxAge = FMath::RoundToInt(FMath::Lerp((float)m_planetConfig.StaleTransitionMaxAge,  // low LOD → patient
+                                                           (float)m_planetConfig.StaleTransitionMinAge,  // high LOD → impatient
+                                                           T));
+        if (Transition.FrameAge >= MaxAge)
         {
-            UE_LOG(LogTemp, Log, TEXT("Stale transition force-cancelled — LOD:%d Face:%d Age:%d frames"), Pair.Key.LODLevel, Pair.Key.FaceIndex, T.FrameAge);
+            UE_LOG(LogTemp,
+                   Log,
+                   TEXT("Stale transition force-cancelled — LOD:%d Face:%d Age:%d frames"),
+                   Pair.Key.LODLevel,
+                   Pair.Key.FaceIndex,
+                   Transition.FrameAge);
             ToCancel.Add(Pair.Key);
         }
     }
@@ -492,7 +505,7 @@ void ChunkManager::CancelConflictingTransitions(const TSet<ChunkId> &DesiredLeav
 }
 
 
-void ChunkManager::AdvanceLoading(const TMap<ChunkId, float> &DistanceSqCache)
+void ChunkManager::AdvanceLoading(const TMap<ChunkId, float> &CurrentDistSqCache, const TMap<ChunkId, float> &PredictedDistSqCache)
 {
     // Cancel generation for any Pending/Generating chunk no longer needed
     // This is the primary fix for cache growth at high speed
@@ -523,10 +536,20 @@ void ChunkManager::AdvanceLoading(const TMap<ChunkId, float> &DistanceSqCache)
         {
             Chunk->m_generationId++;
             Chunk->m_state = ChunkState::Pending;
-            float DistSq = DistanceSqCache.Contains(Id)
-                               ? DistanceSqCache[Id]
-                               : FVector::DistSquared(FMathUtils::GetChunkCenter(Id, m_planetConfig.PlanetRadius), m_lastObserverLocalPos);
-            m_chunkGenerator->RequestChunk(Id, Chunk->m_generationId, DistSq);
+
+            // Current distance — fallback to live compute if cache miss
+            float CurrentDistSq = CurrentDistSqCache.Contains(Id)
+                                      ? CurrentDistSqCache[Id]
+                                      : FVector::DistSquared(FMathUtils::GetChunkCenter(Id, m_planetConfig.PlanetRadius), m_lastObserverLocalPos);
+
+            // Predicted distance — fallback to current if cache miss (low speed, prediction was skipped)
+            float PredictedDistSq = PredictedDistSqCache.Contains(Id) ? PredictedDistSqCache[Id] : CurrentDistSq;
+
+            // Blend toward predicted position for priority scoring.
+            // At low speed BuildPredictedContext returns nearly the same position, so PredictedDistSq ≈ CurrentDistSq and the blend is harmless.
+            float PriorityScore = FMath::Lerp(CurrentDistSq, PredictedDistSq, m_planetConfig.PredictiveWeight);
+
+            m_chunkGenerator->RequestChunk(Id, Chunk->m_generationId, PriorityScore);
         }
     }
 
@@ -540,10 +563,10 @@ void ChunkManager::AdvanceLoading(const TMap<ChunkId, float> &DistanceSqCache)
     }
 
     DataReadyChunks.Sort(
-        [&DistanceSqCache, this](const ChunkId &A, const ChunkId &B)
+        [&CurrentDistSqCache, this](const ChunkId &A, const ChunkId &B)
         {
-            const float DistA = DistanceSqCache.Contains(A) ? DistanceSqCache[A] : 0.f;
-            const float DistB = DistanceSqCache.Contains(B) ? DistanceSqCache[B] : 0.f;
+            const float DistA = CurrentDistSqCache.Contains(A) ? CurrentDistSqCache[A] : 0.f;
+            const float DistB = CurrentDistSqCache.Contains(B) ? CurrentDistSqCache[B] : 0.f;
             return DistA < DistB;
         });
 
@@ -874,7 +897,12 @@ void ChunkManager::OnGenerationComplete(const ChunkId &Id, uint32 GenId, TUnique
         return;  // Chunk was unloaded while generating
 
     if (Chunk->m_generationId != GenId)
-        return;  // Stale task (Chunk was reset/regenerated)
+    {
+        // Only reset if still in a in-flight state — don't clobber a chunk that already got re-requested and is legitimately Pending again.
+        if (Chunk->m_state == ChunkState::Pending || Chunk->m_state == ChunkState::Generating)
+            Chunk->m_state = ChunkState::None;  // allows AdvanceLoading to re-request next frame
+        return;
+    }
 
     // Only accept the result if the chunk is still in the generation pipeline.
     // MeshReady or Visible chunks must not be overwritten by a late callback.
@@ -960,4 +988,41 @@ void ChunkManager::DebugRootNodes()
                bInTransition,
                bInDesiredLeaves);
     }
+}
+
+
+FChunkManagerStats ChunkManager::GetDebugStats() const
+{
+    FChunkManagerStats S;
+    S.Total = m_chunksMap.Num();
+    S.Deferred = m_deferredReleaseQueue.Num();
+    S.LoadSet = m_loadSet.Num();
+    S.RenderSet = m_renderSet.Num();
+    S.Transitions = m_pendingTransitionsMap.Num();
+
+    for (const auto &Pair : m_chunksMap)
+    {
+        switch (Pair.Value->m_state)
+        {
+            case ChunkState::None:
+                S.None++;
+                break;
+            case ChunkState::Pending:
+                S.Pending++;
+                break;
+            case ChunkState::Generating:
+                S.Generating++;
+                break;
+            case ChunkState::DataReady:
+                S.DataReady++;
+                break;
+            case ChunkState::MeshReady:
+                S.MeshReady++;
+                break;
+            case ChunkState::Visible:
+                S.Visible++;
+                break;
+        }
+    }
+    return S;
 }

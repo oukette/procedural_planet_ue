@@ -147,12 +147,10 @@ void ChunkGenerator::Update()
 void ChunkGenerator::SetOnChunkGeneratedCallback(OnChunkGenerated InCallback) { m_onChunkGeneratedCallback = InCallback; }
 
 
-int32 ChunkGenerator::GetPendingCount() const { return m_requestsQueue.Num() + m_activeTasks.Num(); }
-
-
 void ChunkGenerator::StartAsyncTask(const ChunkRequest &Request)
 {
     m_activeTasks.Add(Request.Id);
+    m_taskStartTimes.Add(Request.Id, FPlatformTime::Seconds());  // <- add this
 
     // Capture data by value for thread safety
     ChunkId Id = Request.Id;
@@ -199,7 +197,7 @@ void ChunkGenerator::StartAsyncTask(const ChunkRequest &Request)
                                                           }
                                                       });
 
-    
+
     // Launch Async
     Async(EAsyncExecution::ThreadPool,
           [this, Id, GenId, Resolution, FaceNormal, FaceRight, FaceUp, CubeMin, CubeMax, Transform, LODLevel, ThreadConfig, Token, ThreadGuard, NoiseRef]()
@@ -222,18 +220,25 @@ void ChunkGenerator::StartAsyncTask(const ChunkRequest &Request)
                             // If *Token is false, the generator destructor has already run.
                             // accessing 'this' (e.g. m_isStopping) would crash.
                             if (!Token.IsValid() || !(*Token))
-                            {
                                 return;
-                            }
 
                             // If the generator is stopping, discard the result immediately.
                             // This prevents callbacks to a potentially destroyed ChunkManager.
                             if (m_isStopping)
-                            {
                                 return;
-                            }
 
                             m_activeTasks.Remove(Id);
+
+                            // Measure and record generation time
+                            if (double *StartTime = m_taskStartTimes.Find(Id))
+                            {
+                                const float ElapsedMs = (float)((FPlatformTime::Seconds() - *StartTime) * 1000.0);
+                                m_taskStartTimes.Remove(Id);
+
+                                // Rolling average — blend new sample into running average
+                                m_avgGenerationTimeMs = FMath::Lerp(m_avgGenerationTimeMs, ElapsedMs, 0.1f);
+                                m_lastGenerationTimeMs = ElapsedMs;
+                            }
 
                             // Check if this task was cancelled while it was running
                             if (m_cancelledTasks.Contains(Id))
@@ -248,4 +253,18 @@ void ChunkGenerator::StartAsyncTask(const ChunkRequest &Request)
                             }
                         });
           });
+}
+
+
+FChunkGeneratorStats ChunkGenerator::GetDebugStats() const
+{
+    FChunkGeneratorStats S;
+    S.Queued = m_requestsQueue.Num();
+    S.Active = m_activeTasks.Num();
+    S.Cancelled = m_cancelledTasks.Num();
+    S.StartTimesTracked = m_taskStartTimes.Num();
+    S.AvgGenMs = m_avgGenerationTimeMs;
+    S.LastGenMs = m_lastGenerationTimeMs;
+    S.ActiveThreads = m_activeThreadsCounter.IsValid() ? m_activeThreadsCounter->GetValue() : 0;
+    return S;
 }

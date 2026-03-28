@@ -135,12 +135,17 @@ USTRUCT(BlueprintType) struct FPlanetConfig
         int16 CacheHardCap = 1024;
         int16 DeferredReleaseDelay = 8;     // Normal frame countdown
         int16 DeferredReleaseDelayMin = 1;  // Minimum under full pressure
-        int16 TransitionMaxAge = 90;        // Maximum number of frames a pending LOD transition can stay alive before being force-cancelled.
+
         int16 MaxPendingTransitions = 60;
+        int32 StaleTransitionMaxAge = 60;  // Maximum frames a low-LOD (background) transition can wait before force-cancel.
+        int32 StaleTransitionMinAge = 12;  // Maximum frames a high-LOD (close detail) transition can wait before force-cancel. Should be significantly lower
+                                           // than MaxAge — forces fast retry rather than stale blocking.
 
         // LOD Rules
         int16 MaxLOD = 8;
-        int16 PredictiveMaxLOD = 4; // Deepest LOD level the predictive pass is allowed to request.
+        int16 PredictiveMaxLOD = 4;  // Deepest LOD level the predictive pass is allowed to request.
+        float PredictiveWeight = 0.7f; // Blend factor between current and predicted observer position for chunk priority scoring.
+
         float FarDistanceThreshold = 100000.0f;
         float LODSplitScreenFraction = 0.25f;  // Fraction of screen height a chunk must subtend to trigger a split.
                                                // 0.25 means "split when the chunk covers 25% of the vertical screen".

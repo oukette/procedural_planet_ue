@@ -49,14 +49,14 @@ void APlanet::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
-    // Build View Context
+    // Build Contexts
     const PlanetViewContext WorldContext = BuildViewContext();
     const PlanetViewContext LocalContext = BuildLocalContext(WorldContext);
 
     // Update Manager with LOCAL context
     UpdateChunkManager(LocalContext);
 
-    // Update Far Model & Debug with WORLD context
+    // Update Far Model
     UpdateFarModelVisibility(WorldContext);
 
     // DEBUG stuff
@@ -413,7 +413,7 @@ void APlanet::DrawDebugInfo(const PlanetViewContext &Context) const
     const float DistToSurface = DistToCenter - GenSettings.PlanetRadius;
     const float SpeedKmh = Context.ObserverVelocity.Size() * 0.036f;
 
-    // --- onscreen debug line 1: Altitude and speed ---
+    // --- ONSCREEN DEBUG LINE 0: Altitude and speed ---
     const FString StatusStr = (DistToSurface < 0.f) ? TEXT("UNDERGROUND") : TEXT("SURFACE");
     GEngine->AddOnScreenDebugMessage(PlanetStatics::DebugKey_DistanceInfo,
                                      0.f,
@@ -422,16 +422,57 @@ void APlanet::DrawDebugInfo(const PlanetViewContext &Context) const
 
     if (m_chunkManager.IsValid())
     {
-        const int32 Vis = m_chunkManager->GetVisibleChunkCount();
-        const int32 Mem = m_chunkManager->GetTotalChunkCount();
-        const int32 Pending = m_chunkManager->GetPendingCount();
+        const FChunkManagerStats CMStats = m_chunkManager->GetDebugStats();
+        const FChunkGeneratorStats CGStats = m_chunkManager->GetChunkGeneratorStats();
 
-        // --- onscreen debug line 2: Chunk counts per state ---
-        const FColor ChunkColor = (Vis == 0) ? FColor::Red : FColor::Green;
+        const float FrameMs = 1000.f / 60.f;
+        const float MinAgeBudgetMs = m_planetConfig.StaleTransitionMinAge * FrameMs;
+        
+        const FColor GenTimeColor = (CGStats.AvgGenMs > MinAgeBudgetMs) ? FColor::Red : (CGStats.AvgGenMs > MinAgeBudgetMs * 0.75f) ? FColor::Yellow : FColor::Green;
+
+        // --- ONSCREEN DEBUG LINE 1: Chunk counts per state ---
+        const FColor ChunkStatusColor = (CMStats.Visible == 0) ? FColor::Red : FColor::Green;
+        GEngine->AddOnScreenDebugMessage(PlanetStatics::DebugKey_ManagerStats_1,
+                                         0.f,
+                                         ChunkStatusColor,
+                                         FString::Printf(TEXT("[Chunks] Total:%d | None:%d Pend:%d Gen:%d Ready:%d Mesh:%d Vis:%d"),
+                                                         CMStats.Total,
+                                                         CMStats.None,
+                                                         CMStats.Pending,
+                                                         CMStats.Generating,
+                                                         CMStats.DataReady,
+                                                         CMStats.MeshReady,
+                                                         CMStats.Visible));
+
+        // --- ONSCREEN DEBUG LINE 2: ChunkManager chunk sets contents ---
         GEngine->AddOnScreenDebugMessage(
-            PlanetStatics::DebugKey_ManagerStats, 0.f, ChunkColor, FString::Printf(TEXT("[Chunks] Visible: %d | Total: %d | Pending: %d"), Vis, Mem, Pending));
+            PlanetStatics::DebugKey_ManagerStats_2,
+            0.f,
+            GenTimeColor,
+            FString::Printf(
+                TEXT("[Pipeline] Deferred:%d LoadSet:%d RenderSet:%d Trans:%d"), CMStats.Deferred, CMStats.LoadSet, CMStats.RenderSet, CMStats.Transitions));
 
-        // --- onscreen debug line 3: Per-LOD visible chunk breakdown ---
+        // --- ONSCREEN DEBUG LINE 3: Chunk generation time ---
+        // At 60fps, MinAge=12 gives you 200ms before a high-LOD chunk gets cancelled.
+        // Red if avg exceeds that budget, yellow if close, green if safe.
+        GEngine->AddOnScreenDebugMessage(
+            PlanetStatics::DebugKey_GenTime,
+            0.f,
+            GenTimeColor,
+            FString::Printf(TEXT("[Gen Time] Avg: %.0f ms | Last: %.0f ms | Budget(MinAge): %.0f ms"), CGStats.AvgGenMs, CGStats.LastGenMs, MinAgeBudgetMs));
+
+        // --- ONSCREEN DEBUG LINE 4: ChunkGenerator stats ---
+        GEngine->AddOnScreenDebugMessage(PlanetStatics::DebugKey_GeneratorStats,
+                                         0.f,
+                                         GenTimeColor,
+                                         FString::Printf(TEXT("[Generator] Queued:%d Active:%d Cancelled:%d Threads:%d"),
+                                                         CGStats.Queued,
+                                                         CGStats.Active,
+                                                         CGStats.Cancelled,
+                                                         CGStats.ActiveThreads));
+
+
+        // --- ONSCREEN DEBUG LINE 5: Per-LOD visible chunk breakdown ---
         TArray<int32> PerLODCount;
         PerLODCount.Init(0, m_planetConfig.MaxLOD + 1);
         m_chunkManager->GetVisibleCountPerLOD(PerLODCount);
@@ -446,7 +487,7 @@ void APlanet::DrawDebugInfo(const PlanetViewContext &Context) const
         }
         GEngine->AddOnScreenDebugMessage(PlanetStatics::DebugKey_LODBreakdown, 0.f, FColor::White, LODStr);
 
-        // --- onscreen debug line 4: Next split distance for current LOD ---
+        // --- ONSCREEN DEBUG LINE 6: Next split distance for current LOD ---
         // Show how far the observer is from the next LOD transition
         int32 CurrentMaxLOD = 0;
         for (int32 i = 0; i <= m_planetConfig.MaxLOD; ++i)

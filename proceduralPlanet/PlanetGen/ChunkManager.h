@@ -42,6 +42,22 @@ struct LODTransition
 };
 
 
+struct FChunkManagerStats
+{
+        int32 Total = 0;
+        int32 None = 0;
+        int32 Pending = 0;
+        int32 Generating = 0;
+        int32 DataReady = 0;
+        int32 MeshReady = 0;
+        int32 Visible = 0;
+        int32 Deferred = 0;
+        int32 LoadSet = 0;
+        int32 RenderSet = 0;
+        int32 Transitions = 0;
+};
+
+
 // Manages the lifecycle of all chunks (Quadtree logic, LOD selection, Async requests).
 // Owned strictly by the APlanet actor.
 class ChunkManager
@@ -79,9 +95,6 @@ class ChunkManager
         // Returns per-LOD count of currently visible chunks. Array must be pre-sized to MaxLOD+1.
         void GetVisibleCountPerLOD(TArray<int32> &OutCounts) const;
 
-        // Returns the number of chunks waiting for generation.
-        int32 GetPendingCount() const;
-
         // Initialize the chunk manager for the given planet.
         void Initialize(AActor *Owner, UMaterialInterface *Material);
 
@@ -93,6 +106,12 @@ class ChunkManager
 
         // Debug: Draws the bounding box of the actual generated meshes.
         void DrawDebugChunkBounds(const UWorld *World) const;
+
+        FChunkManagerStats GetDebugStats() const;
+
+        FChunkGeneratorStats GetChunkGeneratorStats() const { return m_chunkGenerator.IsValid() ? m_chunkGenerator->GetDebugStats() : FChunkGeneratorStats(); }
+
+
 
     private:
         // Helper to create a new chunk entry
@@ -126,7 +145,7 @@ class ChunkManager
         void CancelConflictingTransitions(const TSet<ChunkId> &DesiredLeaves);
 
         // Ensure all needed chunks are generating/uploading
-        void AdvanceLoading(const TMap<ChunkId, float> &DistanceSqCache);
+        void AdvanceLoading(const TMap<ChunkId, float> &CurrentDistSqCache, const TMap<ChunkId, float> &PredictedDistSqCache);
 
         // Atomic show/hide for complete groups
         void CommitReadyTransitions(const bool bShouldGenerateChunks, const TMap<ChunkId, float> &DistanceSqCache);
