@@ -9,6 +9,7 @@
 #include "PlanetConfig.h"
 #include "PlanetConstants.h"
 #include "SimpleNoise.h"
+#include "FarModelHandle.h"
 #include "Planet.generated.h"
 
 
@@ -26,6 +27,8 @@ class PROCEDURALPLANET_API APlanet : public AActor
         TUniquePtr<DensityGenerator> m_densityGen;
 
         FPlanetConfig m_planetConfig;   // Store the finalized configuration after initPlanet() runs.
+
+        FFarModelHandle m_farModel; // Handle the far model actor. If null, we don't have a far model. 
 
     public:
         // Generation Control
@@ -51,9 +54,6 @@ class PROCEDURALPLANET_API APlanet : public AActor
         // Debug
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet")
         FPlanetDebugSettings DebugSettings;
-
-        // Internal State
-        bool bIsFarModelAutoCreated = false;
 
     protected:
         virtual void OnConstruction(const FTransform &Transform) override;

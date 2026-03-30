@@ -20,7 +20,11 @@ APlanet::APlanet()
 }
 
 
-void APlanet::OnConstruction(const FTransform &Transform) { Super::OnConstruction(Transform); }
+void APlanet::OnConstruction(const FTransform &Transform)
+{
+    // placeholder for future use
+    Super::OnConstruction(Transform);
+}
 
 
 void APlanet::BeginPlay()
@@ -98,16 +102,9 @@ void APlanet::ClearPlanet()
     m_densityGen.Reset();
     m_noiseProvider.Reset();
 
-    // Destroy Far Model if we created it
-    if (bIsFarModelAutoCreated && GenSettings.FarPlanetModel)
-    {
-        if (IsValid(GenSettings.FarPlanetModel))
-        {
-            GenSettings.FarPlanetModel->Destroy();
-        }
-        GenSettings.FarPlanetModel = nullptr;
-    }
-    bIsFarModelAutoCreated = false;
+    // Destroy Far Model
+    m_farModel.Release();
+    GenSettings.FarPlanetModel = nullptr;
 }
 
 
@@ -123,10 +120,12 @@ void APlanet::initPlanet()
     // Handle Visuals (Far Model)
     if (!GenSettings.FarPlanetModel)
         CreateFarModel();
+    else if (!m_farModel)
+        m_farModel.SetUserProvided(GenSettings.FarPlanetModel);  // User assigned a model in the editor — register it as non-owned
 
     // Update Far Model scale if needed (logic from PrepareGeneration)
-    if (GenSettings.FarPlanetModel && bIsFarModelAutoCreated)
-        GenSettings.FarPlanetModel->SetActorScale3D(FVector(GenSettings.PlanetRadius / PlanetStatics::DefaultEngineSphereRadius));
+    if (m_farModel && m_farModel.IsOwned())
+        m_farModel.GetActor()->SetActorScale3D(FVector(GenSettings.PlanetRadius / PlanetStatics::DefaultEngineSphereRadius));
 
     // Calculate "Auto" Settings (Configuration)
     float computedVoxelSize;
@@ -173,7 +172,11 @@ FPlanetConfig APlanet::BuildPlanetConfig(float VoxelSize) const
 }
 
 
-DensityConfig APlanet::BuildDensityConfig(float VoxelSize) const { return DensityConfig::From(BuildPlanetConfig(VoxelSize), NoiseSettings); }
+DensityConfig APlanet::BuildDensityConfig(float VoxelSize) const
+{
+    // for future use, keep it here
+    return DensityConfig::From(BuildPlanetConfig(VoxelSize), NoiseSettings);
+}
 
 
 void APlanet::CreateFarModel()
@@ -217,7 +220,7 @@ void APlanet::CreateFarModel()
 
         // Store the reference and set the flag
         GenSettings.FarPlanetModel = SphereActor;
-        bIsFarModelAutoCreated = true;
+        m_farModel.SetOwned(SphereActor);
 
         UE_LOG(LogTemp, Log, TEXT("Automatically created FarPlanetModel for planet."));
     }
@@ -246,7 +249,7 @@ void APlanet::UpdateChunkManager(const PlanetViewContext &Context)
 void APlanet::UpdateFarModelVisibility(const PlanetViewContext &Context)
 {
     // We do this here because the Actor owns the FarModel component/actor.
-    if (GenSettings.FarPlanetModel)
+    if (m_farModel)
     {
         float DistToCenter = FVector::Dist(GetActorLocation(), Context.ObserverLocation);
         float DistToSurface = DistToCenter - GenSettings.PlanetRadius;
@@ -259,14 +262,14 @@ void APlanet::UpdateFarModelVisibility(const PlanetViewContext &Context)
         // We keep it visible a bit longer to ensure chunks have fully spawned underneath.
         float HideThreshold = m_planetConfig.FarDistanceThreshold * PlanetStatics::FarModelHideRatio;
 
-        bool bIsVisible = !GenSettings.FarPlanetModel->IsHidden();
+        bool bIsVisible = !m_farModel.GetActor()->IsHidden();
 
         if (bIsVisible)
         {
             // We are in Far Mode. Switch to Near only if we get close enough.
             if (DistToSurface < HideThreshold)
             {
-                GenSettings.FarPlanetModel->SetActorHiddenInGame(true);
+                m_farModel.GetActor()->SetActorHiddenInGame(true);
             }
         }
         else
@@ -274,7 +277,7 @@ void APlanet::UpdateFarModelVisibility(const PlanetViewContext &Context)
             // We are in Near Mode. Switch to Far only if we get far enough.
             if (DistToSurface > ShowThreshold)
             {
-                GenSettings.FarPlanetModel->SetActorHiddenInGame(false);
+                m_farModel.GetActor()->SetActorHiddenInGame(false);
             }
         }
     }
@@ -327,7 +330,7 @@ void APlanet::DrawDebugInfo(const PlanetViewContext &Context) const
         GEngine->AddOnScreenDebugMessage(PlanetStatics::DebugKey_ManagerStats_2,
                                          0.f,
                                          GenTimeColor,
-                                         FString::Printf(TEXT("[Pipeline] Deferred:%d LoadSet:%d RenderSet:%d Trans:%d"),
+                                         FString::Printf(TEXT("[ManagerPipeline] Deferred:%d LoadSet:%d RenderSet:%d Trans:%d"),
                                                          CMStats.Deferred,
                                                          CMStats.LoadSet,
                                                          CMStats.RenderSet,
@@ -346,7 +349,7 @@ void APlanet::DrawDebugInfo(const PlanetViewContext &Context) const
         GEngine->AddOnScreenDebugMessage(PlanetStatics::DebugKey_GeneratorStats,
                                          0.f,
                                          GenTimeColor,
-                                         FString::Printf(TEXT("[Generator] Queued:%d Active:%d Cancelled:%d Threads:%d"),
+                                         FString::Printf(TEXT("[GeneratorPipeline] Queued:%d Active:%d Cancelled:%d Threads:%d"),
                                                          CGStats.Queued,
                                                          CGStats.Active,
                                                          CGStats.Cancelled,
@@ -413,13 +416,7 @@ void APlanet::DrawPredictiveDebug(const PlanetViewContext &LocalContext) const
 
     // Predicted position — cyan sphere
     DrawDebugSphere(World, PredictedWorld, 200.f, 8, FColor::Yellow, false, -1.f);
+
     // Line from real to predicted
     DrawDebugLine(World, RealWorld, PredictedWorld, FColor::Yellow, false, -1.f, 0, 50.f);
-    // // Lookahead seconds as a label approximation via sphere size
-    // DrawDebugString(World,
-    //                 PredictedWorld + FVector(0, 0, 300.f),
-    //                 FString::Printf(TEXT("LookAhead: %.2fs | Alt: %.0f"), LookAheadSeconds, LocalContext.AltitudeAboveSurface),
-    //                 nullptr,
-    //                 FColor::White,
-    //                 -1.f);
 }
