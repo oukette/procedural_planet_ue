@@ -61,9 +61,6 @@ class PROCEDURALPLANET_API APlanet : public AActor
         // Initialize the generation process by populating the spawn queue.
         void initPlanet();
 
-        // Helper to get the camera position in both Editor and Runtime
-        FVector GetObserverPosition() const;
-
         // Create the planet far model for optimized rendering in far distance.
         void CreateFarModel();
 
@@ -73,12 +70,6 @@ class PROCEDURALPLANET_API APlanet : public AActor
         // Build the configurations.
         FPlanetConfig BuildPlanetConfig(float VoxelSize) const;
         DensityConfig BuildDensityConfig(float VoxelSize) const;
-
-        // View related logic
-        PlanetViewContext BuildViewContext() const;
-        PlanetViewContext BuildLocalContext(const PlanetViewContext &WorldContext) const;
-        void BuildViewFrustum(APlayerCameraManager *PCM, PlanetViewContext &Context) const;
-        void BuildVerticalFOV(APlayerCameraManager *PCM, PlanetViewContext &Context) const;
 
         // Helper to update the chunk manager.
         void UpdateChunkManager(const PlanetViewContext &Context);

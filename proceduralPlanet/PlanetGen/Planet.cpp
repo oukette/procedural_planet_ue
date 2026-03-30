@@ -50,8 +50,12 @@ void APlanet::Tick(float DeltaTime)
     Super::Tick(DeltaTime);
 
     // Build Contexts
-    const PlanetViewContext WorldContext = BuildViewContext();
-    const PlanetViewContext LocalContext = BuildLocalContext(WorldContext);
+    const PlanetViewContext WorldContext = PlanetViewContext::BuildWorldContext(this);
+    const PlanetViewContext LocalContext = PlanetViewContext::BuildLocalContext(WorldContext,
+                                                                                this,
+                                                                                m_planetConfig.PlanetRadius,
+                                                                                m_planetConfig.FarDistanceThreshold,
+                                                                                PlanetStatics::FarDistanceSafetyMargin);
 
     // Update Manager with LOCAL context
     UpdateChunkManager(LocalContext);
@@ -104,8 +108,6 @@ void APlanet::ClearPlanet()
         GenSettings.FarPlanetModel = nullptr;
     }
     bIsFarModelAutoCreated = false;
-
-    // The ChunkManager's destructor now handles all component cleanup robustly.
 }
 
 
@@ -222,131 +224,6 @@ void APlanet::CreateFarModel()
 }
 
 
-FVector APlanet::GetObserverPosition() const
-{
-    FVector Pos = FVector::ZeroVector;
-    if (GetWorld())
-    {
-        // This works for both Editor Viewports and Runtime Cameras
-        if (GetWorld()->ViewLocationsRenderedLastFrame.Num() > 0)
-        {
-            Pos = GetWorld()->ViewLocationsRenderedLastFrame[0];
-        }
-    }
-    return Pos;
-}
-
-
-PlanetViewContext APlanet::BuildViewContext() const
-{
-    PlanetViewContext Context;
-    Context.ObserverLocation = GetObserverPosition();
-    Context.ObserverForward = FVector::ZeroVector;  // If we can't find a camera (e.g. Editor Viewport), disable frustum culling to avoid "blind spots".
-    Context.ObserverVelocity = FVector::ZeroVector;
-
-    if (UWorld *World = GetWorld())
-    {
-        if (APlayerCameraManager *PCM = UGameplayStatics::GetPlayerCameraManager(World, 0))
-        {
-            Context.ObserverForward = PCM->GetCameraRotation().Vector();
-            BuildVerticalFOV(PCM, Context);
-            BuildViewFrustum(PCM, Context);
-        }
-
-        if (APawn *PlayerPawn = UGameplayStatics::GetPlayerPawn(World, 0))
-        {
-            if (IsValid(PlayerPawn))
-                Context.ObserverVelocity = PlayerPawn->GetVelocity();
-        }
-    }
-
-
-    return Context;
-}
-
-
-PlanetViewContext APlanet::BuildLocalContext(const PlanetViewContext &WorldContext) const
-{
-    const FTransform PlanetTransform = GetActorTransform();
-
-    PlanetViewContext Local;
-    Local.ObserverLocation = PlanetTransform.InverseTransformPosition(WorldContext.ObserverLocation);
-    Local.ObserverForward = PlanetTransform.InverseTransformVector(WorldContext.ObserverForward);
-    Local.ObserverVelocity = PlanetTransform.InverseTransformVector(WorldContext.ObserverVelocity);
-    Local.ViewDistance = WorldContext.ViewDistance;
-    Local.VerticalFOVRadians = WorldContext.VerticalFOVRadians;
-    Local.ViewFrustum = WorldContext.ViewFrustum;
-
-    // Altitude is only meaningful when the player is close enough to trigger chunk generation.
-    // Beyond FarDistanceThreshold we leave it at 0 — nothing reads it at that distance.
-    const float DistToCenter = Local.ObserverLocation.Size();
-    const bool bNearPlanet = DistToCenter < (m_planetConfig.FarDistanceThreshold * PlanetStatics::FarDistanceSafetyMargin);
-    Local.AltitudeAboveSurface = bNearPlanet ? (DistToCenter - m_planetConfig.PlanetRadius) : 0.f;
-
-    return Local;
-}
-
-
-void APlanet::BuildViewFrustum(APlayerCameraManager *PCM, PlanetViewContext &Context) const
-{
-    if (!PCM || !GEngine || !GEngine->GameViewport || !GEngine->GameViewport->Viewport)
-        return;
-
-    // Assemble minimal camera view
-    FMinimalViewInfo CameraView;
-    CameraView.Location = PCM->GetCameraLocation();
-    CameraView.Rotation = PCM->GetCameraRotation();
-    CameraView.FOV = PCM->GetFOVAngle();
-    CameraView.ProjectionMode = ECameraProjectionMode::Perspective;
-
-    FIntPoint ViewportSize = GEngine->GameViewport->Viewport->GetSizeXY();
-    CameraView.AspectRatio = (ViewportSize.Y > 0) ? (float)ViewportSize.X / (float)ViewportSize.Y : 1.777f;  // fallback to 16:9
-
-    // Guard: degenerate viewport on first frame — skip frustum build entirely
-    // rather than producing planes that cull everything
-    if (ViewportSize.X == 0 || ViewportSize.Y == 0)
-        return;
-
-    // Build ViewProjection matrix and extract world-space frustum planes
-    FMatrix ViewMatrix, ProjectionMatrix, ViewProjectionMatrix;
-    UGameplayStatics::GetViewProjectionMatrix(CameraView, ViewMatrix, ProjectionMatrix, ViewProjectionMatrix);
-
-    FConvexVolume WorldFrustum;
-    GetViewFrustumBounds(WorldFrustum, ViewProjectionMatrix, false);
-
-    // Transform frustum planes from world space into planet local space
-    // Chunk centers are computed in local space, so the frustum must match.
-    const FMatrix LocalMatrix = GetActorTransform().ToMatrixWithScale().Inverse();
-    Context.ViewFrustum.Planes.Empty(WorldFrustum.Planes.Num());
-    for (const FPlane &WorldPlane : WorldFrustum.Planes)
-    {
-        Context.ViewFrustum.Planes.Add(WorldPlane.TransformBy(LocalMatrix));
-    }
-
-    // Recompute permuted planes used internally by IntersectSphere for SIMD performance
-    Context.ViewFrustum.Init();
-}
-
-
-void APlanet::BuildVerticalFOV(APlayerCameraManager *PCM, PlanetViewContext &Context) const
-{
-    if (!PCM)
-        return;
-
-    float AspectRatio = 1.777f;  // fallback 16:9
-    if (GEngine && GEngine->GameViewport && GEngine->GameViewport->Viewport)
-    {
-        FIntPoint Size = GEngine->GameViewport->Viewport->GetSizeXY();
-        if (Size.X > 0 && Size.Y > 0)
-            AspectRatio = (float)Size.X / (float)Size.Y;
-    }
-
-    float HFOVRad = FMath::DegreesToRadians(PCM->GetFOVAngle());
-    float VFOVRad = 2.f * FMath::Atan(FMath::Tan(HFOVRad * 0.5f) / AspectRatio);
-    Context.VerticalFOVRadians = VFOVRad;
-}
-
-
 void APlanet::UpdateChunkManager(const PlanetViewContext &Context)
 {
     if (m_chunkManager.IsValid())
@@ -427,8 +304,10 @@ void APlanet::DrawDebugInfo(const PlanetViewContext &Context) const
 
         const float FrameMs = 1000.f / 60.f;
         const float MinAgeBudgetMs = m_planetConfig.StaleTransitionMinAge * FrameMs;
-        
-        const FColor GenTimeColor = (CGStats.AvgGenMs > MinAgeBudgetMs) ? FColor::Red : (CGStats.AvgGenMs > MinAgeBudgetMs * 0.75f) ? FColor::Yellow : FColor::Green;
+
+        const FColor GenTimeColor = (CGStats.AvgGenMs > MinAgeBudgetMs)           ? FColor::Red
+                                    : (CGStats.AvgGenMs > MinAgeBudgetMs * 0.75f) ? FColor::Yellow
+                                                                                  : FColor::Green;
 
         // --- ONSCREEN DEBUG LINE 1: Chunk counts per state ---
         const FColor ChunkStatusColor = (CMStats.Visible == 0) ? FColor::Red : FColor::Green;
@@ -445,12 +324,14 @@ void APlanet::DrawDebugInfo(const PlanetViewContext &Context) const
                                                          CMStats.Visible));
 
         // --- ONSCREEN DEBUG LINE 2: ChunkManager chunk sets contents ---
-        GEngine->AddOnScreenDebugMessage(
-            PlanetStatics::DebugKey_ManagerStats_2,
-            0.f,
-            GenTimeColor,
-            FString::Printf(
-                TEXT("[Pipeline] Deferred:%d LoadSet:%d RenderSet:%d Trans:%d"), CMStats.Deferred, CMStats.LoadSet, CMStats.RenderSet, CMStats.Transitions));
+        GEngine->AddOnScreenDebugMessage(PlanetStatics::DebugKey_ManagerStats_2,
+                                         0.f,
+                                         GenTimeColor,
+                                         FString::Printf(TEXT("[Pipeline] Deferred:%d LoadSet:%d RenderSet:%d Trans:%d"),
+                                                         CMStats.Deferred,
+                                                         CMStats.LoadSet,
+                                                         CMStats.RenderSet,
+                                                         CMStats.Transitions));
 
         // --- ONSCREEN DEBUG LINE 3: Chunk generation time ---
         // At 60fps, MinAge=12 gives you 200ms before a high-LOD chunk gets cancelled.
@@ -499,12 +380,13 @@ void APlanet::DrawDebugInfo(const PlanetViewContext &Context) const
         float NextMergeDist = NextSplitNodeSize * m_planetConfig.LODSplitScreenFraction * m_planetConfig.LODMergeHysteresisRatio;
         float ClosestChunkDist = DistToSurface;  // approximation
 
-        GEngine->AddOnScreenDebugMessage(
-            PlanetStatics::DebugKey_LODThreshold,
-            0.f,
-            FColor::Yellow,
-            FString::Printf(
-                TEXT("[LOD Threshold] Split < %.0fm | Merge > %.0fm | Dist: %.0fm"), NextSplitDist / 100.f, NextMergeDist / 100.f, ClosestChunkDist / 100.f));
+        GEngine->AddOnScreenDebugMessage(PlanetStatics::DebugKey_LODThreshold,
+                                         0.f,
+                                         FColor::Yellow,
+                                         FString::Printf(TEXT("[LOD Threshold] Split < %.0fm | Merge > %.0fm | Dist: %.0fm"),
+                                                         NextSplitDist / 100.f,
+                                                         NextMergeDist / 100.f,
+                                                         ClosestChunkDist / 100.f));
     }
 }
 

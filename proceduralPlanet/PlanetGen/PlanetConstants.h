@@ -17,10 +17,11 @@ struct PlanetStatics
         // 0.8 = Far model stays visible until we are at 80% of render distance.
         static constexpr float FarModelHideRatio = 0.8f;
 
+        static constexpr float FarDistanceSafetyMargin = 1.1f;
+        
         // Generation / Grid
         static constexpr float DefaultEngineSphereRadius = 50.0f;
         static constexpr float TargetAutoChunkSize = 8000.0f;
-        static constexpr float FarDistanceSafetyMargin = 1.1f;
 
         // Culling & Visibility
         static constexpr float UndergroundThreshold = -100.0f;
