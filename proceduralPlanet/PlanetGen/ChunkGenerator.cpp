@@ -59,6 +59,11 @@ void ChunkGenerator::RequestChunk(const ChunkId &Id, uint32 GenerationId, float 
     if (m_activeTasks.Contains(Id) || m_queuedIds.Contains(Id))
         return;  // Already in queue
 
+    // Hard cap: refuse new entries when the queue is full.
+    // The ChunkManager will re-request next frame if still needed.
+    if (m_requestsQueue.Num() >= m_planetConfig.MaxGenerationQueueSize)
+        return;
+
     m_queuedIds.Add(Id);
     // Use a Min-Heap (Lowest Score at Top).
     // We use the 'Greater' predicate (>), which causes Heap functions to prioritize smaller values as 'Top'.
@@ -144,6 +149,9 @@ void ChunkGenerator::Update()
 }
 
 
+void ChunkGenerator::SetOnChunkStartedCallback(OnChunkStarted InCallback) { m_onChunkStartedCallback = InCallback; }
+
+
 void ChunkGenerator::SetOnChunkGeneratedCallback(OnChunkGenerated InCallback) { m_onChunkGeneratedCallback = InCallback; }
 
 
@@ -202,15 +210,27 @@ void ChunkGenerator::StartAsyncTask(const ChunkRequest &Request)
     Async(EAsyncExecution::ThreadPool,
           [this, Id, GenId, Resolution, FaceNormal, FaceRight, FaceUp, CubeMin, CubeMax, Transform, LODLevel, ThreadConfig, Token, ThreadGuard, NoiseRef]()
           {
-              // Build a self-contained DensityGenerator using the shared noise
+              // trigger the on chunk started
+              AsyncTask(ENamedThreads::GameThread,
+                        [this, Id, Token]()
+                        {
+                            if (!Token.IsValid() || !(*Token))
+                                return;
+                            if (m_isStopping)
+                                return;
+                            if (m_onChunkStartedCallback)
+                                m_onChunkStartedCallback(Id);
+                        });
+
+              // Build a self-contained DensityGenerator using the shared noise.
               // NoiseRef keeps SimpleNoise alive regardless of APlanet's lifetime
-              DensityGenerator ThreadGen(ThreadConfig, NoiseRef.Get());
+              DensityGenerator DensityGenThread(ThreadConfig, NoiseRef.Get());
 
               // Generate Density
-              GenData GeneratedData = ThreadGen.GenerateDensityField(Resolution, FaceNormal, FaceRight, FaceUp, CubeMin, CubeMax);
+              GenData GeneratedData = DensityGenThread.GenerateDensityField(Resolution, FaceNormal, FaceRight, FaceUp, CubeMin, CubeMax);
 
               // Generate Mesh
-              ChunkMeshData MeshData = MeshGenerator::GenerateMesh(GeneratedData, Resolution, Transform, FTransform::Identity, LODLevel, ThreadGen);
+              ChunkMeshData MeshData = MeshGenerator::GenerateMesh(GeneratedData, Resolution, Transform, FTransform::Identity, LODLevel, DensityGenThread);
 
               // Return to Game Thread
               AsyncTask(ENamedThreads::GameThread,

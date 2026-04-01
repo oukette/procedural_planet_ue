@@ -65,7 +65,9 @@ USTRUCT(BlueprintType) struct FPlanetGridSettings
         UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet", meta = (DisplayName = "LOD Split Multiplier", ClampMin = "1.0", ClampMax = "5.0"))
         float LODSplitScreenFraction = 0.25f;
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet",
+        UPROPERTY(EditAnywhere,
+                  BlueprintReadWrite,
+                  Category = "Planet",
                   meta = (DisplayName = "LOD Merge Hysteresis Ratio", ClampMin = "0.15", ClampMax = "0.95"))
         float LODMergeHysteresisRatio = 0.75f;
 };
@@ -127,24 +129,24 @@ USTRUCT(BlueprintType) struct FPlanetConfig
         int16 GridResolution = 32;  // resolution of the voxel grid in voxels
 
         // Throttling
-        int16 MaxConcurrentGenerations = 32;
-        int16 ChunkGenerationRate = 32;  // Chunks to start generating per tick
-        int16 MeshUpdatesPerFrame = 8;
+        int16 MaxConcurrentGenerations = 8;
+        int16 ChunkGenerationRate = 16;                               // Chunks to start generating per tick
+        int16 MaxGenerationQueueSize = 8 * MaxConcurrentGenerations;  // Size of the generation request queue
+        int16 MeshUpdatesPerFrame = 16;
         int16 ChunkDemotionFrameDelay = 8;  // X frames. A rendered chunk must be absent before hiding
         int16 CacheSoftCap = 512;
         int16 CacheHardCap = 1024;
         int16 DeferredReleaseDelay = 8;     // Normal frame countdown
         int16 DeferredReleaseDelayMin = 1;  // Minimum under full pressure
-
         int16 MaxPendingTransitions = 60;
         int32 StaleTransitionMaxAge = 60;  // Maximum frames a low-LOD (background) transition can wait before force-cancel.
-        int32 StaleTransitionMinAge = 12;  // Maximum frames a high-LOD (close detail) transition can wait before force-cancel. Should be significantly lower
+        int32 StaleTransitionMinAge = 24;  // Maximum frames a high-LOD (close detail) transition can wait before force-cancel. Should be significantly lower
                                            // than MaxAge — forces fast retry rather than stale blocking.
 
         // LOD Rules
         int16 MaxLOD = 8;
-        int16 PredictiveMaxLOD = 4;  // Deepest LOD level the predictive pass is allowed to request.
-        float PredictiveWeight = 0.7f; // Blend factor between current and predicted observer position for chunk priority scoring.
+        int16 PredictiveMaxLOD = 4;     // Deepest LOD level the predictive pass is allowed to request.
+        float PredictiveWeight = 0.7f;  // Blend factor between current and predicted observer position for chunk priority scoring.
 
         float FarDistanceThreshold = 100000.0f;
         float LODSplitScreenFraction = 0.25f;  // Fraction of screen height a chunk must subtend to trigger a split.

@@ -111,8 +111,6 @@ class ChunkManager
 
         FChunkGeneratorStats GetChunkGeneratorStats() const { return m_chunkGenerator.IsValid() ? m_chunkGenerator->GetDebugStats() : FChunkGeneratorStats(); }
 
-
-
     private:
         // Helper to create a new chunk entry
         Chunk *CreateChunk(const ChunkId &Id);
@@ -120,6 +118,7 @@ class ChunkManager
         // Helper to get a chunk from the map if it exists, otherwise create it
         Chunk *GetChunk(const ChunkId &Id);
 
+        // Compute and return the deferred release delay.
         int32 GetDeferredReleaseDelay() const;
 
         // Derives m_loadSet from m_renderSet, m_pendingTransitionsMap, and desired roots.
@@ -167,6 +166,4 @@ class ChunkManager
 
         // Callback executed on Game Thread when async generation finishes
         void OnGenerationComplete(const ChunkId &Id, uint32 GenId, TUniquePtr<ChunkMeshData> MeshData);
-
-        void DebugRootNodes();
 };

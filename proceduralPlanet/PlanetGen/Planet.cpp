@@ -12,7 +12,7 @@
 // Sets default values
 APlanet::APlanet()
 {
-    // Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
+    // Set this actor to call Tick() every frame.
     PrimaryActorTick.bCanEverTick = true;
 
     Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
@@ -97,7 +97,7 @@ void APlanet::GeneratePlanet()
 
 void APlanet::ClearPlanet()
 {
-    // Reset Managers (Destroys ChunkManager, Renderer, and Chunks)
+    // Reset Managers
     m_chunkManager.Reset();
     m_densityGen.Reset();
     m_noiseProvider.Reset();
@@ -117,21 +117,21 @@ FVector APlanet::GetGravityDirection(const FVector &WorldLocation) const
 
 void APlanet::initPlanet()
 {
-    // Handle Visuals (Far Model)
+    // Handle Visuals
     if (!GenSettings.FarPlanetModel)
         CreateFarModel();
     else if (!m_farModel)
         m_farModel.SetUserProvided(GenSettings.FarPlanetModel);  // User assigned a model in the editor — register it as non-owned
 
-    // Update Far Model scale if needed (logic from PrepareGeneration)
+    // Update Far Model scale if needed
     if (m_farModel && m_farModel.IsOwned())
         m_farModel.GetActor()->SetActorScale3D(FVector(GenSettings.PlanetRadius / PlanetStatics::DefaultEngineSphereRadius));
 
-    // Calculate "Auto" Settings (Configuration)
+    // Calculate auto settings
     float computedVoxelSize;
     ComputeAutoVoxelSize(computedVoxelSize);
 
-    // Build configs — all assembly logic lives in the builders
+    // Build configs
     m_planetConfig = BuildPlanetConfig(computedVoxelSize);
 
     // Wire up subsystems
@@ -414,7 +414,7 @@ void APlanet::DrawPredictiveDebug(const PlanetViewContext &LocalContext) const
     const FVector PredictedWorld = PlanetTransform.TransformPosition(PredictedLocal);
     const FVector RealWorld = PlanetTransform.TransformPosition(LocalContext.ObserverLocation);
 
-    // Predicted position — cyan sphere
+    // Predicted position
     DrawDebugSphere(World, PredictedWorld, 200.f, 8, FColor::Yellow, false, -1.f);
 
     // Line from real to predicted

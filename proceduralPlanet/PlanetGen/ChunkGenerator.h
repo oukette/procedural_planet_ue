@@ -12,8 +12,10 @@
 class INoise;
 
 
-// Callback signature: ChunkId, GenerationId (for validation), MeshData
+// Callback signatures
+using OnChunkStarted = TFunction<void(const ChunkId &)>;
 using OnChunkGenerated = TFunction<void(const ChunkId &, uint32, TUniquePtr<ChunkMeshData>)>;
+
 
 struct ChunkRequest
 {
@@ -35,7 +37,6 @@ struct FChunkGeneratorStats
 };
 
 
-
 class ChunkGenerator
 {
     private:
@@ -48,6 +49,7 @@ class ChunkGenerator
         TSet<ChunkId> m_queuedIds;       // mirrors heap contents for O(1) duplicate detection
         TSet<ChunkId> m_cancelledTasks;  // Set of IDs that were cancelled while active
 
+        OnChunkStarted m_onChunkStartedCallback;
         OnChunkGenerated m_onChunkGeneratedCallback;
 
         FThreadSafeBool m_isStopping;  // Flag to signal that the generator is shutting down.
@@ -77,7 +79,8 @@ class ChunkGenerator
         // Main update loop to process queue and dispatch threads
         void Update();
 
-        // Set the callback for when a chunk finishes
+        // Callback methods
+        void SetOnChunkStartedCallback(OnChunkStarted InCallback);
         void SetOnChunkGeneratedCallback(OnChunkGenerated InCallback);
 
         // Chunks waiting in the priority queue, not yet dispatched to the thread pool

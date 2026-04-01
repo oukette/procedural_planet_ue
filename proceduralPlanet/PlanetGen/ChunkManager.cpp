@@ -7,7 +7,9 @@
 #include "DrawDebugHelpers.h"
 
 
-static TAutoConsoleVariable<int32> CVarChunkManagerDebug(TEXT("planet.ChunkManagerDebug"), 0, TEXT("Enable per-frame ChunkManager diagnostics. 0=off, 1=on."),
+static TAutoConsoleVariable<int32> CVarChunkManagerDebug(TEXT("planet.ChunkManagerDebug"),
+                                                         0,
+                                                         TEXT("Enable per-frame ChunkManager diagnostics. 0=off, 1=on."),
                                                          ECVF_Default);
 
 
@@ -82,9 +84,19 @@ void ChunkManager::Initialize(AActor *Owner, UMaterialInterface *Material)
 {
     m_chunkRenderer = MakeUnique<ChunkRenderer>(Owner, Material);
 
-    // m_chunkGenerator = MakeUnique<ChunkGenerator>(m_planetConfig, m_densityGen);
     m_chunkGenerator->SetOnChunkGeneratedCallback([this](const ChunkId &Id, uint32 GenId, TUniquePtr<ChunkMeshData> MeshData)
                                                   { OnGenerationComplete(Id, GenId, MoveTemp(MeshData)); });
+
+    m_chunkGenerator->SetOnChunkStartedCallback(
+        [this](const ChunkId &Id)
+        {
+            Chunk *C = GetChunk(Id);
+            if (C != nullptr)
+            {
+                if (C->m_state == ChunkState::Pending)
+                    C->m_state = ChunkState::Generating;
+            }
+        });
 
     m_quadtree = MakeUnique<PlanetQuadtree>(m_planetConfig);
 
@@ -169,24 +181,42 @@ void ChunkManager::Update(const PlanetViewContext &Context)
 #if !UE_BUILD_SHIPPING
     if (CVarChunkManagerDebug.GetValueOnGameThread() != 0)
     {
-        TMap<ChunkState, int32> StateCounts;
-        for (const auto &Pair : m_chunksMap)
-            StateCounts.FindOrAdd(Pair.Value->m_state)++;
+        const FChunkManagerStats MS = GetDebugStats();
+        const FChunkGeneratorStats GS = m_chunkGenerator ? m_chunkGenerator->GetDebugStats() : FChunkGeneratorStats();
 
+        // --- Manager line ---
+        // Lifecycle pipeline: None → Pending → Generating → DataReady → MeshReady → Visible
+        // Overhead sets: LoadSet (kept alive), RenderSet (ground truth), Transitions (pending LOD swaps), Deferred (waiting release)
         UE_LOG(LogTemp,
                Log,
-               TEXT("ChunkMap:%d | None:%d Pending:%d Generating:%d DataReady:%d MeshReady:%d Visible:%d | Deferred:%d LoadSet:%d RenderSet:%d Transitions:%d"),
-               m_chunksMap.Num(),
-               StateCounts.FindRef(ChunkState::None),
-               StateCounts.FindRef(ChunkState::Pending),
-               StateCounts.FindRef(ChunkState::Generating),
-               StateCounts.FindRef(ChunkState::DataReady),
-               StateCounts.FindRef(ChunkState::MeshReady),
-               StateCounts.FindRef(ChunkState::Visible),
-               m_deferredReleaseQueue.Num(),
-               m_loadSet.Num(),
-               m_renderSet.Num(),
-               m_pendingTransitionsMap.Num());
+               TEXT("[MGR] Total:%d | None:%d Pend:%d Gen:%d Data:%d Mesh:%d Vis:%d | Load:%d Render:%d Trans:%d Defer:%d"),
+               MS.Total,
+               MS.None,
+               MS.Pending,
+               MS.Generating,
+               MS.DataReady,
+               MS.MeshReady,
+               MS.Visible,
+               MS.LoadSet,
+               MS.RenderSet,
+               MS.Transitions,
+               MS.Deferred);
+
+        // --- Generator line ---
+        // Queue: waiting to be dispatched | Active: sets currently owned by a thread
+        // Cancelled: awaiting callback confirmation | Threads: raw OS thread count (should track Active)
+        // StartTimes: sanity — should equal Active; drift means a task lost its start record
+        // Timing: last sample and rolling average of full async generation round-trip
+        UE_LOG(LogTemp,
+               Log,
+               TEXT("[GEN] Queue:%d Active:%d Cancelled:%d Threads:%d StartTimes:%d | Last:%.1fms Avg:%.1fms"),
+               GS.Queued,
+               GS.Active,
+               GS.Cancelled,
+               GS.ActiveThreads,
+               GS.StartTimesTracked,
+               GS.LastGenMs,
+               GS.AvgGenMs);
     }
 #endif
     // === END DIAGNOSTIC ===
@@ -217,8 +247,6 @@ void ChunkManager::Update(const PlanetViewContext &Context)
 
     if (m_chunkGenerator)
         m_chunkGenerator->Update();
-
-    // DebugRootNodes();
 }
 
 
@@ -301,10 +329,10 @@ void ChunkManager::CancelStaleTransitions()
         // At MaxLOD:  MaxAge = StaleTransitionMinAge        (minimum patience)
         //
         // Both values exposed in FPlanetConfig, e.g. Max=60, Min=10.
-        const float T = (float)LODLevel / (float)FMath::Max((int)m_planetConfig.MaxLOD, 1);
+        const float ageLerpAlpha = (float)LODLevel / (float)FMath::Max((int)m_planetConfig.MaxLOD, 1);
         const int32 MaxAge = FMath::RoundToInt(FMath::Lerp((float)m_planetConfig.StaleTransitionMaxAge,  // low LOD → patient
                                                            (float)m_planetConfig.StaleTransitionMinAge,  // high LOD → impatient
-                                                           T));
+                                                           ageLerpAlpha));
         if (Transition.FrameAge >= MaxAge)
         {
             UE_LOG(LogTemp,
@@ -955,38 +983,6 @@ void ChunkManager::DrawDebugChunkBounds(const UWorld *World) const
                 DrawDebugBox(World, Box.GetCenter(), Box.GetExtent(), BoxColor, false, 0.f, 0, PlanetStatics::DebugBoxLifetime);
             }
         }
-    }
-}
-
-
-void ChunkManager::DebugRootNodes()
-{
-    for (uint8 Face = 0; Face < 6; ++Face)
-    {
-        ChunkId RootId(Face, FIntVector(0, 0, 0), 0);
-
-        const bool bInChunkMap = m_chunksMap.Contains(RootId);
-        const bool bInRenderSet = m_renderSet.Contains(RootId);
-        const bool bInLoadSet = m_loadSet.Contains(RootId);
-        const bool bInDeferred = m_deferredReleaseIdsMap.Contains(RootId);
-        const bool bInTransition = m_pendingTransitionsMap.Contains(RootId);
-        const bool bInDesiredLeaves = m_quadtree && m_quadtree->GetDesiredLeaves().Contains(RootId);
-
-        ChunkState State = ChunkState::None;
-        if (bInChunkMap)
-            State = m_chunksMap[RootId]->m_state;
-
-        UE_LOG(LogTemp,
-               Warning,
-               TEXT("ROOT Face:%d | State:%d | ChunkMap:%d RenderSet:%d LoadSet:%d Deferred:%d Transition:%d Desired:%d"),
-               Face,
-               (int32)State,
-               bInChunkMap,
-               bInRenderSet,
-               bInLoadSet,
-               bInDeferred,
-               bInTransition,
-               bInDesiredLeaves);
     }
 }
 
