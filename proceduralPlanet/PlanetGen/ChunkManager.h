@@ -111,6 +111,8 @@ class ChunkManager
 
         FChunkGeneratorStats GetChunkGeneratorStats() const { return m_chunkGenerator.IsValid() ? m_chunkGenerator->GetDebugStats() : FChunkGeneratorStats(); }
 
+        void PrintDebugStatsConsole() const;
+
     private:
         // Helper to create a new chunk entry
         Chunk *CreateChunk(const ChunkId &Id);
@@ -123,6 +125,8 @@ class ChunkManager
 
         // Derives m_loadSet from m_renderSet, m_pendingTransitionsMap, and desired roots.
         void BuildLoadSet(const TSet<ChunkId> &DesiredLeaves, const bool bShouldGenerateChunks);
+
+        void BuildDistSqCaches(TMap<ChunkId, float> &CurrentDistSqCache, TMap<ChunkId, float> &PredictedDistSqCache);
 
         // Explicit initialization of the 6 root chunks directly into m_renderSet
         void InitializeRoots();

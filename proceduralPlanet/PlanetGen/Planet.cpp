@@ -166,8 +166,8 @@ FPlanetConfig APlanet::BuildPlanetConfig(float VoxelSize) const
     Cfg.LODSplitScreenFraction = GridSettings.LODSplitScreenFraction;
     Cfg.LODMergeHysteresisRatio = GridSettings.LODMergeHysteresisRatio;
     Cfg.MaxConcurrentGenerations = PerformanceSettings.MaxConcurrentGenerations;
-    Cfg.ChunkGenerationRate = PerformanceSettings.ChunksToSpawnPerFrame;
-    Cfg.MeshUpdatesPerFrame = PerformanceSettings.MeshUpdatesPerFrame;
+    Cfg.ChunkGenerationRate = PerformanceSettings.ChunkGenerationRate;
+    Cfg.MeshUpdatesRate = PerformanceSettings.MeshUpdatesRate;
     return Cfg;
 }
 

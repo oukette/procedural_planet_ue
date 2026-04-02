@@ -113,17 +113,13 @@ void ChunkGenerator::Update()
             m_cancelledTasks.Remove(Id);
     }
 
-    // Active tasks limit guard
-    const int32 activeThreadCount = m_activeThreadsCounter->GetValue();
-    if (activeThreadCount >= m_planetConfig.MaxConcurrentGenerations)
-        return;
-
     int32 StartedThisTick = 0;
 
     // Process Queue
     while (m_requestsQueue.Num() > 0 && StartedThisTick < m_planetConfig.ChunkGenerationRate)
     {
-        // Re-read inside the loop — each StartAsyncTask increments the counter immediately
+        // Read once per iteration — now accurate because we increment
+        // synchronously below before the next iteration's check
         if (m_activeThreadsCounter->GetValue() >= m_planetConfig.MaxConcurrentGenerations)
             break;
 
@@ -142,6 +138,7 @@ void ChunkGenerator::Update()
         // If not already active (double check)
         if (!m_activeTasks.Contains(Request.Id))
         {
+            m_activeThreadsCounter->Increment(); // Increment here, on the game thread, before StartAsyncTask. This makes the counter accurate for the very next loop iteration.
             StartAsyncTask(Request);
             StartedThisTick++;
         }
@@ -190,18 +187,17 @@ void ChunkGenerator::StartAsyncTask(const ChunkRequest &Request)
     // even if 'this' generator is destroyed.
     TSharedPtr<bool, ESPMode::ThreadSafe> Token = m_aliveToken;
 
-    // Capture the thread counter to keep it alive and modify it safely
-    m_activeThreadsCounter->Increment();
-    TSharedPtr<FThreadSafeCounter, ESPMode::ThreadSafe> CounterRef = m_activeThreadsCounter;
+    // Capture the thread counter to keep it alive
+    TSharedPtr<FThreadSafeCounter, ESPMode::ThreadSafe> activeThreadCounterRef = m_activeThreadsCounter;
 
     // RAII Guard: Ensure the counter is decremented when the lambda is destroyed,
     // whether the task finished naturally or was aborted/destroyed by the thread pool on exit.
     TSharedPtr<void, ESPMode::ThreadSafe> ThreadGuard((void *)nullptr,
-                                                      [CounterRef](void *)
+                                                      [activeThreadCounterRef](void *)
                                                       {
-                                                          if (CounterRef.IsValid())
+                                                          if (activeThreadCounterRef.IsValid())
                                                           {
-                                                              CounterRef->Decrement();
+                                                              activeThreadCounterRef->Decrement();
                                                           }
                                                       });
 
@@ -282,9 +278,9 @@ FChunkGeneratorStats ChunkGenerator::GetDebugStats() const
     S.Queued = m_requestsQueue.Num();
     S.Active = m_activeTasks.Num();
     S.Cancelled = m_cancelledTasks.Num();
+    S.ActiveThreads = m_activeThreadsCounter.IsValid() ? m_activeThreadsCounter->GetValue() : 0;
     S.StartTimesTracked = m_taskStartTimes.Num();
     S.AvgGenMs = m_avgGenerationTimeMs;
     S.LastGenMs = m_lastGenerationTimeMs;
-    S.ActiveThreads = m_activeThreadsCounter.IsValid() ? m_activeThreadsCounter->GetValue() : 0;
     return S;
 }

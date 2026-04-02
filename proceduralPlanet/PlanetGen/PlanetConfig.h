@@ -78,14 +78,14 @@ USTRUCT(BlueprintType) struct FPlanetPerformanceSettings
 {
         GENERATED_BODY()
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Performance", meta = (ClampMin = "1", ClampMax = "100"))
-        int32 MeshUpdatesPerFrame = 8;
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Performance", meta = (ClampMin = "1", ClampMax = "16"))
+        int32 MaxConcurrentGenerations = 8;
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Performance", meta = (ClampMin = "1", ClampMax = "100"))
-        int32 ChunksToSpawnPerFrame = 8;
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Performance", meta = (ClampMin = "1", ClampMax = "32"))
+        int32 MeshUpdatesRate = 16;
 
-        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Performance", meta = (ClampMin = "1", ClampMax = "512"))
-        int32 MaxConcurrentGenerations = 32;
+        UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Planet|Performance", meta = (ClampMin = "1", ClampMax = "32"))
+        int32 ChunkGenerationRate = 16;
 };
 
 
@@ -132,7 +132,7 @@ USTRUCT(BlueprintType) struct FPlanetConfig
         int16 MaxConcurrentGenerations = 8;
         int16 ChunkGenerationRate = 16;                               // Chunks to start generating per tick
         int16 MaxGenerationQueueSize = 8 * MaxConcurrentGenerations;  // Size of the generation request queue
-        int16 MeshUpdatesPerFrame = 16;
+        int16 MeshUpdatesRate = 16;
         int16 ChunkDemotionFrameDelay = 8;  // X frames. A rendered chunk must be absent before hiding
         int16 CacheSoftCap = 512;
         int16 CacheHardCap = 1024;

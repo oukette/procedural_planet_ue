@@ -177,46 +177,11 @@ void ChunkManager::Update(const PlanetViewContext &Context)
     m_lastObserverVelocity = Context.ObserverVelocity;
     m_lastObserverForward = Context.ObserverForward;
 
-// === DEBUG DIAGNOSTIC  ===
+    // === DEBUG DIAGNOSTIC  ===
 #if !UE_BUILD_SHIPPING
     if (CVarChunkManagerDebug.GetValueOnGameThread() != 0)
     {
-        const FChunkManagerStats MS = GetDebugStats();
-        const FChunkGeneratorStats GS = m_chunkGenerator ? m_chunkGenerator->GetDebugStats() : FChunkGeneratorStats();
-
-        // --- Manager line ---
-        // Lifecycle pipeline: None → Pending → Generating → DataReady → MeshReady → Visible
-        // Overhead sets: LoadSet (kept alive), RenderSet (ground truth), Transitions (pending LOD swaps), Deferred (waiting release)
-        UE_LOG(LogTemp,
-               Log,
-               TEXT("[MGR] Total:%d | None:%d Pend:%d Gen:%d Data:%d Mesh:%d Vis:%d | Load:%d Render:%d Trans:%d Defer:%d"),
-               MS.Total,
-               MS.None,
-               MS.Pending,
-               MS.Generating,
-               MS.DataReady,
-               MS.MeshReady,
-               MS.Visible,
-               MS.LoadSet,
-               MS.RenderSet,
-               MS.Transitions,
-               MS.Deferred);
-
-        // --- Generator line ---
-        // Queue: waiting to be dispatched | Active: sets currently owned by a thread
-        // Cancelled: awaiting callback confirmation | Threads: raw OS thread count (should track Active)
-        // StartTimes: sanity — should equal Active; drift means a task lost its start record
-        // Timing: last sample and rolling average of full async generation round-trip
-        UE_LOG(LogTemp,
-               Log,
-               TEXT("[GEN] Queue:%d Active:%d Cancelled:%d Threads:%d StartTimes:%d | Last:%.1fms Avg:%.1fms"),
-               GS.Queued,
-               GS.Active,
-               GS.Cancelled,
-               GS.ActiveThreads,
-               GS.StartTimesTracked,
-               GS.LastGenMs,
-               GS.AvgGenMs);
+        PrintDebugStatsConsole();
     }
 #endif
     // === END DIAGNOSTIC ===
@@ -226,18 +191,12 @@ void ChunkManager::Update(const PlanetViewContext &Context)
 
     const TSet<ChunkId> &DesiredLeaves = (bShouldGenerateChunks && m_quadtree) ? m_quadtree->GetDesiredLeaves() : TSet<ChunkId>();
 
-    // Build distance cache once — reused by AdvanceLoading and CommitReadyTransitions
+    // Build distance caches once — reused by AdvanceLoading and CommitReadyTransitions
     TMap<ChunkId, float> CurrentDistSqCache;
-    CurrentDistSqCache.Reserve(m_chunksMap.Num());
     TMap<ChunkId, float> PredictedDistSqCache;
-    PredictedDistSqCache.Reserve(m_chunksMap.Num());
-    for (const auto &Pair : m_chunksMap)
-    {
-        const ChunkId &Id = Pair.Key;
-        FVector center = FMathUtils::GetChunkCenter(Id, m_planetConfig.PlanetRadius);
-        CurrentDistSqCache.Add(Id, FVector::DistSquared(center, m_lastObserverLocalPos));
-    }
+    BuildDistSqCaches(CurrentDistSqCache, PredictedDistSqCache);
 
+    // Chunks management logic updates
     BuildLoadSet(DesiredLeaves, bShouldGenerateChunks);
     ReconcileTransitions(DesiredLeaves);
     AdvanceLoading(CurrentDistSqCache, PredictedDistSqCache);
@@ -286,6 +245,41 @@ void ChunkManager::BuildLoadSet(const TSet<ChunkId> &DesiredLeaves, const bool b
 
         if (!CoveredFaces.Contains(Face))
             m_loadSet.Add(RootId);  // No descendant rendered yet — keep root alive for bootstrap
+    }
+}
+
+
+void ChunkManager::BuildDistSqCaches(TMap<ChunkId, float> &CurrentDistSqCache, TMap<ChunkId, float> &PredictedDistSqCache)
+{
+    // Build predicted context once for the whole frame
+    // Only pay the cost if we're actually moving fast enough to matter
+    const float SpeedSq = m_lastObserverVelocity.SizeSquared();
+    const bool bShouldPredict = SpeedSq > 1.0f;  // skip if nearly stationary
+
+    FVector PredictedObserverPos = m_lastObserverLocalPos;
+    if (bShouldPredict && m_quadtree)
+    {
+        // Reuse the same lookahead logic the quadtree already uses internally,
+        // but expose just the predicted position for priority scoring.
+        const float Speed = FMath::Sqrt(SpeedSq);
+        const float Altitude = FMath::Max(0.f, m_lastObserverLocalPos.Size() - m_planetConfig.PlanetRadius);
+        const float AltitudeFactor = FMath::Clamp((Altitude - m_planetConfig.PredictiveMinAltitude) / m_planetConfig.PredictiveMinAltitude, 0.f, 1.f);
+        const float LookAheadSeconds =
+            FMath::Min(Speed / m_planetConfig.PredictiveLookAheadScale, m_planetConfig.PredictiveLookAheadMaxSeconds) * AltitudeFactor;
+        PredictedObserverPos = m_lastObserverLocalPos + m_lastObserverVelocity * LookAheadSeconds;
+    }
+
+    // Build both caches in a single pass
+    CurrentDistSqCache.Reserve(m_chunksMap.Num());
+    PredictedDistSqCache.Reserve(m_chunksMap.Num());
+
+    for (const auto &Pair : m_chunksMap)
+    {
+        const ChunkId &Id = Pair.Key;
+        const FVector Center = FMathUtils::GetChunkCenter(Id, m_planetConfig.PlanetRadius);
+        CurrentDistSqCache.Add(Id, FVector::DistSquared(Center, m_lastObserverLocalPos));
+        // If not predicting, predicted == current — the Lerp in AdvanceLoading becomes a no-op
+        PredictedDistSqCache.Add(Id, bShouldPredict ? FVector::DistSquared(Center, PredictedObserverPos) : CurrentDistSqCache[Id]);
     }
 }
 
@@ -601,7 +595,7 @@ void ChunkManager::AdvanceLoading(const TMap<ChunkId, float> &CurrentDistSqCache
 
     for (const ChunkId &Id : DataReadyChunks)
     {
-        if (MeshUploadsThisFrame >= m_planetConfig.MeshUpdatesPerFrame)
+        if (MeshUploadsThisFrame >= m_planetConfig.MeshUpdatesRate)
             break;
 
         Chunk *Chunk = GetChunk(Id);
@@ -1021,4 +1015,45 @@ FChunkManagerStats ChunkManager::GetDebugStats() const
         }
     }
     return S;
+}
+
+
+void ChunkManager::PrintDebugStatsConsole() const
+{
+    const FChunkManagerStats MS = GetDebugStats();
+    const FChunkGeneratorStats GS = m_chunkGenerator ? m_chunkGenerator->GetDebugStats() : FChunkGeneratorStats();
+
+    // --- Manager line ---
+    // Lifecycle pipeline: None → Pending → Generating → DataReady → MeshReady → Visible
+    // Overhead sets: LoadSet (kept alive), RenderSet (ground truth), Transitions (pending LOD swaps), Deferred (waiting release)
+    UE_LOG(LogTemp,
+           Log,
+           TEXT("[MGR] Total:%d | None:%d Pend:%d Gen:%d Data:%d Mesh:%d Vis:%d | Load:%d Render:%d Trans:%d Defer:%d"),
+           MS.Total,
+           MS.None,
+           MS.Pending,
+           MS.Generating,
+           MS.DataReady,
+           MS.MeshReady,
+           MS.Visible,
+           MS.LoadSet,
+           MS.RenderSet,
+           MS.Transitions,
+           MS.Deferred);
+
+    // --- Generator line ---
+    // Queue: waiting to be dispatched | Active: sets currently owned by a thread
+    // Cancelled: awaiting callback confirmation | Threads: raw OS thread count (should track Active)
+    // StartTimes: sanity — should equal Active; drift means a task lost its start record
+    // Timing: last sample and rolling average of full async generation round-trip
+    UE_LOG(LogTemp,
+           Log,
+           TEXT("[GEN] Queue:%d Active:%d Cancelled:%d Threads:%d StartTimes:%d | Last:%.1fms Avg:%.1fms"),
+           GS.Queued,
+           GS.Active,
+           GS.Cancelled,
+           GS.ActiveThreads,
+           GS.StartTimesTracked,
+           GS.LastGenMs,
+           GS.AvgGenMs);
 }
