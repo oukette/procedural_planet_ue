@@ -96,9 +96,7 @@ void ChunkGenerator::Update()
 {
     // If stopping, don't start any new tasks.
     if (m_isStopping)
-    {
         return;
-    }
 
     // Prune any cancelled IDs that are no longer active.
     // This handles the case where a task was cancelled and the chunk was destroyed before the async callback ever fired — meaning the callback never will,
@@ -115,8 +113,9 @@ void ChunkGenerator::Update()
             m_cancelledTasks.Remove(Id);
     }
 
-    // Check limits
-    if (m_activeTasks.Num() >= m_planetConfig.MaxConcurrentGenerations)
+    // Active tasks limit guard
+    const int32 activeThreadCount = m_activeThreadsCounter->GetValue();
+    if (activeThreadCount >= m_planetConfig.MaxConcurrentGenerations)
         return;
 
     int32 StartedThisTick = 0;
@@ -124,7 +123,8 @@ void ChunkGenerator::Update()
     // Process Queue
     while (m_requestsQueue.Num() > 0 && StartedThisTick < m_planetConfig.ChunkGenerationRate)
     {
-        if (m_activeTasks.Num() >= m_planetConfig.MaxConcurrentGenerations)
+        // Re-read inside the loop — each StartAsyncTask increments the counter immediately
+        if (m_activeThreadsCounter->GetValue() >= m_planetConfig.MaxConcurrentGenerations)
             break;
 
         // Efficiently pop the highest priority (lowest score) request from the heap (O(log n))
